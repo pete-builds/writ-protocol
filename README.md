@@ -160,6 +160,21 @@ docs/adoption.md. The wedge is the enterprise platform team already running an A
 6. **Individual draft.** After six months of the production pair, an Internet-Draft in the OAuth or a new working group, with the corpus as the interoperability appendix and the threat model as Security Considerations. Registries (bound types, reason codes) under Specification Required with the two-implementation rule.
 7. **Standards track.** Two independent interoperable implementations, an interop report, a security review by people who did not write it.
 
+## What the demo proves against the incumbents
+
+The skeptic's opening (docs/research/03-skeptic-opening.md) found the same first hard failure in MCP, A2A, and OAuth: at hop two, nothing lets B hand C strictly less authority than A gave B in a form C can check without an authorization server all three share, and nothing returns signed evidence A can verify. The demo run in `demo/out/demo.log` shows each of those gaps closed, with the object that closes it:
+
+| Incumbent failure (skeptic's step) | What the demo shows | Object |
+|---|---|---|
+| MCP: a server MUST NOT transit A's token, so C cannot tell B's relayed 60000 bound from a number B invented | C rejects a 61000 charge and a second charge with signed refusals naming `out_of_bounds` and `count_exhausted`; B could not have widened writ_2 without producing a chain C rejects | writ_2 with `prv`, leaf bounds enforced at C |
+| A2A: downstream credentials are "outside the protocol"; artifacts are unsigned | tally_B embeds tally_C verbatim and the writ C ran under; A verifies both with only writ_1 and its own call | tally with `sub` and `wrt` |
+| OAuth: token exchange needs a shared or federated AS; the `act` chain lives in a token A never sees | no authorization server exists in the demo; every check is offline against keys inside the objects | did:key identities, offline chain walk |
+| All three: A never learns C existed unless B says so in prose | A asks C directly what ran under writ_1 and gets a signed answer, with B out of the path | `sys/tallies` |
+| All three: reversal needs a new credential and B's cooperation | A reverses C's charge directly, idempotently, by standing as an issuer on the chain | `sys/undo` |
+| All three: cancel is one hop and silence looks like stopped | a revoke cancels B's in-flight task, is forwarded to C, and a later call under the writ is refused with `revoked` | revoke, `canceled` tally |
+
+The interoperability claim rests on two implementations written from the same text by parties that did not read each other's code, agreeing on all 160 vectors including the reason code for every rejection.
+
 ## Repository map
 
 ```
