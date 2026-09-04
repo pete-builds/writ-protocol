@@ -1,0 +1,16 @@
+{
+ "name": "narrows prefix segment rule",
+ "op": "narrows",
+ "input": {
+  "child": {
+   "t": "prefix",
+   "v": "travel/chargeback"
+  },
+  "parent": {
+   "t": "prefix",
+   "v": "travel/charge"
+  }
+ },
+ "expect": "reject",
+ "reason": "not_narrowed"
+}

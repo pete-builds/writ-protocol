@@ -1,7 +1,9 @@
 package writ
 
 import (
+	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"writproto/bound"
 )
@@ -130,21 +132,40 @@ func Issuers(chain []*Writ) map[string]bool {
 	return m
 }
 
-// CheckArgs implements spec section 7.2 against the leaf writ.
+// CheckArgs implements spec section 7.2 in two passes over the leaf's
+// application bounds in canonical name order: presence of every argument
+// first, then satisfaction. So missing_arg always precedes out_of_bounds and
+// two implementations report the same first failure.
 func CheckArgs(leaf *Writ, args map[string]any) error {
+	names := make([]string, 0, len(leaf.Bnd))
 	for name, b := range leaf.Bnd {
 		if name == "act" || name == "hld" || name == "depth" || b.T == "count" {
 			continue
 		}
-		v, ok := args[name]
-		if !ok {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool { return lessUTF16(names[i], names[j]) })
+	for _, name := range names {
+		if _, ok := args[name]; !ok {
 			return fail(MissingArg, "args lacks %q", name)
 		}
-		if err := Satisfies(b, v); err != nil {
+	}
+	for _, name := range names {
+		if err := Satisfies(leaf.Bnd[name], args[name]); err != nil {
 			return fail(OutOfBounds, "args.%s: %v", name, err)
 		}
 	}
 	return nil
+}
+
+func lessUTF16(a, b string) bool {
+	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
+	for i := 0; i < len(ua) && i < len(ub); i++ {
+		if ua[i] != ub[i] {
+			return ua[i] < ub[i]
+		}
+	}
+	return len(ua) < len(ub)
 }
 
 // CheckForward implements the forward-call rules of section 5 and section 7

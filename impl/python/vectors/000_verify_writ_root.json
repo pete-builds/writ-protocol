@@ -1,0 +1,50 @@
+{
+ "name": "verify_writ root",
+ "op": "verify_writ",
+ "input": {
+  "writ": {
+   "v": 1,
+   "typ": "writ",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    }
+   },
+   "prv": null,
+   "exp": 1788403600,
+   "nnc": "Qm3bq8w1s5XK7jZRt0aB2w",
+   "sig": "kP4c7ZjeYf8ozIl-kCn1qvkzfCDTm2PoOxFklmZEH7dlCSs7vo3ICr48J4Bv2_BSjLaBGWsGBDWZfT54srUZCA"
+  }
+ },
+ "expect": "accept"
+}

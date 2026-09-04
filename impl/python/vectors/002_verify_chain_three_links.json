@@ -1,0 +1,139 @@
+{
+ "name": "verify_chain three links",
+ "op": "verify_chain",
+ "input": {
+  "chain": [
+   {
+    "v": 1,
+    "typ": "writ",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "amount": {
+      "t": "max",
+      "v": 60000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     }
+    },
+    "prv": null,
+    "exp": 1788403600,
+    "nnc": "Qm3bq8w1s5XK7jZRt0aB2w",
+    "sig": "kP4c7ZjeYf8ozIl-kCn1qvkzfCDTm2PoOxFklmZEH7dlCSs7vo3ICr48J4Bv2_BSjLaBGWsGBDWZfT54srUZCA"
+   },
+   {
+    "v": 1,
+    "typ": "writ",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 58900
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     }
+    },
+    "prv": "V_n8Y-qt6vBmf4RJhn4f9vTQTK3KVpJBxKmiXswpY_A",
+    "exp": 1788401800,
+    "nnc": "Rn4cr9x2t6YL8kASu1bC3g",
+    "sig": "eaTu6W0UJDKC4ayqT80EvdIdArQeAVZzrUz5wmXejVDXkJlulNrXgJ-apgyy-qUVCmGS4--RsUU4nNqtgFXKAQ"
+   },
+   {
+    "v": 1,
+    "typ": "writ",
+    "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "hld": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 10000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     }
+    },
+    "prv": "-NQDrEqyIIrCbTkTvuNc_Q7mez9yxC_BiQpfg0o05bE",
+    "exp": 1788401000,
+    "nnc": "So5ds0y3u7ZM9lBTv2cD4A",
+    "sig": "ixJxZv-5D46CBpWvqe3FN8EDLothViOr95NG42kcXTLXkuVdDyEOBPMDb8r7teg7Cb-tYiRdNLjY8Csl5i6XBg"
+   }
+  ]
+ },
+ "expect": "accept",
+ "now": 1788400010
+}

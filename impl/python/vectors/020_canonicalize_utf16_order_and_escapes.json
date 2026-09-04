@@ -1,0 +1,9 @@
+{
+ "name": "canonicalize utf16 order and escapes",
+ "op": "canonicalize",
+ "input": {
+  "raw": "{\"\\uff01\": 1, \"\\ud83d\\ude00\": 2, \"b\\n\": \"\\u001f\\u007f/\", \"a\": [true, null, -0]}",
+  "canonical": "{\"a\":[true,null,0],\"b\\n\":\"\\u001f/\",\"😀\":2,\"！\":1}"
+ },
+ "expect": "accept"
+}

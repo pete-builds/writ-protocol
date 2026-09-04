@@ -1,0 +1,15 @@
+{
+ "name": "satisfies set 1 vs \"1\"",
+ "op": "satisfies",
+ "input": {
+  "bound": {
+   "t": "set",
+   "v": [
+    "1"
+   ]
+  },
+  "arg": 1
+ },
+ "expect": "reject",
+ "reason": "out_of_bounds"
+}

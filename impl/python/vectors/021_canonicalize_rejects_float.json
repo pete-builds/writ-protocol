@@ -1,0 +1,10 @@
+{
+ "name": "canonicalize rejects float",
+ "op": "canonicalize",
+ "input": {
+  "raw": "{\"a\": 1.0}",
+  "canonical": ""
+ },
+ "expect": "reject",
+ "reason": "noncanonical"
+}

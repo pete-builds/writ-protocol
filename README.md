@@ -103,7 +103,14 @@ docs/spec/writ-v0.1.md. Fourteen sections and three appendices, about 6,500 word
 cd impl/go && go test ./...
 ```
 
-An independent Python verifier written from the spec text alone, without reading the Go code, is in `impl/python` (see its README for the spec ambiguities it surfaced).
+An independent Python verifier written from the spec text alone, without reading the Go code, is in `impl/python`: 73 unit tests, a conformance runner, and 22 vectors of its own. It surfaced 35 spec ambiguities (listed in its README), every one of which is now resolved in the spec text. Cross-run results, which are the interoperability proof:
+
+| Direction | Result |
+|---|---|
+| Python verifier on the 138 Go-generated vectors | 138 passed, 0 failed |
+| Go verifier on the 22 Python-generated vectors | 22 passed, 0 failed |
+
+Three of the divergences found on the way were Go bugs against the spec (the literal `-0`, padded base64url classed as `malformed`, and a bound-shape error classed as `noncanonical`); one was a non-deterministic first-failure order in Go's argument check. All four are fixed and pinned by vectors.
 
 ### 8. Demo
 

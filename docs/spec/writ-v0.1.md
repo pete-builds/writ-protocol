@@ -176,7 +176,7 @@ There are two kinds of call, distinguished by `op`.
 
 **Forward call.** `op` does not begin with `sys/`. `from` MUST equal the leaf writ's `iss`. The executor is the leaf writ's `hld`. `op` MUST be matched by the leaf's `act`. `args` MUST satisfy the leaf's bounds (section 7.2).
 
-**Standing call.** `op` begins with `sys/`. `from` MUST equal the `iss` of some writ in `chain`. The executor is the leaf writ's `hld`. Bounds are not applied. The defined standing operations are in section 8.
+**Standing call.** `op` begins with `sys/`. `from` MUST equal the `iss` of some writ in `chain`. The executor is the leaf writ's `hld`. Bounds are not applied. The defined standing operations are in section 8; their argument checks need the executor's own key, clock, and stores, so a verifier that is not the executor checks only standing.
 
 A chain MUST NOT be empty for any call (`malformed`). Checks on a call after section 6.1 apply in this order: chain verification (section 4), expiry of every writ, then for a forward call `no_standing`, `forbidden_op`, `missing_arg`, `out_of_bounds`; for a standing call `no_standing`, then `forbidden_op` if the `sys/` operation is not one defined in section 8.
 
@@ -287,10 +287,12 @@ A self-issued root writ proves only that a key signed it. E MUST hold, from outs
 
 ### 7.2 Applying bounds to arguments
 
-For every member N of the leaf's `bnd` other than `act`, `hld`, `depth`, and any bound of type `count`:
+Let the application bounds be every member N of the leaf's `bnd` other than `act`, `hld`, `depth`, and any bound of type `count`, taken in canonical member-name order. Two passes:
 
-1. `K.args` MUST have a member N. Reason `missing_arg`.
-2. `K.args[N]` MUST satisfy the bound under section 3. Reason `out_of_bounds`.
+1. For every application bound N, `K.args` MUST have a member N. Reason `missing_arg`.
+2. Then, for every application bound N, `K.args[N]` MUST satisfy the bound under section 3. Reason `out_of_bounds`.
+
+Presence is checked for all bounds before satisfaction is checked for any, so a missing argument is always reported before an out-of-range one.
 
 Members of `args` with no corresponding bound are unconstrained.
 
@@ -470,7 +472,7 @@ An implementation conforms when it passes the conformance corpus: a directory of
 | `verify_call` | `{"call": <call>}` | section 6.1 on the call, section 4 on its chain, expiry at `now` if given, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state |
 | `verify_tally` | `{"writ": <leaf writ>, "call": <call>, "tally": <tally>, "res": <body, optional>}` | section 6.2 |
 
-Keys in the corpus derive from fixed seeds and fixed nonces so any implementation can regenerate every vector byte for byte. Executor behavior that needs state (count, replay, undo, revoke, recovery) is exercised by scenario tests rather than by the stateless corpus.
+A vector without `now` is evaluated with no clock: expiry is not checked. A vector with `now` uses that value as the verifier's current time and never the real clock, so the corpus is stable forever. Keys in the corpus derive from fixed seeds and fixed nonces so any implementation can regenerate every vector byte for byte. Executor behavior that needs state (count, replay, undo, revoke, recovery) is exercised by scenario tests rather than by the stateless corpus.
 
 Two implementations are interoperable when each accepts every object the other produces from the same seeds and rejects every vector in the corpus with the same reason.
 

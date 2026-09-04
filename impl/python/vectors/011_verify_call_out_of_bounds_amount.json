@@ -1,0 +1,112 @@
+{
+ "name": "verify_call out_of_bounds amount",
+ "op": "verify_call",
+ "input": {
+  "call": {
+   "v": 1,
+   "typ": "call",
+   "id": "b7f1c0a3Ln2k9QpXs4vYzw",
+   "chain": [
+    {
+     "v": 1,
+     "typ": "writ",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      }
+     },
+     "prv": null,
+     "exp": 1788403600,
+     "nnc": "Qm3bq8w1s5XK7jZRt0aB2w",
+     "sig": "kP4c7ZjeYf8ozIl-kCn1qvkzfCDTm2PoOxFklmZEH7dlCSs7vo3ICr48J4Bv2_BSjLaBGWsGBDWZfT54srUZCA"
+    },
+    {
+     "v": 1,
+     "typ": "writ",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel/charge"
+      },
+      "amount": {
+       "t": "max",
+       "v": 58900
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      }
+     },
+     "prv": "V_n8Y-qt6vBmf4RJhn4f9vTQTK3KVpJBxKmiXswpY_A",
+     "exp": 1788401800,
+     "nnc": "Rn4cr9x2t6YL8kASu1bC3g",
+     "sig": "eaTu6W0UJDKC4ayqT80EvdIdArQeAVZzrUz5wmXejVDXkJlulNrXgJ-apgyy-qUVCmGS4--RsUU4nNqtgFXKAQ"
+    }
+   ],
+   "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "op": "travel/charge",
+   "args": {
+    "amount": 61000,
+    "currency": "USD",
+    "fare": "refundable",
+    "date": 20261015,
+    "pnr": "K7Q2ZD"
+   },
+   "sig": "kKZb1egd32AnSGkQkoUr7AkJaP3gek6QLpoHs2kr8fMAOMsmxiZp88RailwUKcWBKd-SFvc1r5LKs_KMo8hTDw"
+  }
+ },
+ "expect": "reject",
+ "reason": "out_of_bounds",
+ "now": 1788400010
+}
