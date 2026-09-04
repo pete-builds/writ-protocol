@@ -30,7 +30,11 @@ until grep -q ready "$out/B.log" 2>/dev/null && grep -q ready "$out/C.log" 2>/de
   sleep 0.2
 done
 
-"$bin/writ-demo" -seed $SEED_A -b http://127.0.0.1:8081 -c http://127.0.0.1:8082 -out "$out" | tee "$out/demo.log"
+# Run A without a pipe so its exit status survives (POSIX sh has no pipefail).
+status=0
+"$bin/writ-demo" -seed $SEED_A -b http://127.0.0.1:8081 -c http://127.0.0.1:8082 -out "$out" > "$out/demo.log" 2>&1 || status=$?
+cat "$out/demo.log"
 echo
 echo "--- B log ---"; cat "$out/B.log"
 echo "--- C log ---"; cat "$out/C.log"
+exit $status

@@ -81,7 +81,8 @@ func Run(v Vector) (bool, string) {
 		if err == nil {
 			err = writ.VerifyChain(k.Chain)
 		}
-		if err == nil && v.Now != nil {
+		// Expiry applies to forward calls only (spec section 7 step 4).
+		if err == nil && v.Now != nil && !k.Standing() {
 			err = writ.CheckExpiry(k.Chain, *v.Now)
 		}
 		if err == nil {

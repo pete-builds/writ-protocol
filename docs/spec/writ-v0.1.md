@@ -1,6 +1,6 @@
 # The Writ Protocol, version 0.1
 
-Status: draft for independent implementation. Date: 2026-09-04.
+Status: draft for independent implementation. Date: 2026-09-04, revised the same day to fix the standing-operation expiry and revocation rule (section 7 steps 4 and 7, section 8).
 
 Writ: pass narrowable authority between agents and bring back a signed account of what was done under it.
 
@@ -8,9 +8,9 @@ Writ: pass narrowable authority between agents and bring back a signed account o
 
 Writ defines four signed JSON objects and the rules for checking them. A **writ** is a grant of bounded authority from one key to another that the holder can narrow and pass on without contacting the original issuer. A **call** assigns work under a chain of writs. A **tally** is the executor's signed account of what it did under exactly which writ, including the tallies of everyone it delegated to. A **revoke** withdraws a writ. Verification needs only the objects and the public keys embedded in them.
 
-Writ is not a transport, a discovery mechanism, a task lifecycle, or a tool schema. Those belong to existing protocols (HTTP, A2A Agent Cards, A2A and MCP tasks, MCP tools). Writ carries the one thing they do not: an authority object that survives a hop into a foreign trust domain, can be narrowed by its holder under a mechanical subset rule, and is named by the receipt that comes back.
+Writ is not a transport, a discovery mechanism, a task lifecycle, or a tool schema. Those belong to existing protocols (HTTP, A2A Agent Cards, A2A and MCP tasks, MCP tools). Writ carries what they leave out: an authority object that survives a hop into a foreign trust domain, can be narrowed by its holder under a mechanical subset rule, and is named by the receipt that comes back.
 
-In terms of prior work: a writ is an OAuth Rich Authorization Request value set plus a comparison table, signed by the delegator instead of an authorization server; a tally is a UCAN-style receipt with consumption accounting and an embedded sub-tree.
+In terms of prior work: a writ is an OAuth Rich Authorization Request value set plus a comparison table, signed by the delegator instead of an authorization server; a tally is a UCAN-style receipt with consumption accounting and an embedded sub-tree. Hash-linked offline attenuation for agents is also the subject of several 2026 Internet-Drafts; section 13 and the prior-art survey place Writ against them.
 
 ## 1. Conventions
 
@@ -176,9 +176,9 @@ There are two kinds of call, distinguished by `op`.
 
 **Forward call.** `op` does not begin with `sys/`. `from` MUST equal the leaf writ's `iss`. The executor is the leaf writ's `hld`. `op` MUST be matched by the leaf's `act`. `args` MUST satisfy the leaf's bounds (section 7.2).
 
-**Standing call.** `op` begins with `sys/`. `from` MUST equal the `iss` of some writ in `chain`. The executor is the leaf writ's `hld`. Bounds are not applied. The defined standing operations are in section 8; their argument checks need the executor's own key, clock, and stores, so a verifier that is not the executor checks only standing.
+**Standing call.** `op` begins with `sys/`. `from` MUST equal the `iss` of some writ in `chain`. The executor is the leaf writ's `hld`. Bounds are not applied. Expiry and revocation of the chain are not applied either (section 7 steps 4 and 7): the signed chain is historical proof that `from` had standing, and what a standing call may still do after `exp` is bounded by the operation itself (section 8). The defined standing operations are in section 8; their argument checks need the executor's own key, clock, and stores, so a verifier that is not the executor checks only standing.
 
-A chain MUST NOT be empty for any call (`malformed`). Checks on a call after section 6.1 apply in this order: chain verification (section 4), expiry of every writ, then for a forward call `no_standing`, `forbidden_op`, `missing_arg`, `out_of_bounds`; for a standing call `no_standing`, then `forbidden_op` if the `sys/` operation is not one defined in section 8.
+A chain MUST NOT be empty for any call (`malformed`). Checks on a call after section 6.1 apply in this order: chain verification (section 4); for a forward call, expiry of every writ, then `no_standing`, `forbidden_op`, `missing_arg`, `out_of_bounds`; for a standing call, `no_standing`, then `forbidden_op` if the `sys/` operation is not one defined in section 8. Expiry is not checked for a standing call.
 
 Example, B assigns C the payment step under a child writ narrowed to `travel/charge`:
 
@@ -202,7 +202,7 @@ A tally is the executor's signed account of one call.
 | `call` | hash | yes | identity of the call answered |
 | `writ` | hash | yes | identity of the leaf writ of that call's chain |
 | `op` | string | yes | the call's `op` |
-| `acc` | integer | yes | the time the executor accepted the call; bounds and expiry are judged at this time |
+| `acc` | integer | yes | the time the executor accepted the call; for a forward call, bounds and expiry are judged at this time |
 | `st` | string | yes | `ok`, `failed`, `canceled`, or `pending` |
 | `err` | object or null | yes | null when `st` is `ok`; otherwise `{"code": <reason>}` with optional `ref` (a hash) |
 | `out` | hash or null | yes | hash of the canonical form of the result body, or null when there is none |
@@ -251,7 +251,7 @@ A verifier V that made a call K under a chain whose leaf writ is W, and received
 2. `T.call` equals the identity of K. Reason `tally_mismatch`.
 3. `T.writ` equals the identity of W. Reason `tally_mismatch`.
 4. `T.op` equals `K.op`. Reason `tally_mismatch`.
-5. `T.acc` < `W.exp`. Reason `expired`.
+5. If `T.op` does not begin with `sys/`: `T.acc` < `W.exp`. Reason `expired`. A tally for a standing operation is not bound to `W.exp`, because the operation was authorized after it (section 7 step 4); its time bound is operation-specific (section 8), and a verifier that holds the target of a `sys/undo` MAY additionally check the undo tally's `acc` against that target's `rev.until`.
 6. If R is present, `T.out` is not null and equals the hash of R's canonical form. Reason `tally_mismatch`. A non-null `out` with no R is accepted; the verifier simply has no body to check.
 7. For each `max` bound N in `W.bnd`: `T.used[N]` (zero if absent) <= `W.bnd[N].v`. Reason `out_of_bounds`.
 8. Every writ in `T.wrt` passes section 6.1 and is a valid child of W under section 4. Reason as reported.
@@ -271,15 +271,17 @@ An executor E receiving a call K over a transport binding (section 10) proceeds 
 1. K passes section 6.1 steps 1 to 5. Chain length 1 to 8.
 2. Every writ in `K.chain` passes section 6.1. `K.sig` verifies under `K.from`.
 3. For each adjacent pair in the chain, section 4 holds. Root: `chain[0].prv` is null (`chain_broken`).
-4. For every writ in the chain, `now` < `exp`, by E's own clock (`expired`). No member of any message is used as the current time.
+4. Forward call only: for every writ in the chain, `now` < `exp`, by E's own clock (`expired`). No member of any message is used as the current time. A standing call skips this step; see the note after step 12.
 5. E accepts the root issuer `chain[0].iss` (section 7.1). Reason `root_not_accepted`.
 6. E is the leaf `hld`. Reason `wrong_executor`.
-7. No writ in the chain is revoked in E's store (section 9). Reason `revoked`.
-8. Forward call: `K.from` equals the leaf `iss` (`no_standing`); `K.op` does not begin with `sys/` and is matched by the leaf `act` (`forbidden_op`); section 7.2 holds. Standing call: `K.from` is the `iss` of some writ in the chain (`no_standing`); section 8 applies.
+7. Forward call only: no writ in the chain is revoked in E's store, by identity or by a key-wide revoke of its issuer (section 9). Reason `revoked`. A standing call skips this step.
+8. Forward call: `K.from` equals the leaf `iss` (`no_standing`); `K.op` does not begin with `sys/` and is matched by the leaf `act` (`forbidden_op`); section 7.2 holds. Standing call: `K.from` is the `iss` of some writ in the chain (`no_standing`); `K.op` is an operation defined in section 8 (`forbidden_op`); that operation's argument checks apply.
 9. Replay: if E's call store has an entry for (identity of leaf writ, `K.id`), E returns the stored tally without executing. Otherwise E records the entry with state pending.
-10. `count`: for every writ in the chain that carries a `count` bound, E's count store entry for that writ's identity is below the bound's value (`count_exhausted`); E increments each. Rejection at this step consumes nothing.
+10. `count`, forward call only: for every writ in the chain that carries a `count` bound, E's count store entry for that writ's identity is below the bound's value (`count_exhausted`); E increments each. Rejection at this step consumes nothing.
 11. E records `acc` = now, persists the pending record, and performs the operation.
 12. E signs and persists the tally, then returns it with the result body.
+
+Steps 4 and 7 are what end forward authority: at `exp`, and on revocation, no forward call is accepted anywhere, and nothing in this section reopens that. A standing call is exempt from both because it does not exercise the authority the chain grants; it exercises the standing the chain proves, which is a fact about the past. The chain still has to be structurally valid, signed, attenuated, rooted at an accepted issuer, and addressed to this executor (steps 1 to 3, 5, 6), `from` still has to be an issuer on it, and the operation's own checks (section 8) still bound what it may do. The alternative, checking expiry for every call, made `sys/undo` impossible after the leaf expired even when `rev.until` was later, made `sys/tallies` useless for recovering the tally of a call whose writ has since expired, and let a revoke that raced a completion lock the revoker out of reversing the completed effect.
 
 ### 7.1 Root acceptance
 
@@ -300,13 +302,13 @@ Members of `args` with no corresponding bound are unconstrained.
 
 `count` N on a writ means: each executor performs at most N operations under that writ or any writ below it, for as long as the executor's count store persists. It is consumed at acceptance, against every writ in the chain, so a holder cannot reset it by delegating to itself.
 
-`max` is checked per call against the leaf writ. The protocol does not enforce a sum across sibling writs or sibling executors at request time. A delegator that needs a total across several delegations issues one writ per delegation with the total split between them. A verifier audits totals from `used` after the fact (section 6.2 step 10).
+`max` is checked per call against the leaf writ, and `count` is consumed per executor. Neither is a global limit. A holder that has been given `count` 1 can issue two children to two different executors and each executor, seeing only its own store, will accept one call; the same holds for `max`. The protocol does not enforce a sum across sibling writs or sibling executors at request time, and cannot without coordination between executors, which it does not define. A delegator that needs a total across several delegations issues one writ per delegation with the total split between them, or names one executor in `hld`. Cross-executor fan-out is detected after the fact, and only if evidence surfaces: a verifier audits totals from `used` in the tally tree (section 6.2 step 10), and `sys/tallies` lets it ask any executor it learns of. An honest holder's tally lists every child it issued in `wrt`; a dishonest one's omission is a signed false statement, but the verifier cannot find it without a second source.
 
 Nothing in this protocol is exactly-once. An executor executes at most once per (leaf writ identity, `id`) while its call store persists, and at most `count` times per writ while its count store persists. A caller retries the identical signed bytes until it holds a final tally or the leaf expires. When an executor cannot determine whether an effect occurred, it says so with `st` `pending` or `err.code` `unknown_outcome`; store loss is never proof that nothing happened.
 
 ### 7.4 Expiry during execution
 
-E MUST NOT accept a call at or after the leaf `exp`. E MAY complete an operation it accepted before `exp`. A verifier judges `acc`, not the time the tally was signed.
+E MUST NOT accept a forward call at or after the leaf `exp`. E MAY complete an operation it accepted before `exp`. A verifier judges `acc`, not the time the tally was signed. Standing calls are accepted after `exp` (section 7 step 4) and are bounded by section 8 instead.
 
 ### 7.5 Delegating onward
 
@@ -316,25 +318,29 @@ An executor that delegates part of its work issues a child writ (section 4) and 
 
 Standing operations are authorized by position in the chain, not by `act`. A forward `act` prefix never matches them, and they never satisfy a forward `act`.
 
+A standing call is accepted after every writ in its chain has expired and after any of them has been revoked (section 7 steps 4 and 7). The chain is evidence that `from` was an issuer above the executor at the time the work was assigned; expiry and revocation end the holder's authority to do new work, not the issuer's standing to ask about or reverse work already done. What bounds a standing operation in time is stated per operation below. Expiry or revocation never restores forward authority: a forward call under an expired or revoked chain is refused whether or not a standing call has been made under it.
+
 ### 8.1 `sys/undo`
 
 Reverses the effect recorded by a tally. `args` is `{"tally": <the tally object, signed members>}`. The chain is the chain the tally's call ran under, verbatim. `from` is any `iss` on that chain.
 
-The executor checks, after section 7 steps 1 to 8: the tally's signature verifies under its own key (`not_reversible`); the identity of the leaf writ in `chain` equals `tally.writ` (`tally_mismatch`); `tally.rev` is not null and now < `tally.rev.until` (`not_reversible`); `tally.st` is `ok` (`not_reversible`). It then reverses the effect at most once per tally identity: a second `sys/undo` for the same tally returns the first undo tally. The undo tally has `rev` null and `out` committing to any body the executor returns.
+The executor checks, after section 7 steps 1 to 8 (with steps 4 and 7 skipped, as for every standing call): the tally's signature verifies under its own key (`not_reversible`); the identity of the leaf writ in `chain` equals `tally.writ` (`tally_mismatch`); `tally.rev` is not null and now < `tally.rev.until`, by the executor's own clock (`not_reversible`); `tally.st` is `ok` (`not_reversible`). It then reverses the effect at most once per tally identity: a second `sys/undo` for the same tally, under any call `id`, returns the first undo's outcome, and a retry of the same signed call is answered from the call store (section 7 step 9). The undo tally has `rev` null and `out` committing to any body the executor returns.
+
+The time bound on reversal is `tally.rev.until`, which the executor chose when it signed the tally, not the writ's `exp`. An undo MAY therefore arrive after the leaf, or the whole chain, has expired or been revoked, and MUST be honored if the checks above pass. The executor's own signature on the target proves the effect is its own; the chain proves `from` had standing over it; `rev.until` proves the executor promised reversibility until then.
 
 Because every ancestor issuer has standing, the original delegator can reverse an effect three hops down without the intermediate hop being reachable, and an intermediate hop can reverse its own sub-delegate's effect during its own compensation.
 
 ### 8.2 `sys/tallies`
 
-Returns every tally the executor holds whose chain included a given writ. `args` is `{"writ": <hash>}`; the hash MUST be the identity of a writ in `chain` (`tally_mismatch`). `from` is any `iss` on the chain. The result body is `{"tallies": [<tally>...]}` and the returned tally's `out` commits to it. This is the recovery path when an executor acted but its caller never received the tally.
+Returns every tally the executor still holds whose chain included a given writ. `args` is `{"writ": <hash>}`; the hash MUST be the identity of a writ in `chain` (`tally_mismatch`). `from` is any `iss` on the chain. The result body is `{"tallies": [<tally>...]}` and the returned tally's `out` commits to it. This is the recovery path when an executor acted but its caller never received the tally, and it works after the writ has expired or been revoked, which is exactly when a caller most needs it: the executor answers with whatever its tally store retains under the retention rule of section 9, and an empty list is a signed statement that nothing is retained, not proof that nothing ran.
 
 ## 9. State an executor holds
 
 | Store | Key | Lifetime | Durable | If lost |
 |---|---|---|---|---|
-| call store | (leaf writ identity, `id`) with state pending or the final tally | until leaf `exp` | MUST survive restart | a retried call may execute twice; the protocol does not hide this |
+| call store | (leaf writ identity, `id`) with state pending or the final tally | forward call: until leaf `exp`; standing call: as long as the tally store retains any record under that leaf | MUST survive restart | a retried call may execute twice; the protocol does not hide this |
 | count store | writ identity, integer consumed | until that writ's `exp` | MUST survive restart | `count` may be exceeded |
-| tally store | tally identity; indexed by every writ identity in its chain | until the later of leaf `exp` and `rev.until` | MUST survive restart | `sys/undo` and `sys/tallies` fail with `not_reversible` or return less |
+| tally store | tally identity; indexed by every writ identity in its chain | until the later of leaf `exp` and `rev.until`, and SHOULD be longer where recovery matters | MUST survive restart | `sys/undo` and `sys/tallies` fail with `not_reversible` or return less |
 | revoke store | writ identity | until that writ's `exp` | SHOULD survive restart | a revoked writ is honored again until `exp` |
 
 A pending call record found after a restart MUST be resolved to a final tally: `ok` or `failed` when the outcome can be determined, otherwise `failed` with `unknown_outcome`.
@@ -353,7 +359,7 @@ A pending call record found after a restart MUST be resolved to a final tally: `
 
 A revoke is valid when it passes section 6.1, `chain` is a valid chain (section 4, with its reasons), the leaf identity equals `writ` (`chain_broken` otherwise), and `iss` is the `iss` of some writ in `chain` (`no_standing` otherwise). For `"*"`, `chain` MUST be empty (`malformed`) and `iss` is the key itself. Expiry is not checked on a revoke.
 
-An executor that receives a valid revoke MUST record it and MUST NOT accept new calls under the revoked writ or any writ below it (section 7 step 7). It SHOULD forward the revoke to the `hld` of every writ it issued under the revoked writ. It answers with the tallies of every call it holds under the revoked writ that is not yet final: `canceled` for calls not yet accepted, and for accepted calls either the final tally when the operation completes or a `pending` tally. An executor MUST NOT report `canceled` for an operation it has already started unless it actually stopped it.
+An executor that receives a valid revoke MUST record it and MUST NOT accept new forward calls under the revoked writ or any writ below it (section 7 step 7). A revoke does not withdraw standing: `sys/undo` and `sys/tallies` under the revoked chain are still accepted (section 8), so the revoker can reverse or recover what completed before the revoke arrived. It SHOULD forward the revoke to the `hld` of every writ it issued under the revoked writ. It answers with the tallies of every call it holds under the revoked writ that is not yet final: `canceled` for calls not yet accepted, and for accepted calls either the final tally when the operation completes or a `pending` tally. An executor MUST NOT report `canceled` for an operation it has already started unless it actually stopped it.
 
 Safety MUST NOT depend on a revoke arriving. `exp` is the hard bound. A key-wide revoke (`"*"`) signed by a key is honored by every verifier that sees it, and a compromised key cannot undo it.
 
@@ -396,10 +402,10 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 | `chain_broken` | issuer or `prv` mismatch, or non-null root `prv` |
 | `not_narrowed` | a child widens, drops, or retypes a bound, outlives its parent, or violates `hld` or `depth` |
 | `unknown_bound` | bound type not in section 3 |
-| `expired` | now, or `acc`, is at or after `exp` |
+| `expired` | a forward call arrives, or a forward tally's `acc` is, at or after a writ's `exp`; never raised for a standing call |
 | `root_not_accepted` | executor does not act under this root |
 | `wrong_executor` | the receiving party is not the leaf `hld` |
-| `revoked` | a writ in the chain is revoked |
+| `revoked` | a forward call names a chain with a revoked writ; never raised for a standing call |
 | `no_standing` | `from` is not the required issuer |
 | `forbidden_op` | `op` not matched by `act`, or a forward `op` under `sys/` |
 | `missing_arg` | a bound name absent from `args` |
@@ -427,9 +433,11 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 **Holder binding.** Possession of writ objects confers nothing: a call is signed by the leaf issuer, a tally by the leaf holder, a child by the parent's holder. Replay of a signed call is stopped by the call store (section 7 step 9) and bounded by `count` and `exp`.
 
+**Standing after expiry.** Forward authority ends at `exp` and on revocation, at every executor, for every forward call. Standing does not, because it is not authority to act: it is the fact, proven by the signed chain, that `from` issued a writ above this executor. What an expired or revoked chain still permits is exactly two things, both already the issuer's: to ask an executor what ran under its writ, and to reverse an effect the executor itself signed as reversible, within the `rev.until` the executor chose. Neither creates work, spends `count`, or touches a bound. An attacker holding an old chain but not an issuer's key can do nothing with it; an attacker holding an issuer's key could have issued and revoked freely anyway, and a key-wide revoke ends that key's forward authority without ending its standing to clean up. Checking expiry on standing calls, as the first draft of this section did, produced the opposite failure: a delegator could not reverse a charge it was promised it could reverse, because the writ under which the charge was made had run out an hour earlier.
+
 **Root acceptance.** A chain proves attenuation from its root, not that the root matters. Section 7.1 is what stops a stranger from minting a root to an executor.
 
-**Time.** Verifiers use their own clock. `exp` is exclusive and strict. Bounds are judged at `acc`. Issuers SHOULD keep root writs short-lived; verifiers SHOULD reject a root whose `exp` is more than 24 hours ahead unless configured otherwise, with reason `expired`. Safety never depends on a revoke arriving.
+**Time.** Verifiers use their own clock. `exp` is exclusive and strict for forward authority. Bounds are judged at `acc`. Issuers SHOULD keep root writs short-lived; verifiers SHOULD reject a root whose `exp` is more than 24 hours ahead unless configured otherwise, with reason `expired`. Safety never depends on a revoke arriving.
 
 **Keys.** A did:key cannot rotate; a new key is a new principal. Damage from a stolen key is bounded by `exp` and `count` on outstanding writs and ended by a key-wide revoke, which the thief cannot undo. Binding a key to a vendor for liability is the job of a signed Agent Card or equivalent listing the did:key (section 13); a verifier that has not checked such a binding MUST report the executor as a key, never as a name taken from a result body.
 
@@ -455,6 +463,8 @@ Application failures use `failed` with a code outside this table; such codes SHO
 | delegation with attenuation | UCAN, Biscuit, macaroons, ZCAP-LD | Writ is the JSON-only, DID-key-only, five-comparison subset, plus receipts |
 | receipts | in-toto, SCITT | a tally can be wrapped as an in-toto statement or registered with a SCITT log by an extension |
 | payment mandates | AP2 | an AP2 mandate can be carried as an application bound; Writ does not settle payments |
+| hash-linked attenuated agent delegation | draft-asor-wimse-agent-delegation-chain, draft-hamr-oauth-agent-delegation, AgentROA, AIP/IBCT | same shape (parent hash, subset per hop, offline check); Writ differs in carrying no OAuth or JWT envelope, in a closed five-type bound algebra, and in binding the receipt tree to the chain. A JWS profile is the bridge |
+| per-action authorization receipts and tool-call binding | draft-schrock-ep-authorization-receipts, draft-das-agentic-tool-binding | pre-execution approval of one action; a tally is post-execution and MAY carry such a receipt's hash in `err.ref` or the result body |
 
 Bindings for MCP (`_meta` members on `tools/call` and its result) and A2A (a `DataPart` of media type `application/writ+json` and an Agent Card extension) are specified in the adoption document and are not part of this core.
 
@@ -469,7 +479,7 @@ An implementation conforms when it passes the conformance corpus: a directory of
 | `satisfies` | `{"bound": <bound>, "arg": <value>}` | section 3, never `count` |
 | `verify_writ` | `{"writ": <writ>}` | section 6.1 |
 | `verify_chain` | `{"chain": [<writ>...]}` | section 4 as an operation, then expiry at `now` if given |
-| `verify_call` | `{"call": <call>}` | section 6.1 on the call, section 4 on its chain, expiry at `now` if given, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state |
+| `verify_call` | `{"call": <call>}` | section 6.1 on the call, section 4 on its chain, expiry at `now` if given and the call is forward, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state, and not section 8's argument checks |
 | `verify_tally` | `{"writ": <leaf writ>, "call": <call>, "tally": <tally>, "res": <body, optional>}` | section 6.2 |
 
 A vector without `now` is evaluated with no clock: expiry is not checked. A vector with `now` uses that value as the verifier's current time and never the real clock, so the corpus is stable forever. Keys in the corpus derive from fixed seeds and fixed nonces so any implementation can regenerate every vector byte for byte. Executor behavior that needs state (count, replay, undo, revoke, recovery) is exercised by scenario tests rather than by the stateless corpus.
@@ -518,3 +528,5 @@ Why the tally embeds sub-tallies verbatim: a summary is B's word; an embedded si
 Why no `nbf`: it adds a second clock comparison and only prevents early use, which the issuer controls by not issuing early.
 
 Why reversal is a standing call and not a new writ: the chain the tally names already proves who had standing, the executor's own signature on the tally proves the effect is its own, and one verification path is easier to get right in 2046 than two.
+
+Why standing survives expiry and revocation: `exp` and revoke bound the holder's authority to start work; `rev.until` bounds the executor's promise to undo it; the tally store's retention bounds what can be recovered. Tying the second and third to the first made the promise in `rev` a lie whenever `until` was later than `exp`, which in the demo it always is.

@@ -1,5 +1,8 @@
 # 07. Distributed systems review of Writ
 
+
+> **Historical document (2026-09-03).** Review of the pre-kill-round design. `recall` here is `revoke` in v0.1, and `exe`, `ts`, `res`, and `rcl` are not members of the v0.1 tally. The rules adopted from this review are recorded in the decision record (10); the specification governs where they differ. In particular, v0.1 does not check expiry or revocation on standing calls (`sys/undo`, `sys/tallies`), which resolves the recall-races-completion case (d) below in the caller's favor.
+
 Status: design review, 2026-09-03. Role: Distributed Systems Engineer. Inputs: `04-architectures.md` (Writ, Architecture 1, with Behalf as HTTP binding and the failure semantics borrowed from Tether and Pouch), `01-history.md` principles 6 (state is explicit or absent) and 10 (failure is a defined message, not an absence), `05-threat-model.md` where its rules overlap. Nothing here was fetched from the network.
 
 Method. Every attack below is a message trace with timestamps against the fixed scenario: A (`did:key:z6MkA`) issues writ_1 to B, B narrows writ_2 to C, C charges 58900 and returns tally_C, B returns tally_B. T0 is 1788400000; all times are T0 plus seconds. writ_1 expires at T0+3600, writ_2 at T0+2000. For each attack I say what each party holds on disk at the moment of failure, what Writ as written does, whether it SURVIVES or FAILS, and the smallest rule that closes it. "As written" means the text of Architecture 1 plus the cross-cutting section; the stolen appendices from Tether and Pouch are noted where they change the answer.

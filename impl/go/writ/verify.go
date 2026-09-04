@@ -1,6 +1,8 @@
 package writ
 
 import (
+	"strings"
+
 	"writproto/jcs"
 	"writproto/wire"
 )
@@ -57,7 +59,10 @@ func verifyTree(W *Writ, T *Tally) error {
 	if T.Writ != W.ID {
 		return fail(TallyMismatch, "tally names writ %s, expected %s", T.Writ, W.ID)
 	}
-	if T.Acc >= W.Exp {
+	// Step 5 applies to forward tallies only. A standing operation (sys/) is
+	// authorized by the chain as historical proof (section 7 step 4) and may
+	// be accepted after the writ's exp; its time bound is operation-specific.
+	if !strings.HasPrefix(T.Op, "sys/") && T.Acc >= W.Exp {
 		return fail(Expired, "acc %d at or after exp %d", T.Acc, W.Exp)
 	}
 	for name, b := range W.Bnd {

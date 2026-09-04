@@ -4,7 +4,9 @@
 - verify_chain: section 2.1 (6.1 per writ, section 4 per pair, depth), then
   expiry against the verifier's clock.
 - verify_call: section 7 steps 1 to 8, the stateless part of executing a
-  call, for an executor or an auditor that holds no stores.
+  call, for an executor or an auditor that holds no stores. Expiry (step
+  4) and revocation (step 7) apply to forward calls only; a standing call
+  (sys/) is authorized by the chain as historical proof.
 - verify_tally: section 6.2, the tally tree, returning a Verdict of
   valid, signed_unauthorized, or unverifiable plus the reason code.
 """
@@ -139,7 +141,8 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
 
     ``executor`` is the receiving key's did (step 6), ``accepted_roots`` an
     iterable of root issuer dids (step 5), ``revoked`` a set of revoked writ
-    identities (step 7). Each of the three is skipped when None. With
+    identities (step 7, forward calls only, as is expiry at step 4). Each of
+    the three is skipped when None. With
     ``standing_ops`` false a standing call gets only the no_standing check,
     which is the conformance scope of the verify_call op. Returns the
     parsed call.
@@ -148,19 +151,26 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
     writs = [O.verify_object(w, "writ") for w in call["chain"]]  # step 2
     O.check_signature(call, call["from"])
     ids = C.check_chain(writs)                                   # step 3
-    _expired(writs, now)                                         # step 4
+    op = call["op"]
+    standing = op.startswith("sys/")
+    # Steps 4 and 7 apply to forward calls only. Forward authority ends at
+    # exp and on revocation. A standing call uses the signed chain as
+    # historical proof of standing; its time bound is operation-specific
+    # (rev.until, tally retention). Neither expiry nor revocation restores
+    # forward authority, because every forward call passes both steps.
+    if not standing:
+        _expired(writs, now)                                     # step 4
     t = _now(None if now is NO_CLOCK else now)
     if accepted_roots is not None and writs[0]["iss"] not in set(accepted_roots):
         raise WritError("root_not_accepted", f"root issuer {writs[0]['iss']} is not accepted")   # step 5
     leaf = writs[-1]
     if executor is not None and leaf["hld"] != executor:        # step 6
         raise WritError("wrong_executor", "the receiving party is not the leaf hld")
-    if revoked:                                                  # step 7
+    if revoked and not standing:                                 # step 7
         for i in ids:
             if i in revoked:
                 raise WritError("revoked", f"writ {i} is revoked")
-    op = call["op"]                                              # step 8
-    if op.startswith("sys/"):
+    if standing:                                                 # step 8
         if call["from"] not in {w["iss"] for w in writs}:
             raise WritError("no_standing", "from is not the iss of any writ in the chain")
         if standing_ops:
@@ -226,7 +236,9 @@ def _tree(writ, writ_id, chain, tally, call=None, call_id=None, res=None):
                 raise WritError("tally_mismatch", "tally names a different writ")
             if T["op"] != call["op"]:                                         # step 4
                 raise WritError("tally_mismatch", "tally op differs from the call op")
-        if T["acc"] >= writ["exp"]:                                           # step 5
+        # Step 5 applies to forward tallies only: a standing operation (sys/)
+        # may be accepted after the writ's exp (section 7 step 6, section 8).
+        if not T["op"].startswith("sys/") and T["acc"] >= writ["exp"]:        # step 5
             raise WritError("expired", f"acc {T['acc']} is at or after exp {writ['exp']}")
         if res is not None and T["out"] != O.hash_body(res):                  # step 6
             raise WritError("tally_mismatch", "out does not commit to the result body")

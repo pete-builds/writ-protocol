@@ -1,5 +1,8 @@
 # 09. Security review of the six architectures
 
+
+> **Historical document (2026-09-03).** Security review of the six candidates. `recall` is `revoke` in v0.1; `exe`, `in`, and `ts` were cut from the tally; the Behalf binding of section 3 is not the v0.1 HTTP binding. Section 4's draft Security Considerations were the input to spec section 12, which governs where they differ, including the standing-after-expiry rule that v0.1 adopted after this review.
+
 Status: review, 2026-09-03. Role: Security Architect. Inputs: `05-threat-model.md` (45 requirements, 41 threats) and `04-architectures.md`. Grading is against the checklist in `05-threat-model.md` section 6, by number. KILLED means a MUST fails because of the architecture's shape, not because a sentence is missing.
 
 ## 1. Pass/fail matrix

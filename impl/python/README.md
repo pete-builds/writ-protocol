@@ -1,8 +1,12 @@
 # Writ v0.1, Python implementation
 
-An independent implementation of the Writ protocol verifier, written from
-`docs/spec/writ-v0.1.md` alone, without reading the Go implementation.
-Python 3.14 and the `cryptography` package are the only requirements.
+A second implementation of the Writ protocol verifier, in a different
+language from the Go reference, written from `docs/spec/writ-v0.1.md`
+without consulting the Go code. It was produced by the same author as the
+Go implementation, so it is a consistency check between two readings of
+the spec, not an externally independent implementation; the roadmap's
+"stranger test" is still open. Python 3.12 or later (developed and tested
+on 3.14) and the `cryptography` package are the only requirements.
 
 ## Layout
 
@@ -38,9 +42,10 @@ loaded with a lenient reader so that deliberately broken embedded objects
 reach the verifier and are rejected with the spec's reason code. Supported
 ops: `verify_writ`, `verify_chain`, `verify_call`, `verify_tally`, `narrows`,
 `satisfies`, `canonicalize`. `verify_call` covers section 6.1 on the call,
-section 4 on its chain, expiry, and the section 5 classification with 7.2
-for forward calls; executor state (7 steps 5 to 7) and section 8 argument
-checks are outside it. A `now` member fixes the clock; a vector without
+section 4 on its chain, expiry for forward calls only (a standing `sys/`
+call is authorized by the chain as historical proof, spec section 7 step
+4), and the section 5 classification with 7.2 for forward calls; executor
+state (7 steps 5 to 7) and section 8 argument checks are outside it. A `now` member fixes the clock; a vector without
 one is judged with no clock, so expiry is not checked. The CLI commands use
 real time unless given `--now`.
 
@@ -137,3 +142,15 @@ reasonably differ, the conformance corpus will show it.
 34. **verify_call scope for standing calls.** Section 7 step 8 says "section 8 applies" to a standing call, but section 8's checks need the executor's own key and clock. Choice: the conformance op checks only `no_standing` for a `sys/` op; the library's `verify_call` performs the stateless section 8 checks unless `standing_ops=False`.
 
 35. **Vectors without `now`.** The Go corpus has `verify_chain` accept vectors with no `now` whose `exp` is already in the past, so the corpus convention is: no `now`, no clock, expiry not checked. The runner follows that (`verify.NO_CLOCK`); the CLI commands use real time. The corpus format should state this explicitly.
+
+## Revision of 2026-09-04: standing calls after expiry
+
+Items 16 and 34 above were written when the spec checked expiry for every
+call. The spec now applies expiry (section 7 step 4) and revocation (step
+7) to forward calls only; a standing call (`sys/undo`, `sys/tallies`) is
+accepted under an expired or revoked chain and is bounded by `rev.until`
+and by tally retention instead. This implementation follows that:
+`verify_call` skips both checks for a `sys/` op, and section 6.2 step 5
+(`acc` before `exp`) is skipped for a tally whose `op` is under `sys/`.
+Tests `test_standing_survives_expiry_and_revocation` and
+`test_standing_tally_acc_after_exp`, and vectors 022 to 025, pin it.

@@ -15,11 +15,11 @@ Each seed from the threat model (docs/design/05-threat-model.md section 7) mappe
 | 9 | receipt output mismatch | vector `tally body mismatch` | `tally_mismatch` |
 | 10 | omitted sub-delegation | `sub` and `wrt` are mandatory even when empty (vector `tally missing sub`); contradiction surfaces via `sys/tallies` (`TestExecuteCountReplayAndRoot`, demo step 8) | `malformed` |
 | 11 | stranger root | `TestExecuteCountReplayAndRoot`, demo step 6 | `root_not_accepted` |
-| 12 | expired by verifier clock | vectors `root expired`, `child expired only`, `tally acc at exp` | `expired` |
-| 13 | revoke bypassing the intermediate; non-ancestor revoke ignored | `TestRevokeCancelsInflightAndRestartRecovers`; `TestRevoke` (holder cannot revoke from below) | `revoked`, `no_standing` |
-| 14 | cancel racing completion | `TestRevokeCancelsInflightAndRestartRecovers`, demo step 7 (final tally `canceled`; a completed call answers with its completed tally) | |
+| 12 | expired by verifier clock | vectors `root expired`, `child expired only`, `tally acc at exp`, `forward call at leaf exp`, `forward call after root exp`, `forward tally acc at leaf exp`; `TestForwardCallRejectedAfterExpiry` | `expired` |
+| 13 | revoke bypassing the intermediate; non-ancestor revoke ignored; key-wide revoke | `TestRevokeCancelsInflightAndRestartRecovers`; `TestRevoke` (holder cannot revoke from below); `TestKeyWideRevokeStopsForwardCalls` | `revoked`, `no_standing` |
+| 14 | cancel racing completion | `TestRevokeCancelsInflightAndRestartRecovers`, demo step 7 (final tally `canceled`; a completed call answers with its completed tally); `TestUndoAfterRevokeSucceeds` (the revoker can still `sys/undo` the completed effect) | |
 | 15 | forward grant used for reversal | vector `act prefix sys does not grant standing`; reversal is a standing op, never matched by `act` | `no_standing` |
-| 16 | repeated reversal | `TestExecuteCountReplayAndRoot` (second undo does not refund), demo step 5 | |
+| 16 | repeated reversal | `TestExecuteCountReplayAndRoot` (second undo does not refund), `TestUndoAfterExpiryBeforeRevUntil` (byte-identical replay and a fresh call id, both idempotent), demo step 5 | |
 | 17 | duplicate delivery | `TestExecuteCountReplayAndRoot` (replay returns byte-identical tally, one execution) | |
 | 18 | chain deeper than the maximum, checked before signatures | vector `nine links` | `too_large` |
 | 19 | algorithm confusion | there is no algorithm member; vectors `did web holder`, `secp256k1 did key` reject any non-Ed25519 key | `bad_key` |
@@ -39,4 +39,9 @@ Additional adversarial cases beyond the seeds:
 | padded base64url | vector `padded signature` | `malformed` |
 | oversized object before signature check | vector `writ over 4096 bytes` | `too_large` |
 | crash between accept and tally | `TestRevokeCancelsInflightAndRestartRecovers` (restart resolves to `unknown_outcome`) | `unknown_outcome` |
+| standing call under an expired chain (`sys/undo` before `rev.until`, `sys/tallies`) | vectors `standing undo after leaf exp`, `standing tallies after root exp`, `undo tally acc after exp`; `TestUndoAfterExpiryBeforeRevUntil`, `TestTallyRecoveryAfterExpiry` (accepted: expiry ends forward authority, not standing) | |
+| undo past `rev.until` | `TestUndoAfterRevUntilFails` | `not_reversible` |
+| expired or revoked chain used to regain forward authority | `TestForwardCallRejectedAfterExpiry`, `TestUndoAfterRevokeSucceeds` (forward refused before and after the undo) | `expired`, `revoked` |
+| standing call that is tampered, chain-broken, foreign-rooted, misaddressed, unauthorized, or undefined, after expiry | `TestStandingCallsStillFailClosed`; vector `standing call by holder after exp` | `bad_signature`, `chain_broken`, `root_not_accepted`, `wrong_executor`, `no_standing`, `forbidden_op`, `tally_mismatch`, `not_reversible` |
+| cross-executor fan-out under sibling writs | not preventable at request time (spec 7.3); `sum of sub exceeds parent max` and `sys/tallies` are the audit-time detection | `out_of_bounds` |
 | language model output presented as a writ to sign | `Issue` narrows from a held parent and refuses widening (`TestIssueRefusesWidening`); there is no API that signs a caller-supplied writ object | |

@@ -2,9 +2,11 @@
 
 **Writ: pass narrowable authority between agents and bring back a signed account of what was done under it.**
 
-A candidate protocol primitive for agents from different vendors and trust domains. Four signed JSON objects, five bound types with mechanical subset comparison, one signature algorithm, one hash, one canonicalization, no central party. This repository holds the research, the design record, the v0.1 specification, a Go reference implementation, an independent Python verifier, a conformance corpus, and a three-agent demo.
+A candidate protocol primitive for agents from different vendors and trust domains. Four signed JSON objects, five bound types with mechanical subset comparison, one signature algorithm, one hash, one canonicalization, no central party. This repository holds the research, the design record, the v0.1 specification, a Go reference implementation, a second implementation in Python written from the spec, a conformance corpus, a three-agent demo, and the CI that keeps them agreeing.
 
-Started from one question: what is the smallest thing MCP + A2A + OAuth still cannot express cleanly? The answer, after a step-by-step attempt to build the scenario on each of them (docs/research/03-skeptic-opening.md): there is no vendor-neutral, offline-verifiable object that binds a task-scoped delegation chain, which each hop can narrow without contacting any issuer, to a signed receipt from each hop stating what it did under exactly which link of that chain. Everything else in the scenario (discovery, transport auth, task lifecycle, tool schemas) is already standardized and stays where it is.
+Started from one question: what is the smallest thing MCP + A2A + OAuth still cannot express cleanly? The answer, after a step-by-step attempt to build the scenario on each of them (docs/research/03-skeptic-opening.md): none of the three gives a vendor-neutral, offline-verifiable object that binds a task-scoped delegation chain, which each hop can narrow without contacting any issuer, to a signed receipt from each hop stating what it did under exactly which link of that chain. Everything else in the scenario (discovery, transport auth, task lifecycle, tool schemas) is already standardized and stays where it is.
+
+Outside those three, several 2026 drafts and papers now cover parts of that gap: hash-linked offline attenuation (draft-asor-wimse-agent-delegation-chain, AgentROA, AIP's Biscuit-chained tokens), closed comparator registries for narrowing (draft-hamr-oauth-agent-delegation), MCP and A2A bindings (AIP, AgentROA), and completion or approval evidence (AIP completion blocks, AgentROA execution receipts, draft-schrock authorization receipts). Writ does not claim any of those as its own. **Writ's specific contribution is a compact, executable protocol for offline attenuated delegation with a closed mechanically comparable bound algebra, signed post-execution tally trees, and explicit replay, failure, recovery, revocation, and reversal semantics.** Section 4 below says what is borrowed, what is combined differently, what is distinctive, and what no design in this space fixes; docs/research/02-prior-art.md section 7 has the source-by-source comparison.
 
 ## The thirteen outputs
 
@@ -58,19 +60,30 @@ Objects and their sizes on the wire for the demo: writ_1 about 600 bytes, the tw
 
 ### 4. Standards comparison
 
-Full 25-standard matrix with citations: docs/research/02-prior-art.md section 2. The compressed view for the functions Writ cares about:
+Full matrix with citations, 31 rows including the six 2026 agent-delegation sources: docs/research/02-prior-art.md sections 2 and 7. The compressed view for the functions Writ cares about:
 
-| | Identity | Authority object | Holder can narrow offline | Executor enforces at request time | Signed receipt per hop | Sub-tree of receipts | Reversal standing | No online party |
-|---|---|---|---|---|---|---|---|---|
-| MCP 2026-07-28 | OAuth client | OAuth token, must not transit | no | scope only | no | no | no | AS required |
-| A2A 1.0 | signed Agent Card | out of scope | no | no | no | no | cancel only | card host |
-| OAuth 2.1 + RAR + token exchange | AS-issued | RAR details | no, AS re-issues | yes, one hop | no | no | no | AS required |
-| UCAN 1.0 | DID | delegation | yes | yes | promise, not receipt | no | revocation only | no |
-| Biscuit 3 | root key | token blocks | yes | yes | no | no | no | no |
-| macaroons | HMAC root | caveats | yes | root only can verify | no | no | no | no |
-| AP2 mandates | VC | purchase mandates | no | merchant | final mandate | no | dispute | payments network |
-| SCITT | any | none | no | no | signed statement plus log receipt | no | no | log required |
-| **Writ v0.1** | did:key | writ | yes, subset rule | yes, leaf bounds | tally | yes, embedded verbatim | any issuer on the chain | none |
+| | Identity | Authority object | Holder can narrow offline | Hash-linked chain | Executor enforces at request time | Signed receipt per hop | Sub-tree of receipts | Replay and failure named | Recovery and reversal | No online party |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MCP 2026-07-28 | OAuth client | OAuth token, must not transit | no | no | scope only | no | no | no | no | AS required |
+| A2A 1.0 | signed Agent Card | out of scope | no | no | no | no | no | task id | cancel only | card host |
+| OAuth 2.1 + RAR + token exchange | AS-issued | RAR details | no, AS re-issues | no | yes, one hop | no | no | no | no | AS required |
+| UCAN 1.0 | DID | delegation | yes | yes, CID | yes | promise, not receipt | no | invocation CID | revocation only | no |
+| Biscuit 3 | root key | token blocks | yes | block chain | yes | no | no | no | no | no |
+| AIP / IBCT (2026-03) | JWT or Biscuit ids | capability token | yes, Biscuit blocks | yes | resource | self-reported completion block | no | no | no | no |
+| AgentROA draft (2026-04) | registry | ROA envelope | yes, ARA per hop | yes | gateway | gateway execution receipt | no | session cache | revocation via registry | policy engine, registry |
+| WIMSE agent delegation chain draft (2026-09) | JWT sub, cnf | JWT with RAR details | yes | yes, `par_hash` | resource | no | no | jti, DPoP | status list | no, optional status list |
+| OAuth agent delegation profile draft (2026-09) | keyid per link | header link | yes | no | resource | no | out of scope | nonce, write budget | none | trust source for root |
+| EP authorization receipts draft (2026-08) | approver directory | per-action approval | no | Merkle log | pre-execution | approval receipt, not execution | no | one-time consumption | no | log checkpoint |
+| Agentic tool-call binding draft (2026-08) | host-local | authority id | depth field only | no | host dispatcher | no | no | single-use CAS | no | authority store |
+| **Writ v0.1** | did:key | writ | yes, five-type subset rule | yes, `prv` | yes, leaf bounds and `count` across the chain | tally by the executor, naming the exact writ | yes, embedded verbatim, summed | (leaf writ, `id`); `pending`, `unknown_outcome`, `undeliverable` | `sys/tallies`, `sys/undo` by any issuer, revoke with in-flight cancel | none |
+
+**Already present in neighboring work:** hash-linked offline attenuation, typed comparator registries, MCP and A2A bindings, signed refusals, completion and approval evidence, per-action argument binding.
+
+**Combined differently in Writ:** one comparison table serves both narrowing and request-time argument checks; bounds are signed by the delegator in a bare JSON envelope with did:key and no JWT; `count` is consumed against every writ in the chain at every executor; the receipt is signed by the executor, names the exact link, and embeds the child writs and sub-receipts verbatim.
+
+**Distinctive as of 2026-09-04:** the post-execution tally tree with consumption accounting and a three-valued verdict; idempotency as a protocol rule with byte-identical replay; `sys/tallies` recovery and `sys/undo` reversal as standing operations that survive expiry and revocation and are bounded by `rev.until`; revoke with in-flight cancellation and forwarding; a normative first-failure order pinned by a cross-implementation corpus.
+
+**Fundamental limitations shared with every design here:** hidden sub-delegation (a holder can delegate to a key it controls, or omit a delegation; `wrt`, `sub`, `hld`, and `sys/tallies` make it a signed statement or a policy choice, not an impossibility), cross-executor fan-out (`max` and `count` are per executor; a total across sibling executors needs coordination the protocol does not define and is audited from `used` after the fact), timestamps as the signer's claims, no key rotation for did:key, and root acceptance as policy outside the protocol.
 
 ### 5. Threat model
 
@@ -91,7 +104,7 @@ docs/spec/writ-v0.1.md. Fourteen sections and three appendices, about 6,500 word
 | `bound` | five bound types, narrows and satisfies | 40 comparisons both directions |
 | `wire` | signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
 | `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
-| `exec` | executor: four durable stores, count across the chain, replay, undo, tallies lookup, revoke with in-flight cancel, crash recovery | two scenario tests |
+| `exec` | executor: four durable stores, count across the chain, replay, undo, tallies lookup, revoke with in-flight cancel, crash recovery, standing calls after expiry and revocation | nine scenario tests |
 | `httpbind` | one POST endpoint, well-known document, client | round trip |
 | `conformance` | corpus runner | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
@@ -103,12 +116,12 @@ docs/spec/writ-v0.1.md. Fourteen sections and three appendices, about 6,500 word
 cd impl/go && go test ./...
 ```
 
-An independent Python verifier written from the spec text alone, without reading the Go code, is in `impl/python`: 73 unit tests, a conformance runner, and 22 vectors of its own. It surfaced 35 spec ambiguities (listed in its README), every one of which is now resolved in the spec text. Cross-run results, which are the interoperability proof:
+A second implementation in Python is in `impl/python`: 75 unit tests, a conformance runner, and 26 vectors of its own. It was written from the spec text without consulting the Go code, but by the same author, so it is a consistency check between two readings of one text rather than an externally independent implementation; the stranger test in the roadmap is still open. It surfaced 35 spec ambiguities (listed in its README), every one of which is now resolved in the spec text. Cross-run results, which CI repeats on every push:
 
 | Direction | Result |
 |---|---|
-| Python verifier on the 138 Go-generated vectors | 138 passed, 0 failed |
-| Go verifier on the 22 Python-generated vectors | 22 passed, 0 failed |
+| Python verifier on the 145 Go-generated vectors | 145 passed, 0 failed |
+| Go verifier on the 26 Python-generated vectors | 26 passed, 0 failed |
 
 Three of the divergences found on the way were Go bugs against the spec (the literal `-0`, padded base64url classed as `malformed`, and a bound-shape error classed as `noncanonical`); one was a non-deterministic first-failure order in Go's argument check. All four are fixed and pinned by vectors.
 
@@ -118,11 +131,11 @@ Three of the divergences found on the way were Go bugs against the spec (the lit
 sh demo/run.sh
 ```
 
-Builds the binaries, starts B (booking, port 8081) and C (payment, port 8082) as separate processes with file-backed stores, and runs A. Eight steps, nineteen checked expectations: discovery, issuing, the two-hop call, offline verification of the tally tree, A reversing C's charge directly without B, idempotent undo, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels in-flight work at B and is forwarded to C, and recovery via `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON. The last run's transcript is in `demo/out/demo.log`.
+Builds the binaries, starts B (booking, port 8081) and C (payment, port 8082) as separate processes with file-backed stores, and runs A. Eight steps, nineteen checked expectations: discovery, issuing, the two-hop call, offline verification of the tally tree, A reversing C's charge directly without B, idempotent undo, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels in-flight work at B and is forwarded to C, and recovery via `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON, with the transcript in `demo/out/demo.log`; that directory is generated on each run and not committed. The script exits non-zero if any expectation fails, and CI runs it.
 
 ### 9. Conformance suite
 
-`conformance/vectors/`: 138 vectors regenerated byte for byte from fixed seeds and fixed nonces, 38 accept and 100 reject, every rejection naming its reason code. Covers canonicalization, every bound type in both directions, every chain rule, signatures, expiry, size and depth limits, forward and standing calls, and tally trees including sub-tally accounting.
+`conformance/vectors/`: 145 vectors regenerated byte for byte from fixed seeds and fixed nonces, 41 accept and 104 reject, every rejection naming its reason code. Covers canonicalization, every bound type in both directions, every chain rule, signatures, expiry, size and depth limits, forward and standing calls including standing calls after expiry, and tally trees including sub-tally accounting. Executor behavior that needs state (count, replay, undo, revoke, recovery, and the standing-after-expiry rule) is covered by the nine scenario tests in `impl/go/exec`.
 
 ```
 cd impl/go && go run ./cmd/writ conformance ../../conformance/vectors
@@ -135,7 +148,7 @@ docs/adoption.md. The wedge is the enterprise platform team already running an A
 ### 11. Why this could become infrastructure
 
 - It passes the ten tests distilled from nine durable protocols (docs/research/01-history.md): one-week core, offline verification, transport independence, one parse, value at N=2, explicit state, readable wire, no central authority, no flag day, named failure.
-- It standardizes the one thing nobody else does and refuses everything else. Discovery, lifecycle, transport auth, and schemas stay with their owners, so no incumbent is a competitor.
+- It standardizes one narrow layer and refuses everything else. Discovery, lifecycle, transport auth, and schemas stay with their owners, so no incumbent is a competitor, and the neighboring delegation drafts are candidates for a JWS profile rather than rivals.
 - The comparison table is the standard. Five total, decidable comparisons; a bound a verifier cannot compare is rejected. That is what lets two strangers' runtimes agree on "strictly less" without a policy language.
 - Receipts embed receipts. Provenance is a tree of signed objects, not a log someone must operate.
 - Every field has a reason to exist and a reason code for its absence. Two implementations reject the same object for the same reason, which is what makes conformance meaningful.
@@ -148,11 +161,12 @@ docs/adoption.md. The wedge is the enterprise platform team already running an A
 - **Bare Ed25519 over canonical JSON is a new envelope.** The IETF has JWS and COSE. Refusing them keeps the wire readable and closes every existing working group's door at once. The JWS profile is planned, not built.
 - **Executors need durable state.** `count`, replay, and reversal require stores that survive restart. Stateless deployments will drop those features, and a Writ without `count` is closer to a signed RAR than to a capability.
 - **Fabricated sub-executors are undetectable by design.** A holder can delegate to a key it controls and produce a perfect tally tree. The protocol tells the truth about keys, and nothing about who holds them.
-- **One implementation, one author, one week.** The Python verifier is a start on independence. Until a stranger implements from the spec and interoperates, every claim above is a claim.
+- **Two implementations, one author, two days.** The Python port checks that one author read the spec the same way twice. Until a stranger implements from the spec and interoperates, every claim above is a claim.
+- **The neighbors are close and better connected.** draft-asor-wimse-agent-delegation-chain has hash-linked offline attenuation inside the JWT and DPoP ecosystem the IETF already runs; draft-hamr has a comparator registry; AgentROA has receipts. If one of them adds an executor-signed receipt tree, Writ's remaining distinction is its semantics for replay, recovery, and reversal, which are easier to add to a draft than a wire format is.
 
 ### 13. Roadmap to an IETF-quality standard
 
-1. **Now.** v0.1 spec, Go reference, Python verifier, 138-vector corpus, demo. Fix the spec ambiguities the Python port found.
+1. **Now.** v0.1 spec, Go reference, Python second implementation, 145-vector corpus, demo, CI. The spec ambiguities the Python port found are fixed, and so is the standing-operation rule: expiry and revocation now end forward authority only, so `sys/undo` and `sys/tallies` work after a writ expires or is revoked.
 2. **Stranger test.** One engineer who has not seen either implementation builds a verifier from the spec and runs the corpus. Every divergence becomes a spec fix and a vector. Trigger to advance: zero divergences on two consecutive strangers.
 3. **Second transport.** Run the demo over a message queue and over files in a directory, using the same objects. Proves the narrow waist.
 4. **Adapters.** The reverse proxy, then the MCP `_meta` binding as an MCP extension proposal, then the A2A DataPart binding as an A2A extension. Trigger: one production pair between two organizations that are not the authors.
@@ -173,7 +187,7 @@ The skeptic's opening (docs/research/03-skeptic-opening.md) found the same first
 | All three: reversal needs a new credential and B's cooperation | A reverses C's charge directly, idempotently, by standing as an issuer on the chain | `sys/undo` |
 | All three: cancel is one hop and silence looks like stopped | a revoke cancels B's in-flight task, is forwarded to C, and a later call under the writ is refused with `revoked` | revoke, `canceled` tally |
 
-The interoperability claim rests on two implementations written from the same text by parties that did not read each other's code, agreeing on all 160 vectors including the reason code for every rejection.
+The consistency claim rests on two implementations in two languages, written by one author from the same text without the second consulting the first, agreeing on all 171 vectors including the reason code for every rejection, and on CI that fails on any divergence. It is not yet an interoperability claim between unaffiliated implementers.
 
 ## Repository map
 
@@ -186,11 +200,24 @@ docs/design/                       04 six architectures, 05 threat model, 06 kil
 docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
 impl/go/                           reference implementation and CLI
-impl/python/                       independent verifier from the spec text
-conformance/vectors/               138 vectors
+impl/python/                       second implementation, from the spec text
+conformance/vectors/               145 vectors
 conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
-demo/run.sh                        three-process demo; transcript in demo/out/
+demo/run.sh                        three-process demo; transcript in demo/out/ (generated)
+.github/workflows/ci.yml           CI: tests, cross-conformance, vector regeneration, demo
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request, and fails on any divergence:
+
+| Job | What must hold |
+|---|---|
+| go test | `gofmt`, `go vet`, and `go test ./...` on the Go version pinned by `impl/go/go.mod` (1.25; developed on 1.26) |
+| python unit tests | `unittest` on Python 3.12, 3.13, and 3.14 (developed on 3.14) |
+| cross-implementation conformance | the Go verifier on every Go and Python vector, and the Python verifier on every Go and Python vector |
+| deterministic vector regeneration | both generators rerun and `git diff` of both vector directories is empty |
+| three-process demo | `demo/run.sh` exits zero and the transcript says every expectation held |
 
 ## License
 
@@ -198,4 +225,4 @@ Apache License 2.0, which carries an explicit patent grant. That matters more fo
 
 ## Process record
 
-Nine roles ran as separate agents: Protocol Historian, Prior-Art Researcher, Skeptic (twice), Protocol Architect, Security Architect (twice), Distributed Systems Engineer, Independent Builder, Adoption Strategist, and a Prototype Team split between the Go implementation and an independent Python verifier. Six architectures were generated on six structural axes; four were killed and two merged into the winner as extensions. The decision record (docs/design/10-decision-record.md) lists every conflict between reviewers and how it was resolved.
+Nine roles ran as separate agents: Protocol Historian, Prior-Art Researcher, Skeptic (twice), Protocol Architect, Security Architect (twice), Distributed Systems Engineer, Builder, Adoption Strategist, and a Prototype Team split between the Go implementation and the Python second implementation. All of them were the same author's tooling; none was an outside party. Six architectures were generated on six structural axes; four were killed and two merged into the winner as extensions. The decision record (docs/design/10-decision-record.md) lists every conflict between reviewers and how it was resolved.

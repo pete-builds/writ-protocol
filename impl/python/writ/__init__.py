@@ -1,4 +1,4 @@
-"""Writ protocol v0.1, independent Python implementation.
+"""Writ protocol v0.1, second implementation in Python, written from the spec.
 
 Written from the specification text alone (docs/spec/writ-v0.1.md).
 Modules:

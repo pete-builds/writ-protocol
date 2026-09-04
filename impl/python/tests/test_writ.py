@@ -421,6 +421,33 @@ class CallTest(Base):
     def test_revoked(self):
         self.assertReason("revoked", V.verify_call, FX.callB, now=NOW, revoked={O.identity(FX.w1)})
 
+    def test_standing_survives_expiry_and_revocation(self):
+        # Section 7 step 6: a forward call is expired at exp, and stays so
+        # however the chain is presented; a standing call is not.
+        undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": FX.tC})
+        tallies = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)})
+        after_leaf = EXP2
+        after_root = EXP1 + 60
+        self.assertReason("expired", V.verify_call, FX.callB, now=after_leaf)
+        self.assertReason("expired", V.verify_call, FX.callB, now=after_root)
+        # Reversible until EXP2 - 100, so after the leaf's exp an undo is bound
+        # by rev.until, not by exp: standing passes, then 8.1 says not_reversible.
+        self.assertReason("not_reversible", V.verify_call, undo, now=after_leaf)
+        V.verify_call(undo, now=after_leaf, standing_ops=False)
+        V.verify_call(tallies, now=after_root, executor=CK.did, accepted_roots=[A.did])
+        # Revocation: forward refused, standing unaffected.
+        revoked = {O.identity(FX.w1)}
+        self.assertReason("revoked", V.verify_call, FX.callB, now=NOW, revoked=revoked)
+        V.verify_call(undo, now=NOW + 50, revoked=revoked)
+        V.verify_call(tallies, now=after_root, revoked=revoked)
+        # What a standing call never skips: standing, root, executor, chain.
+        stranger = resign(tallies, STRANGER, **{"from": STRANGER.did})
+        self.assertReason("no_standing", V.verify_call, stranger, now=after_root)
+        self.assertReason("root_not_accepted", V.verify_call, tallies, now=after_root, accepted_roots=[STRANGER.did])
+        self.assertReason("wrong_executor", V.verify_call, tallies, now=after_root, executor=BK.did)
+        self.assertReason("chain_broken", V.verify_call, resign(tallies, BK, chain=[FX.w2, FX.w1]), now=after_root)
+        self.assertReason("bad_signature", V.verify_call, {**tallies, "args": {"writ": "x"}}, now=after_root)
+
     def test_call_limits_and_chain(self):
         self.assertReason("malformed", V.verify_call, resign(FX.callB, BK, chain=[]), now=NOW)
         self.assertReason("too_large", V.verify_call, resign(FX.callB, BK, chain=[FX.w1] * 9), now=NOW)
@@ -453,6 +480,15 @@ class TallyTest(Base):
         v2 = V.verify_tally(FX.w2, FX.callB, FX.tC, res=FX.resC)
         self.assertTrue(v2.ok)
         self.assertTrue(V.verify_tally(FX.w1, FX.callA, FX.tB).ok)
+
+    def test_standing_tally_acc_after_exp(self):
+        # 6.2 step 5 binds a forward tally's acc to the writ's exp; an undo
+        # tally answers a standing call and is judged by rev.until instead.
+        undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": FX.tC})
+        t_undo = issue.make_tally(CK, undo, FX.w2, out={"refund": "rf_1"}, acc=EXP1 + 60)
+        self.assertTrue(V.verify_tally(FX.w2, undo, t_undo, res={"refund": "rf_1"}).ok)
+        late = resign(FX.tC, CK, acc=EXP2)
+        self.assertTallyReason("expired", "signed_unauthorized", FX.w2, FX.callB, late)
 
     def test_tally_names_wrong_call(self):
         bad = resign(FX.tB, BK, call=O.identity(FX.callB))

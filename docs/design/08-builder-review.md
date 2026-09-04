@@ -1,5 +1,8 @@
 # 08. Builder review: can one developer ship Writ v0.1 in weeks?
 
+
+> **Historical document (2026-09-03).** Build estimate against the pre-kill-round design. `recall` is `revoke` in v0.1; `ts`, `exe`, and the Behalf header binding are not part of v0.1; the vector format and reason codes shipped differ from the ones sketched here (see spec section 11 and 14). The Python implementation that shipped was written by the same author as the Go one, from the spec text, not by a third party.
+
 Status: build review, 2026-09-03. Role: Independent Builder. Inputs: `04-architectures.md` (six candidates, architect chose Writ with the Behalf HTTP binding), `05-threat-model.md` (45 requirements, 20 adversarial seeds), and the code already in `impl/go/` (a JCS canonicalizer restricted to safe integers, and a did:key Ed25519 package; `go test ./...` passes on Go 1.26.0). My standard: v0.1 is buildable by one strong developer with agentic coding tools in weeks, with no governments, consortiums, blockchains, new hardware, or global adoption anywhere in the dependency list. Everything below was checked against the local toolchain: Go 1.26.0, Node 26.5.0, Python 3.14.7 with cryptography 46.0.5.
 
 ## 1. Feasibility verdicts

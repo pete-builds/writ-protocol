@@ -1,5 +1,8 @@
 # 04. Six architectures for cross-vendor agent delegation
 
+
+> **Historical document (2026-09-03).** This records the six candidate designs as proposed, before the kill round. Terminology here is superseded by the v0.1 specification: `recall` became `revoke`; the tally members `exe`, `in`, `res`, and `ts`, and the call member `ts`, were cut (decision record item 4); the Behalf header form is not the HTTP binding of v0.1 (spec section 10 is a POST body; the header form is a possible extension). Nothing below is normative.
+
 Status: design note, 2026-09-03. Role: Protocol Architect. Inputs: `01-history.md` (ten principles with tests), `02-prior-art.md` (matrix, gap, taken names), `03-skeptic-opening.md` (where MCP, A2A, and OAuth break; IN/OUT scope; eleven standing questions). Nothing here was fetched from the network.
 
 ## The fixed scenario and wire conventions

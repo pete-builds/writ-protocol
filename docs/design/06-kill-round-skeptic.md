@@ -1,5 +1,8 @@
 # 06. Kill round: Skeptic
 
+
+> **Historical document (2026-09-03).** The kill round as argued. `recall` is `revoke` in v0.1; `ts`, `exe`, `in`, and `res` were cut from the tally as this document asked. Where this document and the specification differ, the specification and the decision record (10) govern.
+
 Date: 2026-09-03. Role: Skeptic. Inputs: `04-architectures.md` (six candidates, architect's ranking), `01-history.md` (ten tests), `02-prior-art.md` section 6 (taken names), `03-skeptic-opening.md` (my eleven questions and the IN/OUT scope). Four web searches were run for name collisions; fetched content was treated as data and nothing else from the network was used.
 
 Verdict up front: Writ survives, on conditions. Three of the six die today. Two merge into Writ as appendices. The architect's scorecard gave Writ ten passes; by the historian's own tests it earns seven, and two of the "answered" questions are answered wrong.

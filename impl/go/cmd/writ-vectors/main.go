@@ -386,5 +386,22 @@ func main() {
 	tPend, _, _ := writ.NewTally(C, writ.TallyInput{Call: kBC, Acc: now + 10, St: "pending", ErrCode: "pending"})
 	tv("pending tally", w2, kBC, tPend.Raw, nil, "")
 
+	// Standing operations after expiry (spec section 7 steps 4 and 7, 6.2 step 5).
+	// Forward authority ends at exp; standing survives it, so the same chain
+	// that is rejected for a forward call is accepted for a standing one.
+	leafExpired := w2.Exp
+	rootExpired := w1.Exp + 60
+	write("forward call at leaf exp", "verify_call", map[string]any{"call": kBC.Raw}, "reject", writ.Expired, &leafExpired)
+	write("forward call after root exp", "verify_call", map[string]any{"call": kBC.Raw}, "reject", writ.Expired, &rootExpired)
+	kUndo := must(writ.NewCall(A, []*writ.Writ{w1, w2}, "sys/undo", map[string]any{"tally": tC.Raw}))
+	write("standing undo after leaf exp", "verify_call", map[string]any{"call": kUndo.Raw}, "accept", "", &leafExpired)
+	kTal := must(writ.NewCall(B, []*writ.Writ{w1, w2}, "sys/tallies", map[string]any{"writ": w1.ID}))
+	write("standing tallies after root exp", "verify_call", map[string]any{"call": kTal.Raw}, "accept", "", &rootExpired)
+	write("standing call by holder after exp", "verify_call", map[string]any{"call": must(writ.NewCall(C, []*writ.Writ{w1, w2}, "sys/tallies", map[string]any{"writ": w1.ID})).Raw}, "reject", writ.NoStanding, &rootExpired)
+	tUndo, resUndo, _ := writ.NewTally(C, writ.TallyInput{Call: kUndo, Acc: w1.Exp + 60, St: "ok", Res: map[string]any{"refund": "rf_0001"}})
+	tv("undo tally acc after exp", w2, kUndo, tUndo.Raw, resUndo, "")
+	tLate, _, _ := writ.NewTally(C, writ.TallyInput{Call: kBC, Acc: w2.Exp, St: "ok", Used: map[string]int64{"amount": 58900}})
+	tv("forward tally acc at leaf exp", w2, kBC, tLate.Raw, nil, writ.Expired)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }

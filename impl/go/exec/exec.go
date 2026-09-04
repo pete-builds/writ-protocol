@@ -115,13 +115,22 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 		}
 		return &Reply{Tally: t.Raw}, nil
 	}
-	// Steps 3 to 7.
+	// Step 3: the chain is structurally valid and attenuates root to leaf.
 	if err := writ.VerifyChain(k.Chain); err != nil {
 		return refuse(writ.CodeOf(err), "")
 	}
-	if err := writ.CheckExpiry(k.Chain, e.Now()); err != nil {
-		return refuse(writ.Expired, "")
+	// Step 4, forward calls only: forward authority ends at exp. A standing
+	// call is not subject to expiry (or to revocation, step 7): the signed
+	// chain is historical proof that from had standing, and the time bound
+	// on what a standing call may do is operation-specific (rev.until for
+	// sys/undo, tally retention for sys/tallies). Skipping these steps never
+	// restores forward authority, because every forward call passes them.
+	if !k.Standing() {
+		if err := writ.CheckExpiry(k.Chain, e.Now()); err != nil {
+			return refuse(writ.Expired, "")
+		}
 	}
+	// Steps 5 and 6: this executor acts under the root and is the leaf holder.
 	if !e.AcceptRoot(k.Chain[0].Iss) {
 		return refuse(writ.RootNotAccepted, "")
 	}
@@ -131,11 +140,13 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	var chainIDs []string
 	for _, w := range k.Chain {
 		chainIDs = append(chainIDs, w.ID)
-		if e.Store.isRevoked(w.ID) {
-			return refuse(writ.Revoked, "")
-		}
 	}
-	// Step 8.
+	// Step 7, forward calls only: no writ in the chain is revoked, by
+	// identity or by a key-wide revoke of its issuer.
+	if !k.Standing() && e.IsRevoked(k.Chain) {
+		return refuse(writ.Revoked, "")
+	}
+	// Step 8: standing, then the forward or standing rules.
 	if k.Standing() {
 		if err := writ.CheckStanding(k); err != nil {
 			return refuse(writ.NoStanding, "")
@@ -152,7 +163,7 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 		t, _, _ := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: rec.Acc, St: "pending", ErrCode: "pending"})
 		return &Reply{Tally: t.Raw}, nil
 	}
-	// Step 10: count, consumed against every writ in the chain.
+	// Step 10: count, consumed against every writ in the chain that carries one.
 	if !k.Standing() {
 		bounds := map[string]int64{}
 		for _, w := range k.Chain {
@@ -220,7 +231,10 @@ func (e *Executor) resFor(t wire.Object) any {
 	return nil
 }
 
-// undo implements spec 8.1.
+// undo implements spec 8.1. By the time it runs, Execute has established
+// the chain, root, executor identity, and standing; it has deliberately not
+// checked expiry or revocation of the chain. What bounds an undo in time is
+// the target tally's rev.until, judged here against this executor's clock.
 func (e *Executor) undo(ctx context.Context, k *writ.Call) Result {
 	fail := func(code writ.Reason) Result { return Result{St: "failed", ErrCode: string(code)} }
 	tobj, ok := k.Args["tally"].(map[string]any)
@@ -270,7 +284,10 @@ func errCode(t *writ.Tally) string {
 	return ""
 }
 
-// tallies implements spec 8.2.
+// tallies implements spec 8.2. It runs after chain expiry and revocation
+// exactly as before them: it returns whatever the tally store still holds
+// under the named writ, which is the recovery path when a caller never
+// received its tally.
 func (e *Executor) tallies(k *writ.Call) Result {
 	id, _ := k.Args["writ"].(string)
 	found := false
@@ -328,7 +345,10 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	return out, nil
 }
 
-// IsRevoked lets application code check a chain before starting sub-steps.
+// IsRevoked reports whether any writ in the chain is revoked in this
+// executor's store, by writ identity or by a key-wide revoke of its issuer.
+// Execute applies it to every forward call (spec section 7 step 7);
+// application code may also call it before starting a sub-step.
 func (e *Executor) IsRevoked(chain []*writ.Writ) bool {
 	for _, w := range chain {
 		if e.Store.isRevoked(w.ID) || e.Store.isRevoked("*:"+w.Iss) {

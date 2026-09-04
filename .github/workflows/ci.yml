@@ -1,0 +1,121 @@
+# Writ v0.1 continuous integration.
+#
+# Supported toolchains: Go 1.25 (from impl/go/go.mod; the reference
+# implementation is developed on 1.26) and Python 3.12 through 3.14 (the
+# second implementation is developed on 3.14). Every job fails on any
+# divergence: a Go test, a Python test, a vector either implementation
+# rejects differently from the other, a corpus that is not byte-for-byte
+# reproducible from the generators, or a demo expectation that does not hold.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_CRYPTOGRAPHY: "cryptography>=42,<47"
+
+jobs:
+  go:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: gofmt
+        working-directory: impl/go
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        working-directory: impl/go
+        run: go vet ./...
+      - name: go test
+        working-directory: impl/go
+        run: go test -count=1 ./...
+
+  python:
+    name: python ${{ matrix.python }} unit tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install "$PYTHON_CRYPTOGRAPHY"
+      - name: unittest
+        working-directory: impl/python
+        run: python -m unittest discover -s tests -v
+
+  conformance:
+    name: cross-implementation conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "$PYTHON_CRYPTOGRAPHY"
+      - name: Go verifier on the Go corpus
+        working-directory: impl/go
+        run: go run ./cmd/writ conformance ../../conformance/vectors
+      - name: Go verifier on every Python-generated vector
+        working-directory: impl/go
+        run: go run ./cmd/writ conformance ../python/vectors
+      - name: Python verifier on every Go-generated vector
+        working-directory: impl/python
+        run: python -m writ.cli conformance ../../conformance/vectors
+      - name: Python verifier on the Python vectors
+        working-directory: impl/python
+        run: python -m writ.cli conformance vectors
+
+  vectors:
+    name: deterministic vector regeneration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "$PYTHON_CRYPTOGRAPHY"
+      - name: regenerate the Go corpus
+        working-directory: impl/go
+        run: go run ./cmd/writ-vectors
+      - name: regenerate the Python vectors
+        working-directory: impl/python
+        run: python tools/gen_vectors.py
+      - name: every vector must be reproducible byte for byte
+        run: |
+          git add -A conformance/vectors impl/python/vectors
+          git diff --cached --stat --exit-code conformance/vectors impl/python/vectors
+
+  demo:
+    name: three-process demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: run the demo
+        run: sh demo/run.sh
+      - name: every expectation held
+        run: grep -q "DEMO PASSED" demo/out/demo.log

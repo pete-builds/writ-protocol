@@ -118,6 +118,15 @@ def build():
         {"raw": "{\"\\uff01\": 1, \"\\ud83d\\ude00\": 2, \"b\\n\": \"\\u001f\\u007f/\", \"a\": [true, null, -0]}",
          "canonical": "{\"a\":[true,null,0],\"b\\n\":\"\\u001f\u007f/\",\"\U0001F600\":2,\"\uff01\":1}"}, "accept")
     add("canonicalize rejects float", "canonicalize", {"raw": "{\"a\": 1.0}", "canonical": ""}, "reject", "noncanonical")
+    undo = issue.make_call(A, [w1, w2], "sys/undo", {"tally": t_c}, call_id="d4f1c0a3Ln2k9QpXs4vYzw")
+    add("verify_call forward expired at leaf exp", "verify_call", {"call": call_b}, "reject", "expired", now=EXP2)
+    add("verify_call standing undo after leaf exp", "verify_call", {"call": undo}, "accept", now=EXP2)
+    add("verify_call standing tallies after root exp", "verify_call",
+        {"call": issue.make_call(B, [w1, w2], "sys/tallies", {"writ": O.identity(w1)}, call_id="e5f1c0a3Ln2k9QpXs4vYzw")},
+        "accept", now=EXP1 + 60)
+    t_undo = issue.make_tally(C, undo, w2, out={"refund": "rf_8813"}, acc=EXP1 + 60)
+    add("verify_tally undo tally acc after exp", "verify_tally",
+        {"writ": w2, "call": undo, "tally": t_undo, "res": {"refund": "rf_8813"}}, "accept", now=EXP1 + 60)
     return vec
 
 
