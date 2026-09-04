@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "prefix",
+   "v": "travel/charge"
+  },
+  "parent": {
+   "t": "prefix",
+   "v": "travel/"
+  }
+ },
+ "name": "prefix under slash form",
+ "op": "narrows"
+}

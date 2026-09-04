@@ -1,0 +1,60 @@
+{
+ "expect": "reject",
+ "input": {
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "depth": {
+      "t": "max",
+      "v": 1
+     },
+     "hld": {
+      "t": "set",
+      "v": [
+       "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+      ]
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwNA",
+    "prv": null,
+    "sig": "aSSjD04WTVbUpi_Jlt8iJpe8pX7B4L6x0rRTABJog6FbfzdM0Q81k82-bXPqPSwu-6k6a33h2XSdukFsQCjzCg",
+    "typ": "writ",
+    "v": 1
+   },
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "depth": {
+      "t": "max",
+      "v": 0
+     },
+     "hld": {
+      "t": "set",
+      "v": []
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwNQ",
+    "prv": "kVDabzWnQl6JuzbOKlCt9w_ghJUvYTfVnw5mhBEmGpU",
+    "sig": "n_rDaA_XIr-E5QMCrz5O4XGW40FhPCEU7slBGjltRAo-1r-DOKrbtsn189fguEi7SWn25EEsHd--43VOefB4Ag",
+    "typ": "writ",
+    "v": 1
+   }
+  ]
+ },
+ "name": "hld set violated",
+ "op": "verify_chain",
+ "reason": "not_narrowed"
+}

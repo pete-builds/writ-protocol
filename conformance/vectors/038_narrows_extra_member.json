@@ -1,0 +1,17 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "max",
+   "v": 1,
+   "x": 1
+  },
+  "parent": {
+   "t": "max",
+   "v": 1
+  }
+ },
+ "name": "extra member",
+ "op": "narrows",
+ "reason": "malformed"
+}

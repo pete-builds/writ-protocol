@@ -1,0 +1,9 @@
+{
+ "expect": "accept",
+ "input": {
+  "canonical": "[-5,0,0,9007199254740991]",
+  "raw": "[-5,0,-0,9007199254740991]"
+ },
+ "name": "negative and zero",
+ "op": "canonicalize"
+}

@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "prefix",
+   "v": "travel/chargeback"
+  },
+  "parent": {
+   "t": "prefix",
+   "v": "travel/charge"
+  }
+ },
+ "name": "prefix chargeback",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

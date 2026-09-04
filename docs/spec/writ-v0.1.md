@@ -21,10 +21,10 @@ The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, MAY are to be interp
 ### 1.1 Encoding rules
 
 1. Every protocol object is UTF-8 JSON (RFC 8259).
-2. Numbers MUST be integers in the range negative (2^53 minus 1) to positive (2^53 minus 1), written without fraction or exponent. Any other number is a rejection with reason `noncanonical`.
+2. Numbers MUST be integers in the range negative (2^53 minus 1) to positive (2^53 minus 1), written without fraction or exponent. Any other number is a rejection with reason `noncanonical`. The literal `-0` is accepted and canonicalizes to `0`.
 3. Strings MUST be valid UTF-8. A `\u` escape MUST NOT encode an unpaired surrogate. Producers SHOULD emit NFC-normalized strings. Verifiers compare bytes and MUST NOT normalize.
 4. An object MUST NOT repeat a member name at any depth.
-5. Binary values (signatures, hashes, nonces, identifiers) are base64url (RFC 4648 section 5) without padding. A verifier MUST reject a value containing padding or characters outside the base64url alphabet.
+5. Binary values (signatures, hashes, nonces, identifiers) are base64url (RFC 4648 section 5) without padding. A verifier MUST reject, with reason `noncanonical`, a value containing padding, characters outside the base64url alphabet, or an encoding that does not re-encode to the same string (non-zero trailing bits, or a length congruent to 1 modulo 4), so that every byte string has exactly one encoding. A value that decodes to the wrong number of bytes for its member (32 for a hash, 64 for a signature, fewer than 16 for `nnc` or `id`) is a rejection with reason `malformed`.
 6. Times are integer Unix seconds, UTC.
 
 ### 1.2 Canonical form
@@ -118,7 +118,7 @@ The authority under a chain is the leaf writ's bounds. Because the attenuation r
 | `set` | array of strings or integers, no duplicates | every child element is in parent | arg is an element of v |
 | `window` | `[lo, hi]` integers, lo <= hi | parent.lo <= child.lo and child.hi <= parent.hi | lo <= arg <= hi |
 
-A `set` element that is the integer 1 and one that is the string `"1"` are different elements. `max` and `count` values below zero, `window` values with lo above hi, and `set` values with duplicates are rejections with reason `noncanonical`.
+A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max` or `count` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it.
 
 ### 3.1 Prefix matching
 
@@ -138,7 +138,7 @@ So `travel` matches `travel` and `travel/charge`; `travel/` matches `travel/char
 | `hld` | `set` of keys | no | keys that may hold a child of this writ; an empty set forbids further delegation |
 | `depth` | `max` | no | maximum number of writs below this one in any chain |
 
-All other names are application bounds and are compared against the call's `args` by name (section 7.2). Operation names under `act` are a convention between the parties; this protocol assigns them no meaning beyond string matching. Names beginning with `sys/` are reserved for this protocol and are never matched by `act` (section 8).
+An `act` that is not of type `prefix`, an `hld` that is not a `set` of keys, or a `depth` that is not a `max` is a rejection with reason `malformed` (`bad_key` when an `hld` element is not a valid key). All other names are application bounds and are compared against the call's `args` by name (section 7.2). Operation names under `act` are a convention between the parties; this protocol assigns them no meaning beyond string matching. Names beginning with `sys/` are reserved for this protocol and are never matched by `act` (section 8).
 
 ## 4. Attenuation
 
@@ -150,7 +150,9 @@ A writ C is a valid child of a writ P when all of the following hold. A verifier
 4. For every member name N of `P.bnd`: `C.bnd` has a member N, of the same type, whose value narrows `P.bnd[N]` under that type's rule in section 3. Reason: `not_narrowed`. C MAY have members P lacks.
 5. If `P.bnd` has `hld`, then `C.hld` is an element of `P.bnd.hld.v`. Reason: `not_narrowed`.
 
-The `depth` bound is checked over the whole chain: for the writ at zero-based index i in a chain of n writs, if it carries `depth`, then (n minus 1 minus i) <= `depth.v`. Reason: `not_narrowed`.
+The `depth` bound is checked over the whole chain after every adjacent pair has passed: for the writ at zero-based index i in a chain of n writs, if it carries `depth`, then (n minus 1 minus i) <= `depth.v`. Reason: `not_narrowed`.
+
+Chain verification, as an operation, is: the chain is non-empty (`malformed`) and at most 8 writs (`too_large`, checked before any signature); every writ passes section 6.1; the root's `prv` is null (`chain_broken`); every adjacent pair passes steps 1 to 5 above, root first; `depth` holds. Expiry (section 7 step 4) is a separate check because it needs a clock.
 
 Authority never widens: a child cannot drop, retype, or loosen a bound, cannot outlive its parent, and cannot be issued by anyone but the parent's holder. A holder MAY issue a child to itself; doing so gains nothing, because `count` is consumed against every writ in the chain (section 7.3).
 
@@ -176,7 +178,7 @@ There are two kinds of call, distinguished by `op`.
 
 **Standing call.** `op` begins with `sys/`. `from` MUST equal the `iss` of some writ in `chain`. The executor is the leaf writ's `hld`. Bounds are not applied. The defined standing operations are in section 8.
 
-A chain MUST NOT be empty for any call.
+A chain MUST NOT be empty for any call (`malformed`). Checks on a call after section 6.1 apply in this order: chain verification (section 4), expiry of every writ, then for a forward call `no_standing`, `forbidden_op`, `missing_arg`, `out_of_bounds`; for a standing call `no_standing`, then `forbidden_op` if the `sys/` operation is not one defined in section 8.
 
 Example, B assigns C the payment step under a child writ narrowed to `travel/charge`:
 
@@ -232,12 +234,14 @@ B's tally for A's call embeds C's tally in `sub` and writ_2 in `wrt`.
 
 For a writ, call, tally, or revoke, in this order:
 
-1. Byte length within section 1.6. Reason `too_large`.
-2. Parse; section 1.1 rules 2 to 5. Reason `noncanonical`.
-3. `v` is 1. Reason `unsupported_version`. `typ` is the expected type. Reason `wrong_type`.
-4. `crit`, section 1.7. Reason `unsupported_critical`.
-5. Every required member present with the required type; no `bnd` value has members other than `t` and `v`. Reason `malformed`.
+1. Byte length within section 1.6: the received bytes before parsing and the canonical bytes after. Reason `too_large`.
+2. Parse; section 1.1 rules 2 to 4, and rule 5 for every binary member the expected type defines. Reason `noncanonical`.
+3. `v` is the integer 1; anything else, including a missing `v`, is `unsupported_version`. `typ` is the expected type; anything else, including a missing `typ`, is `wrong_type`.
+4. `crit`, section 1.7. Reason `unsupported_critical`; a `crit` that is not an array of strings, or that names an absent member, is `malformed`.
+5. Every required member present with the required type; bound rules of section 3 and 3.2; identifiers are valid keys (`bad_key`); decoded lengths of binary members (`malformed`). Bounds are checked in canonical member-name order after the presence of `act`. Reason `malformed` unless stated otherwise.
 6. Signature verifies under the signer's key (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`). Reason `bad_signature`.
+
+A tally names its writ by hash, so a tally can only be verified by a party holding that writ (section 6.2). A refusal with reason `wrong_executor` is signed by the party that received the call, which is not the leaf holder; it is evidence of the refusal but does not verify under section 6.2.
 
 ### 6.2 Verifying a tally tree
 
@@ -248,15 +252,17 @@ A verifier V that made a call K under a chain whose leaf writ is W, and received
 3. `T.writ` equals the identity of W. Reason `tally_mismatch`.
 4. `T.op` equals `K.op`. Reason `tally_mismatch`.
 5. `T.acc` < `W.exp`. Reason `expired`.
-6. If R is present, `T.out` equals the hash of R's canonical form. Reason `tally_mismatch`.
+6. If R is present, `T.out` is not null and equals the hash of R's canonical form. Reason `tally_mismatch`. A non-null `out` with no R is accepted; the verifier simply has no body to check.
 7. For each `max` bound N in `W.bnd`: `T.used[N]` (zero if absent) <= `W.bnd[N].v`. Reason `out_of_bounds`.
 8. Every writ in `T.wrt` passes section 6.1 and is a valid child of W under section 4. Reason as reported.
-9. Every tally S in `T.sub` names a writ X in `T.wrt` (`sub_unmatched`), passes section 6.1 with signer `X.hld`, has `S.acc` < `X.exp` (`expired`), and its `used` respects `X.bnd` (`out_of_bounds`). Step 8 and this step recurse into `S.wrt` and `S.sub` with X in place of W.
-10. For each `max` bound N in `W.bnd`, the sum of `S.used[N]` over the tallies in `T.sub` <= `W.bnd[N].v`. Reason `out_of_bounds`. This is the executor's own accounting and it is evidence, not enforcement (section 7.3).
+9. Every tally S in `T.sub`, in array order: S is an object whose `writ` member names a writ X in `T.wrt` (`sub_unmatched` otherwise, checked before anything else about S); S passes section 6.1 with signer `X.hld`; then steps 3, 5, 7, 8, 9, and 10 apply to S with X in place of W and are completed for S's whole subtree before the next element of `T.sub` is examined.
+10. After every element of `T.sub`: for each `max` bound N in `W.bnd`, the sum of `S.used[N]` over the tallies in `T.sub` <= `W.bnd[N].v`. Reason `out_of_bounds`. This is the executor's own accounting and it is evidence, not enforcement (section 7.3).
+
+Names in `used` that are not `max` bounds of the writ are ignored. This procedure does not compare `S.op` against `X.act`; that check was the sub-executor's job at request time (section 7), and a sub-executor that signed a tally for an operation outside its writ has produced a signed admission.
 
 A verifier cannot check `S.call` for a sub-tally because it does not hold the call B made; the sub-tally binds C to a call that B can produce in a dispute.
 
-The result of verification for each tally is one of `valid`, `signed_unauthorized` (signature verifies but a later step fails: an admission by the signer), or `unverifiable` (signature fails or the writ is absent). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
+The result of verification for each tally is one of `valid`, `signed_unauthorized` (section 6.1 passed for T but a later step failed, anywhere in the tree: an admission by a signer), or `unverifiable` (T itself fails section 6.1, including `sub_unmatched` found while parsing it). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
 
 ## 7. Executing a call
 
@@ -343,7 +349,7 @@ A pending call record found after a restart MUST be resolved to a final tally: `
 | `crit` | array of strings | no | section 1.7 |
 | `sig` | string | yes | by `iss` |
 
-A revoke is valid when it passes section 6.1, `chain` is a valid chain (section 4) whose leaf identity is `writ`, and `iss` is the `iss` of some writ in `chain`. For `"*"`, `iss` is the key itself.
+A revoke is valid when it passes section 6.1, `chain` is a valid chain (section 4, with its reasons), the leaf identity equals `writ` (`chain_broken` otherwise), and `iss` is the `iss` of some writ in `chain` (`no_standing` otherwise). For `"*"`, `chain` MUST be empty (`malformed`) and `iss` is the key itself. Expiry is not checked on a revoke.
 
 An executor that receives a valid revoke MUST record it and MUST NOT accept new calls under the revoked writ or any writ below it (section 7 step 7). It SHOULD forward the revoke to the `hld` of every writ it issued under the revoked writ. It answers with the tallies of every call it holds under the revoked writ that is not yet final: `canceled` for calls not yet accepted, and for accepted calls either the final tally when the operation completes or a `pending` tally. An executor MUST NOT report `canceled` for an operation it has already started unless it actually stopped it.
 
@@ -421,7 +427,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 **Root acceptance.** A chain proves attenuation from its root, not that the root matters. Section 7.1 is what stops a stranger from minting a root to an executor.
 
-**Time.** Verifiers use their own clock. `exp` is exclusive and strict. Bounds are judged at `acc`. Issuers SHOULD keep root writs short-lived; verifiers SHOULD reject a root whose `exp` is more than 24 hours ahead unless configured otherwise. Safety never depends on a revoke arriving.
+**Time.** Verifiers use their own clock. `exp` is exclusive and strict. Bounds are judged at `acc`. Issuers SHOULD keep root writs short-lived; verifiers SHOULD reject a root whose `exp` is more than 24 hours ahead unless configured otherwise, with reason `expired`. Safety never depends on a revoke arriving.
 
 **Keys.** A did:key cannot rotate; a new key is a new principal. Damage from a stolen key is bounded by `exp` and `count` on outstanding writs and ended by a key-wide revoke, which the thief cannot undo. Binding a key to a vendor for liability is the job of a signed Agent Card or equivalent listing the did:key (section 13); a verifier that has not checked such a binding MUST report the executor as a key, never as a name taken from a result body.
 
@@ -452,7 +458,19 @@ Bindings for MCP (`_meta` members on `tools/call` and its result) and A2A (a `Da
 
 ## 14. Conformance
 
-An implementation conforms when it passes the conformance corpus: a directory of JSON vectors, each naming an object or a sequence, the operation (verify writ, verify chain, execute call, verify tally), the expected outcome (accept or reject), and on rejection the expected reason code from section 11. Keys in the corpus derive from fixed seeds so any implementation can regenerate every vector byte for byte.
+An implementation conforms when it passes the conformance corpus: a directory of JSON vectors, each an object with `name`, `op`, `input`, `expect` (`accept` or `reject`), `reason` (on reject, a code from section 11), and optionally `now` (integer, the verifier's clock for that vector). Operations and their `input` shapes:
+
+| `op` | `input` | Checks |
+|---|---|---|
+| `canonicalize` | `{"raw": <JSON text>, "canonical": <expected text>}` | section 1.1 and 1.2 |
+| `narrows` | `{"child": <bound>, "parent": <bound>}` | section 3 |
+| `satisfies` | `{"bound": <bound>, "arg": <value>}` | section 3, never `count` |
+| `verify_writ` | `{"writ": <writ>}` | section 6.1 |
+| `verify_chain` | `{"chain": [<writ>...]}` | section 4 as an operation, then expiry at `now` if given |
+| `verify_call` | `{"call": <call>}` | section 6.1 on the call, section 4 on its chain, expiry at `now` if given, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state |
+| `verify_tally` | `{"writ": <leaf writ>, "call": <call>, "tally": <tally>, "res": <body, optional>}` | section 6.2 |
+
+Keys in the corpus derive from fixed seeds and fixed nonces so any implementation can regenerate every vector byte for byte. Executor behavior that needs state (count, replay, undo, revoke, recovery) is exercised by scenario tests rather than by the stateless corpus.
 
 Two implementations are interoperable when each accepts every object the other produces from the same seeds and rejects every vector in the corpus with the same reason.
 

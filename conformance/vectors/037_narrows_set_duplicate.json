@@ -1,0 +1,21 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": [
+    "a",
+    "a"
+   ]
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    "a"
+   ]
+  }
+ },
+ "name": "set duplicate",
+ "op": "narrows",
+ "reason": "noncanonical"
+}

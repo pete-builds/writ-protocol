@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "prefix",
+   "v": "travel"
+  },
+  "parent": {
+   "t": "prefix",
+   "v": "travel"
+  }
+ },
+ "name": "prefix equal",
+ "op": "narrows"
+}

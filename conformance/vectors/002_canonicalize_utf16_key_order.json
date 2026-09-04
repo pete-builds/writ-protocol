@@ -1,0 +1,9 @@
+{
+ "expect": "accept",
+ "input": {
+  "canonical": "{\"\\r\":2,\"1\":3,\"ö\":5,\"€\":1,\"😀\":4}",
+  "raw": "{\"\\u20ac\":1,\"\\r\":2,\"1\":3,\"\\ud83d\\ude00\":4,\"\\u00f6\":5}"
+ },
+ "name": "utf16 key order",
+ "op": "canonicalize"
+}

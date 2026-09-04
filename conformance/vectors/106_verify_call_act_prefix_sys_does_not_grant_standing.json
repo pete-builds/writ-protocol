@@ -1,0 +1,36 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {},
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "sys"
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAyNg",
+     "prv": null,
+     "sig": "QriKN3hCw7Etm2bQ6MFjJvME-tp6AZOzRpnd9hxwBFMhTTR2oDpxSsWQL_l2mognvAEOBOsqULuHOaU6eEu5Bw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "id": "bm9uY2UtMDAwMDAwMDAyNw",
+   "op": "sys/undo",
+   "sig": "ICGdnIvLz2z6ViuAm5m1z5Fw6MGzkLBkW4bVUCRL7FxyI5BrXRWF4SxFl6jQpCAC15J8dqjgYC3-Oz_AnXMZDA",
+   "typ": "call",
+   "v": 1
+  }
+ },
+ "name": "act prefix sys does not grant standing",
+ "now": 1788400010,
+ "op": "verify_call",
+ "reason": "no_standing"
+}

@@ -1,0 +1,9 @@
+{
+ "expect": "accept",
+ "input": {
+  "canonical": "\"aAé\\u0001\\n\\\"\\\\/\"",
+  "raw": "\"a\\u0041\\u00e9\\u0001\\n\\\"\\\\\\/\""
+ },
+ "name": "string escapes",
+ "op": "canonicalize"
+}

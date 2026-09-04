@@ -1,0 +1,20 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": [
+    "USD"
+   ]
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    "USD",
+    "EUR"
+   ]
+  }
+ },
+ "name": "set subset",
+ "op": "narrows"
+}

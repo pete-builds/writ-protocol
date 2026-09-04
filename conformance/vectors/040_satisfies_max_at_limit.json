@@ -1,0 +1,12 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": 100,
+  "bound": {
+   "t": "max",
+   "v": 100
+  }
+ },
+ "name": "max at limit",
+ "op": "satisfies"
+}

@@ -1,0 +1,17 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": []
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    "USD"
+   ]
+  }
+ },
+ "name": "set empty",
+ "op": "narrows"
+}

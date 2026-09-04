@@ -1,0 +1,53 @@
+{
+ "expect": "reject",
+ "input": {
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 58900
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261015
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788401800,
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+    "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+    "sig": "yVka3FzI2TbD42_qnZgVOit6pshRr4xfpnsn83jpNOFLAxX9u89KDUcluGExTD2UUXrS2Ugnm6tGRzsAxQSqDQ",
+    "typ": "writ",
+    "v": 1
+   }
+  ]
+ },
+ "name": "root prv not null",
+ "op": "verify_chain",
+ "reason": "chain_broken"
+}

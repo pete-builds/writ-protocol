@@ -1,0 +1,15 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": "1",
+  "bound": {
+   "t": "set",
+   "v": [
+    1
+   ]
+  }
+ },
+ "name": "set int as string",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

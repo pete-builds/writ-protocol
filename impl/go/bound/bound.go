@@ -19,6 +19,23 @@ import (
 	"strings"
 )
 
+// Error classes, so callers can map to protocol reason codes: a shape error
+// (wrong JSON type or member set) is malformed, a value error (negative max,
+// inverted window, duplicate set element) is noncanonical, an unknown type is
+// unknown_bound.
+var (
+	ErrShape       = errors.New("bound: malformed")
+	ErrValue       = errors.New("bound: invalid value")
+	ErrUnknownType = errors.New("bound: unknown type")
+)
+
+func shape(format string, a ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrShape}, a...)...)
+}
+func value(format string, a ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrValue}, a...)...)
+}
+
 // Bound is one parsed constraint.
 type Bound struct {
 	T string
@@ -56,50 +73,50 @@ const maxSafe = 1<<53 - 1
 func Parse(v any) (Bound, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return Bound{}, errors.New("bound: not an object")
+		return Bound{}, shape("not an object")
 	}
 	if len(m) != 2 {
-		return Bound{}, errors.New("bound: must have exactly the members t and v")
+		return Bound{}, shape("must have exactly the members t and v")
 	}
 	t, ok := m["t"].(string)
 	if !ok {
-		return Bound{}, errors.New("bound: t must be a string")
+		return Bound{}, shape("t must be a string")
 	}
 	val, ok := m["v"]
 	if !ok {
-		return Bound{}, errors.New("bound: missing v")
+		return Bound{}, shape("missing v")
 	}
 	b := Bound{T: t, Raw: val}
 	switch t {
 	case "max", "count":
 		n, err := toInt(val)
 		if err != nil {
-			return Bound{}, fmt.Errorf("bound %s: %w", t, err)
+			return Bound{}, shape("%s: %v", t, err)
 		}
 		if n < 0 {
-			return Bound{}, fmt.Errorf("bound %s: value must be non-negative", t)
+			return Bound{}, value("%s: value must be non-negative", t)
 		}
 		b.Int = n
 	case "prefix":
 		s, ok := val.(string)
 		if !ok {
-			return Bound{}, errors.New("bound prefix: value must be a string")
+			return Bound{}, shape("prefix: value must be a string")
 		}
 		b.Str = s
 	case "set":
 		arr, ok := val.([]any)
 		if !ok {
-			return Bound{}, errors.New("bound set: value must be an array")
+			return Bound{}, shape("set: value must be an array")
 		}
 		seen := map[string]bool{}
 		for _, e := range arr {
 			el, err := toElem(e)
 			if err != nil {
-				return Bound{}, fmt.Errorf("bound set: %w", err)
+				return Bound{}, shape("set: %v", err)
 			}
 			k := el.String()
 			if seen[k] {
-				return Bound{}, fmt.Errorf("bound set: duplicate element %s", k)
+				return Bound{}, value("set: duplicate element %s", k)
 			}
 			seen[k] = true
 			b.Set = append(b.Set, el)
@@ -107,19 +124,19 @@ func Parse(v any) (Bound, error) {
 	case "window":
 		arr, ok := val.([]any)
 		if !ok || len(arr) != 2 {
-			return Bound{}, errors.New("bound window: value must be [lo, hi]")
+			return Bound{}, shape("window: value must be [lo, hi]")
 		}
 		lo, err1 := toInt(arr[0])
 		hi, err2 := toInt(arr[1])
 		if err1 != nil || err2 != nil {
-			return Bound{}, errors.New("bound window: lo and hi must be integers")
+			return Bound{}, shape("window: lo and hi must be integers")
 		}
 		if lo > hi {
-			return Bound{}, errors.New("bound window: lo exceeds hi")
+			return Bound{}, value("window: lo exceeds hi")
 		}
 		b.Lo, b.Hi = lo, hi
 	default:
-		return Bound{}, fmt.Errorf("bound: unknown type %q", t)
+		return Bound{}, fmt.Errorf("%w %q", ErrUnknownType, t)
 	}
 	return b, nil
 }

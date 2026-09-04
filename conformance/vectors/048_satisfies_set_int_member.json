@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": 2,
+  "bound": {
+   "t": "set",
+   "v": [
+    1,
+    2
+   ]
+  }
+ },
+ "name": "set int member",
+ "op": "satisfies"
+}

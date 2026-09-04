@@ -1,0 +1,20 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": [
+    "1"
+   ]
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    1
+   ]
+  }
+ },
+ "name": "set int vs string",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

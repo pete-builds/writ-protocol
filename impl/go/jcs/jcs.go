@@ -35,6 +35,9 @@ var ErrInvalidUTF8 = errors.New("jcs: string is not valid UTF-8")
 
 // Canonicalize parses raw JSON and returns its canonical serialization.
 func Canonicalize(raw []byte) ([]byte, error) {
+	if err := Strict(raw); err != nil {
+		return nil, err
+	}
 	r := bytes.NewReader(raw)
 	dec := json.NewDecoder(r)
 	dec.UseNumber()
@@ -82,6 +85,9 @@ func write(buf *bytes.Buffer, v any) error {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || n > MaxSafeInteger || n < -MaxSafeInteger {
 			return ErrNotInteger
+		}
+		if s == "-0" {
+			s = "0" // RFC 8785: ES6 Number.prototype.toString(-0) is "0"
 		}
 		buf.WriteString(s)
 	case int:

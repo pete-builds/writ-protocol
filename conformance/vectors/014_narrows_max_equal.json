@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "max",
+   "v": 100
+  },
+  "parent": {
+   "t": "max",
+   "v": 100
+  }
+ },
+ "name": "max equal",
+ "op": "narrows"
+}

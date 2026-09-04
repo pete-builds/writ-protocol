@@ -1,0 +1,9 @@
+{
+ "expect": "reject",
+ "input": {
+  "chain": []
+ },
+ "name": "empty chain",
+ "op": "verify_chain",
+ "reason": "malformed"
+}

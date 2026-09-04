@@ -1,0 +1,9 @@
+{
+ "expect": "reject",
+ "input": {
+  "raw": "{\"a\":{\"b\":1,\"b\":2}}"
+ },
+ "name": "duplicate key nested",
+ "op": "canonicalize",
+ "reason": "noncanonical"
+}

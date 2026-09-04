@@ -1,0 +1,53 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "crit": [
+    "iss"
+   ],
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "k6p7upSBXkdd7JX2e1rHsob6onSUVJvpchJTThdPHn4Tk5lSgLKGTkFi0RkTDnYafBtzLDc6FKvdMEXjxwSjAw",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "crit names absent member",
+ "op": "verify_writ",
+ "reason": "malformed"
+}

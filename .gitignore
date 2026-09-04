@@ -1,0 +1,7 @@
+demo/bin/
+demo/out/
+__pycache__/
+*.pyc
+*.key
+impl/go/writ-agent
+impl/go/writ-demo

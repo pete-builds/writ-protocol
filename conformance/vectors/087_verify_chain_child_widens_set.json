@@ -1,0 +1,97 @@
+{
+ "expect": "reject",
+ "input": {
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "amount": {
+      "t": "max",
+      "v": 60000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+    "prv": null,
+    "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+    "typ": "writ",
+    "v": 1
+   },
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 58900
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD",
+       "EUR"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261015
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788401800,
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+    "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+    "sig": "Y7j2wAdGo-_zyaE6T5FBWnukpdBQiZgjxn-hR8hW1B2zbaIXi2-DHXTzqo45ioUyF2yCSaP4QsUXqr5LlF2GDg",
+    "typ": "writ",
+    "v": 1
+   }
+  ]
+ },
+ "name": "child widens set",
+ "op": "verify_chain",
+ "reason": "not_narrowed"
+}

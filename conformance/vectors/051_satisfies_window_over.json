@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": 11,
+  "bound": {
+   "t": "window",
+   "v": [
+    1,
+    10
+   ]
+  }
+ },
+ "name": "window over",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

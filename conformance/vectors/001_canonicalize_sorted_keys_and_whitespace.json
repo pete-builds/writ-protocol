@@ -1,0 +1,9 @@
+{
+ "expect": "accept",
+ "input": {
+  "canonical": "{\"a\":[2,{\"c\":true,\"d\":null}],\"b\":1}",
+  "raw": "{ \"b\" : 1 , \"a\" : [ 2 , {\"d\":null,\"c\":true} ] }"
+ },
+ "name": "sorted keys and whitespace",
+ "op": "canonicalize"
+}

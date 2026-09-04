@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "count",
+   "v": 2
+  },
+  "parent": {
+   "t": "count",
+   "v": 1
+  }
+ },
+ "name": "count larger",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

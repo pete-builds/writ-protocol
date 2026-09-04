@@ -1,0 +1,57 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "hld": {
+     "t": "set",
+     "v": [
+      "bob"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "_bG1pscSiYUC8x5-RlMhuC5tOLsd8hKA8m_uZcgZ4TjLfxB_Mo49AQQ8U5k5TPSpQB8HhftZPIfKJHfknym7Bg",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "hld bound with non key",
+ "op": "verify_writ",
+ "reason": "bad_key"
+}

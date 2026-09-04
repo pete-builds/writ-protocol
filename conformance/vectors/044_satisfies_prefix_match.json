@@ -1,0 +1,12 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": "travel/charge",
+  "bound": {
+   "t": "prefix",
+   "v": "travel"
+  }
+ },
+ "name": "prefix match",
+ "op": "satisfies"
+}

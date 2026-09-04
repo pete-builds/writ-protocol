@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": "EUR",
+  "bound": {
+   "t": "set",
+   "v": [
+    "USD",
+    "EUR"
+   ]
+  }
+ },
+ "name": "set member",
+ "op": "satisfies"
+}

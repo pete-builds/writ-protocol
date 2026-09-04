@@ -1,0 +1,21 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "window",
+   "v": [
+    5,
+    6
+   ]
+  },
+  "parent": {
+   "t": "window",
+   "v": [
+    1,
+    10
+   ]
+  }
+ },
+ "name": "window inside",
+ "op": "narrows"
+}

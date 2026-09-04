@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "glob",
+   "v": "*"
+  },
+  "parent": {
+   "t": "glob",
+   "v": "*"
+  }
+ },
+ "name": "unknown type",
+ "op": "narrows",
+ "reason": "unknown_bound"
+}

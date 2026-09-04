@@ -14,8 +14,8 @@ import (
 	"errors"
 	"fmt"
 
-	"agentproto/jcs"
-	"agentproto/keys"
+	"writproto/jcs"
+	"writproto/keys"
 )
 
 // Object is a decoded JSON object. Numbers are json.Number (decode with
@@ -28,6 +28,9 @@ var B64 = base64.RawURLEncoding
 // Decode parses one JSON object with integer-preserving numbers and rejects
 // trailing data, duplicate keys at the top level, and non-object values.
 func Decode(raw []byte) (Object, error) {
+	if err := jcs.Strict(raw); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var v any
@@ -47,10 +50,33 @@ func Decode(raw []byte) (Object, error) {
 // Canonical returns the JCS bytes of obj.
 func Canonical(obj Object) ([]byte, error) { return jcs.Marshal(obj) }
 
-// Sign sets obj["sig"] to the signature of the canonical form of obj without sig.
+// SigningInput builds the bytes that are signed: "<typ>/<v>" 0x00 canonical(obj without sig).
+func SigningInput(obj Object) ([]byte, error) {
+	typ, _ := obj["typ"].(string)
+	v := fmt.Sprint(obj["v"])
+	unsigned := make(Object, len(obj))
+	for k, val := range obj {
+		if k != "sig" {
+			unsigned[k] = val
+		}
+	}
+	c, err := jcs.Marshal(unsigned)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(typ)+len(v)+2+len(c))
+	out = append(out, typ...)
+	out = append(out, '/')
+	out = append(out, v...)
+	out = append(out, 0)
+	out = append(out, c...)
+	return out, nil
+}
+
+// Sign sets obj["sig"] to the Ed25519 signature over SigningInput(obj).
 func Sign(obj Object, id *keys.Identity) error {
 	delete(obj, "sig")
-	msg, err := jcs.Marshal(obj)
+	msg, err := SigningInput(obj)
 	if err != nil {
 		return err
 	}
@@ -68,13 +94,7 @@ func VerifySig(obj Object, did string) error {
 	if err != nil {
 		return errors.New("wire: sig is not base64url")
 	}
-	unsigned := make(Object, len(obj))
-	for k, v := range obj {
-		if k != "sig" {
-			unsigned[k] = v
-		}
-	}
-	msg, err := jcs.Marshal(unsigned)
+	msg, err := SigningInput(obj)
 	if err != nil {
 		return err
 	}

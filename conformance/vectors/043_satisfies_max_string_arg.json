@@ -1,0 +1,13 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": "100",
+  "bound": {
+   "t": "max",
+   "v": 100
+  }
+ },
+ "name": "max string arg",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

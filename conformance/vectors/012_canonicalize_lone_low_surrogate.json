@@ -1,0 +1,9 @@
+{
+ "expect": "reject",
+ "input": {
+  "raw": "{\"a\":\"\\udc00x\"}"
+ },
+ "name": "lone low surrogate",
+ "op": "canonicalize",
+ "reason": "noncanonical"
+}

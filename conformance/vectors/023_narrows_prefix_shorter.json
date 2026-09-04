@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "prefix",
+   "v": "travel"
+  },
+  "parent": {
+   "t": "prefix",
+   "v": "travel/"
+  }
+ },
+ "name": "prefix shorter",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

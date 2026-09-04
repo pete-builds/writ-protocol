@@ -1,0 +1,9 @@
+{
+ "expect": "reject",
+ "input": {
+  "raw": "{\"a\":1} 2"
+ },
+ "name": "trailing data",
+ "op": "canonicalize",
+ "reason": "noncanonical"
+}

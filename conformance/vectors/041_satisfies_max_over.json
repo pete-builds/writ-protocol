@@ -1,0 +1,13 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": 101,
+  "bound": {
+   "t": "max",
+   "v": 100
+  }
+ },
+ "name": "max over",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

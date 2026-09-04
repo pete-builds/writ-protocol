@@ -1,0 +1,13 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": "travelx",
+  "bound": {
+   "t": "prefix",
+   "v": "travel"
+  }
+ },
+ "name": "prefix segment mismatch",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

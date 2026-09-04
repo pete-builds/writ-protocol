@@ -1,0 +1,198 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {
+    "amount": 60000,
+    "currency": "USD",
+    "date": 20261015,
+    "fare": "refundable"
+   },
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "id": "bm9uY2UtMDAwMDAwMDAzOA",
+   "op": "travel/book",
+   "sig": "qvjrpq7KtioXF7tdbML-aaV0b_K8jdtZYDu7YXHUhMFEL_BWij4Kjz200NHQRWRk-m_JGqrlkjXhFQUGoYMdDA",
+   "typ": "call",
+   "v": 1
+  },
+  "res": {
+   "pnr": "OTHER"
+  },
+  "tally": {
+   "acc": 1788400005,
+   "call": "DZTG75dHN7rJ60JQVy0UUpOLFS8x4-SW02QfZKnGbfg",
+   "err": null,
+   "op": "travel/book",
+   "out": "DDHoec0ZUJotkkVQai0H_fJsFDM3YZwHW1n9T4DzhG0",
+   "rev": {
+    "until": 1788486400
+   },
+   "sig": "bULEoCBli3I5OCYqRwwMtW9k4pebarG9KMgSbbzqfGhNeLoeFGDQytkhHHpVbefCUvVqlBw5Bahae7oZT2O8DA",
+   "st": "ok",
+   "sub": [
+    {
+     "acc": 1788400010,
+     "call": "UQWFdAPUwhvOpBIWLnIJIujHt9u57xpzpQGNwY8Yudw",
+     "err": null,
+     "op": "travel/charge",
+     "out": "Ptl0zsFSzJ9AXfresvriJt6EcD1ccuIHeJi-uPxHDcA",
+     "rev": {
+      "until": 1788486400
+     },
+     "sig": "fundQmzV8_oiMBHWWDlznZkWLAR7nSeatT2YUjIOZwfWpLpD8IGCB3A60kFfzVZOhwuNm-8WArPsR_KRmXgqDA",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {
+      "amount": 58900
+     },
+     "v": 1,
+     "writ": "Wjxqd7hNCOyVKynHaMFi9AeTkZTsgY8xB7pUfW3UwHA",
+     "wrt": []
+    }
+   ],
+   "typ": "tally",
+   "used": {
+    "amount": 58900
+   },
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+   "wrt": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel/charge"
+      },
+      "amount": {
+       "t": "max",
+       "v": 58900
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261015
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+     "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+     "sig": "yVka3FzI2TbD42_qnZgVOit6pshRr4xfpnsn83jpNOFLAxX9u89KDUcluGExTD2UUXrS2Ugnm6tGRzsAxQSqDQ",
+     "typ": "writ",
+     "v": 1
+    }
+   ]
+  },
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "tally body mismatch",
+ "op": "verify_tally",
+ "reason": "tally_mismatch"
+}

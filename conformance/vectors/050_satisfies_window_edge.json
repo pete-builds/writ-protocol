@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": 10,
+  "bound": {
+   "t": "window",
+   "v": [
+    1,
+    10
+   ]
+  }
+ },
+ "name": "window edge",
+ "op": "satisfies"
+}

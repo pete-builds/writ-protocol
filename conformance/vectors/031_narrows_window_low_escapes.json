@@ -1,0 +1,22 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "window",
+   "v": [
+    0,
+    6
+   ]
+  },
+  "parent": {
+   "t": "window",
+   "v": [
+    1,
+    10
+   ]
+  }
+ },
+ "name": "window low escapes",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

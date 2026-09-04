@@ -1,0 +1,21 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": [
+    "GBP"
+   ]
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    "USD",
+    "EUR"
+   ]
+  }
+ },
+ "name": "set not subset",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}
