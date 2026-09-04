@@ -192,6 +192,10 @@ conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
 demo/run.sh                        three-process demo; transcript in demo/out/
 ```
 
+## License
+
+Apache License 2.0, which carries an explicit patent grant. That matters more for a protocol than for ordinary code: an implementer's legal review needs to see that adopting the wire format cannot be made to cost them later. The specification text and the test corpus are under the same license, so a conforming implementation can be written, sold, and shipped by anyone without asking.
+
 ## Process record
 
 Nine roles ran as separate agents: Protocol Historian, Prior-Art Researcher, Skeptic (twice), Protocol Architect, Security Architect (twice), Distributed Systems Engineer, Independent Builder, Adoption Strategist, and a Prototype Team split between the Go implementation and an independent Python verifier. Six architectures were generated on six structural axes; four were killed and two merged into the winner as extensions. The decision record (docs/design/10-decision-record.md) lists every conflict between reviewers and how it was resolved.
