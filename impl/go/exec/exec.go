@@ -4,6 +4,7 @@ package exec
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"writproto/wire"
 	"writproto/writ"
 )
+
+// StoreUnavailable is the err.code of a refusal issued because the executor
+// could not write its stores. It is an implementation code, namespaced as
+// spec section 11 requires, and no operation runs when it is returned.
+const StoreUnavailable = "exec/store_unavailable"
 
 // Result is what an application handler returns for a forward call.
 type Result struct {
@@ -43,8 +49,9 @@ type Executor struct {
 	// forward it to the holders of writs it issued (spec 9.1). Best effort.
 	OnRevoke func(r *writ.Revoke)
 
-	mu       sync.Mutex
-	inflight map[string]inflight // call identity
+	mu        sync.Mutex
+	inflight  map[string]inflight    // call identity
+	undoLocks map[string]*sync.Mutex // target tally identity
 }
 
 type inflight struct {
@@ -59,7 +66,8 @@ func New(id *keys.Identity, store *FileStore) *Executor {
 		store, _ = OpenFileStore("")
 	}
 	return &Executor{ID: id, Store: store, Now: func() int64 { return time.Now().Unix() },
-		AcceptRoot: func(string) bool { return false }, inflight: map[string]inflight{}}
+		AcceptRoot: func(string) bool { return false }, inflight: map[string]inflight{},
+		undoLocks: map[string]*sync.Mutex{}}
 }
 
 // Recover resolves every pending call record left by a crash to a final tally
@@ -73,6 +81,7 @@ func (e *Executor) Recover() int {
 		}
 	}
 	e.Store.mu.Unlock()
+	n := 0
 	for _, r := range pending {
 		k, err := writ.ParseCall(r.Call)
 		if err != nil {
@@ -82,15 +91,21 @@ func (e *Executor) Recover() int {
 		if err != nil {
 			continue
 		}
-		var ids []string
-		for _, w := range k.Chain {
-			ids = append(ids, w.ID)
+		final := *r
+		final.Tally, final.Final = t.Raw, true
+		if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: chainIDs(k), Keep: k.Leaf().Exp}, &final) == nil {
+			n++
 		}
-		e.Store.putTally(t.ID, &tallyRec{Tally: t.Raw, Chain: ids, Keep: k.Leaf().Exp})
-		r.Tally, r.Final = t.Raw, true
-		e.Store.putCall(r)
 	}
-	return len(pending)
+	return n
+}
+
+func chainIDs(k *writ.Call) []string {
+	ids := make([]string, 0, len(k.Chain))
+	for _, w := range k.Chain {
+		ids = append(ids, w.ID)
+	}
+	return ids
 }
 
 // Reply is the HTTP-binding response body for a call.
@@ -108,8 +123,8 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 		return nil, err.(*writ.Error)
 	}
 	leaf := k.Leaf()
-	refuse := func(code writ.Reason, ref string) (*Reply, *writ.Error) {
-		t, _, err := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: e.Now(), St: "failed", ErrCode: string(code), ErrRef: ref})
+	refuse := func(code string) (*Reply, *writ.Error) {
+		t, _, err := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: e.Now(), St: "failed", ErrCode: code})
 		if err != nil {
 			return nil, &writ.Error{Code: writ.Malformed, Msg: err.Error()}
 		}
@@ -117,7 +132,7 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	}
 	// Step 3: the chain is structurally valid and attenuates root to leaf.
 	if err := writ.VerifyChain(k.Chain); err != nil {
-		return refuse(writ.CodeOf(err), "")
+		return refuse(string(writ.CodeOf(err)))
 	}
 	// Step 4, forward calls only: forward authority ends at exp. A standing
 	// call is not subject to expiry (or to revocation, step 7): the signed
@@ -127,59 +142,61 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	// restores forward authority, because every forward call passes them.
 	if !k.Standing() {
 		if err := writ.CheckExpiry(k.Chain, e.Now()); err != nil {
-			return refuse(writ.Expired, "")
+			return refuse(string(writ.Expired))
 		}
 	}
 	// Steps 5 and 6: this executor acts under the root and is the leaf holder.
 	if !e.AcceptRoot(k.Chain[0].Iss) {
-		return refuse(writ.RootNotAccepted, "")
+		return refuse(string(writ.RootNotAccepted))
 	}
 	if leaf.Hld != e.ID.DID() {
-		return refuse(writ.WrongExecutor, "")
-	}
-	var chainIDs []string
-	for _, w := range k.Chain {
-		chainIDs = append(chainIDs, w.ID)
+		return refuse(string(writ.WrongExecutor))
 	}
 	// Step 7, forward calls only: no writ in the chain is revoked, by
 	// identity or by a key-wide revoke of its issuer.
 	if !k.Standing() && e.IsRevoked(k.Chain) {
-		return refuse(writ.Revoked, "")
+		return refuse(string(writ.Revoked))
 	}
 	// Step 8: standing, then the forward or standing rules.
 	if k.Standing() {
 		if err := writ.CheckStanding(k); err != nil {
-			return refuse(writ.NoStanding, "")
+			return refuse(string(writ.CodeOf(err)))
 		}
 	} else if err := writ.CheckForward(k); err != nil {
-		return refuse(writ.CodeOf(err), "")
+		return refuse(string(writ.CodeOf(err)))
 	}
-	// Step 9: replay.
-	if rec, ok := e.Store.getCall(leaf.ID, k.CID); ok {
-		if rec.Tally != nil {
-			return &Reply{Tally: rec.Tally, Res: e.resFor(rec.Tally)}, nil
-		}
-		// Accepted but not yet answered (concurrent duplicate or crash): pending tally.
-		t, _, _ := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: rec.Acc, St: "pending", ErrCode: "pending"})
-		return &Reply{Tally: t.Raw}, nil
-	}
-	// Step 10: count, consumed against every writ in the chain that carries one.
+	// Steps 9 and 10, one atomic operation: replay, then count consumed against
+	// every writ in the chain that carries one. A writ with several count
+	// bounds is limited by the smallest. Admission records the pending entry,
+	// so a concurrent duplicate sees it and cannot execute a second time.
+	ids := chainIDs(k)
+	bounds := map[string]int64{}
 	if !k.Standing() {
-		bounds := map[string]int64{}
 		for _, w := range k.Chain {
 			for _, b := range w.Bnd {
-				if b.T == "count" {
+				if cur, ok := bounds[w.ID]; b.T == "count" && (!ok || b.Int < cur) {
 					bounds[w.ID] = b.Int
 				}
 			}
 		}
-		if !e.Store.consume(chainIDs, bounds) {
-			return refuse(writ.CountExhausted, "")
-		}
 	}
-	// Step 11: persist pending, then perform.
 	acc := e.Now()
-	e.Store.putCall(&Record{LeafID: leaf.ID, CID: k.CID, Acc: acc, Exp: leaf.Exp, Call: k.Raw})
+	pending := &Record{LeafID: leaf.ID, CID: k.CID, Acc: acc, Exp: leaf.Exp, Call: k.Raw}
+	prior, admitted, serr := e.Store.admit(pending, ids, bounds)
+	if serr != nil {
+		return refuse(StoreUnavailable)
+	}
+	if prior != nil {
+		if prior.Tally != nil {
+			return &Reply{Tally: prior.Tally, Res: e.resFor(prior.Tally)}, nil
+		}
+		// Accepted but not yet answered (concurrent duplicate or crash): pending tally.
+		return e.pendingReply(k, prior.Acc), nil
+	}
+	if !admitted {
+		return refuse(string(writ.CountExhausted))
+	}
+	// Step 11: the pending record is persisted; perform.
 	cctx, cancel := context.WithCancel(ctx)
 	e.mu.Lock()
 	e.inflight[k.ID] = inflight{call: k, acc: acc, cancel: cancel}
@@ -192,13 +209,11 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	}()
 
 	var r Result
-	switch {
-	case k.Op == "sys/undo":
+	switch k.Op {
+	case "sys/undo":
 		r = e.undo(cctx, k)
-	case k.Op == "sys/tallies":
+	case "sys/tallies":
 		r = e.tallies(k)
-	case k.Standing():
-		r = Result{St: "failed", ErrCode: string(writ.ForbiddenOp)}
 	default:
 		r = e.Handle(cctx, k)
 	}
@@ -218,9 +233,20 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if r.RevUntil != nil && *r.RevUntil > keep {
 		keep = *r.RevUntil
 	}
-	e.Store.putTally(t.ID, &tallyRec{Tally: t.Raw, Chain: chainIDs, Res: res, Keep: keep})
-	e.Store.putCall(&Record{LeafID: leaf.ID, CID: k.CID, Acc: acc, Exp: leaf.Exp, Call: k.Raw, Tally: t.Raw, Final: true})
+	final := *pending
+	final.Tally, final.Final = t.Raw, true
+	if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: ids, Res: res, Keep: keep}, &final) != nil {
+		// The operation ran but its outcome is not durable. Claiming it
+		// would be a lie after a restart, when the record resolves to
+		// unknown_outcome; a pending tally is the true statement.
+		return e.pendingReply(k, acc), nil
+	}
 	return &Reply{Tally: t.Raw, Res: res}, nil
+}
+
+func (e *Executor) pendingReply(k *writ.Call, acc int64) *Reply {
+	t, _, _ := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: acc, St: "pending", ErrCode: "pending"})
+	return &Reply{Tally: t.Raw}
 }
 
 func (e *Executor) resFor(t wire.Object) any {
@@ -231,10 +257,23 @@ func (e *Executor) resFor(t wire.Object) any {
 	return nil
 }
 
+func (e *Executor) undoLock(target string) *sync.Mutex {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	m, ok := e.undoLocks[target]
+	if !ok {
+		m = &sync.Mutex{}
+		e.undoLocks[target] = m
+	}
+	return m
+}
+
 // undo implements spec 8.1. By the time it runs, Execute has established
 // the chain, root, executor identity, and standing; it has deliberately not
 // checked expiry or revocation of the chain. What bounds an undo in time is
 // the target tally's rev.until, judged here against this executor's clock.
+// Reversals of one target are serialized, and each is claimed on disk before
+// it runs, so an effect is reversed at most once even across a crash.
 func (e *Executor) undo(ctx context.Context, k *writ.Call) Result {
 	fail := func(code writ.Reason) Result { return Result{St: "failed", ErrCode: string(code)} }
 	tobj, ok := k.Args["tally"].(map[string]any)
@@ -255,33 +294,33 @@ func (e *Executor) undo(ctx context.Context, k *writ.Call) Result {
 	if !ok {
 		return fail(writ.NotReversible)
 	}
-	if rec.Undone != "" {
-		// Idempotent: a second undo returns the first undo's outcome.
-		if prior, ok := e.Store.Calls[rec.Undone]; ok && prior.Tally != nil {
-			pt, _ := writ.ParseTally(prior.Tally, e.ID.DID())
-			return Result{St: pt.St, ErrCode: errCode(pt), Res: e.resFor(prior.Tally)}
-		}
-		return fail(writ.NotReversible)
+	lk := e.undoLock(target.ID)
+	lk.Lock()
+	defer lk.Unlock()
+	done, res, claimed := e.Store.undoState(rec)
+	if done {
+		// Idempotent: a later undo for the same tally performs nothing and
+		// answers with the successful reversal's body.
+		return Result{St: "ok", Res: res}
+	}
+	if claimed {
+		// A reversal was claimed and never settled: the process stopped
+		// while it ran. Whether the effect was reversed is unknown, and
+		// store loss is never proof that nothing happened (spec 7.3).
+		return fail(writ.UnknownOutcome)
 	}
 	if e.Undo == nil {
 		return fail(writ.NotReversible)
 	}
+	me := callKey(k.Leaf().ID, k.CID)
+	if e.Store.claimUndo(rec, me) != nil {
+		return Result{St: "failed", ErrCode: StoreUnavailable}
+	}
 	r := e.Undo(ctx, target, rec.Res)
 	r.RevUntil = nil
-	if r.St == "" || r.St == "ok" {
-		e.Store.mu.Lock()
-		rec.Undone = callKey(k.Leaf().ID, k.CID)
-		e.Store.flush()
-		e.Store.mu.Unlock()
-	}
+	ok = r.St == "" || r.St == "ok"
+	e.Store.settleUndo(rec, me, ok, r.Res)
 	return r
-}
-
-func errCode(t *writ.Tally) string {
-	if t.Err != nil {
-		return t.Err.Code
-	}
-	return ""
 }
 
 // tallies implements spec 8.2. It runs after chain expiry and revocation
@@ -308,7 +347,7 @@ func (e *Executor) tallies(k *writ.Call) Result {
 }
 
 // Revoke runs spec 9.1 on a decoded revoke object and returns the tallies of
-// affected non-final calls.
+// affected non-final forward calls.
 func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	r, err := writ.ParseRevoke(obj)
 	if err != nil {
@@ -322,23 +361,30 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	} else {
 		e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
 	}
-	// Cancel in-flight work under the revoked writ and answer with pending tallies.
-	var out []wire.Object
+	// Cancel in-flight forward work under the revoked writ and answer with
+	// pending tallies, in ascending order of call identity (spec 9.1). A
+	// standing call in flight is left alone: a revoke ends forward
+	// authority, not the standing to reverse or recover (spec 8).
+	var hits []inflight
 	e.mu.Lock()
 	for _, f := range e.inflight {
-		hit := false
+		if f.call.Standing() {
+			continue
+		}
 		for _, w := range f.call.Chain {
 			if w.ID == r.Writ || (r.Writ == "*" && w.Iss == r.Iss) {
-				hit = true
+				hits = append(hits, f)
+				break
 			}
-		}
-		if hit {
-			f.cancel()
-			t, _, _ := writ.NewTally(e.ID, writ.TallyInput{Call: f.call, Acc: f.acc, St: "pending", ErrCode: "pending"})
-			out = append(out, t.Raw)
 		}
 	}
 	e.mu.Unlock()
+	sort.Slice(hits, func(i, j int) bool { return hits[i].call.ID < hits[j].call.ID })
+	out := []wire.Object{}
+	for _, f := range hits {
+		f.cancel()
+		out = append(out, e.pendingReply(f.call, f.acc).Tally)
+	}
 	if e.OnRevoke != nil {
 		e.OnRevoke(r)
 	}

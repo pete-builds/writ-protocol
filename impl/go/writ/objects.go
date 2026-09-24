@@ -512,7 +512,10 @@ func ParseTally(obj wire.Object, signer string) (*Tally, error) {
 	return t, nil
 }
 
-// ParseRevoke validates a revoke's structure and signature.
+// ParseRevoke runs spec section 9.1 steps 1 to 3: the revoke's own members,
+// then every writ in its chain (section 6.1), then the revoke's signature.
+// That is the order of section 7 steps 1 and 2 for a call. CheckRevoke runs
+// step 4.
 func ParseRevoke(obj wire.Object) (*Revoke, error) {
 	c, err := checkHeader(obj, "revoke", MaxRevokeBytes)
 	if err != nil {
@@ -531,10 +534,35 @@ func ParseRevoke(obj wire.Object) (*Revoke, error) {
 	if r.Iss, ok = obj["iss"].(string); !ok {
 		return nil, fail(Malformed, "iss must be a string")
 	}
-	if r.Chain, err = ParseChain(obj["chain"]); err != nil {
+	if err := checkKey(r.Iss); err != nil {
 		return nil, err
 	}
-	if err := checkKey(r.Iss); err != nil {
+	arr, ok := obj["chain"].([]any)
+	if !ok {
+		return nil, fail(Malformed, "chain must be an array")
+	}
+	if len(arr) > MaxChain {
+		return nil, fail(TooLarge, "chain has %d writs, limit %d", len(arr), MaxChain)
+	}
+	for i, e := range arr {
+		if _, ok := e.(map[string]any); !ok {
+			return nil, fail(Malformed, "chain[%d] is not an object", i)
+		}
+	}
+	if r.Writ == "*" && len(arr) != 0 {
+		return nil, fail(Malformed, "a key-wide revoke must have an empty chain")
+	}
+	if r.Writ != "*" && len(arr) == 0 {
+		return nil, fail(Malformed, "a revoke of one writ must carry its chain")
+	}
+	sig, present := obj["sig"].(string)
+	if !present {
+		return nil, fail(Malformed, "sig must be a string")
+	}
+	if err := checkB64("sig", sig, 64); err != nil {
+		return nil, err
+	}
+	if r.Chain, err = ParseChain(arr); err != nil {
 		return nil, err
 	}
 	if err := checkSig(obj, r.Iss); err != nil {

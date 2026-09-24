@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 
 	"writproto/wire"
@@ -21,16 +23,24 @@ type Record struct {
 }
 
 type tallyRec struct {
-	Tally  wire.Object `json:"tally"`
-	Chain  []string    `json:"chain"` // writ identities root to leaf
-	Res    any         `json:"res,omitempty"`
-	Keep   int64       `json:"keep"`
-	Undone string      `json:"undone,omitempty"` // identity of the undo tally
+	Tally wire.Object `json:"tally"`
+	Chain []string    `json:"chain"` // writ identities root to leaf
+	Res   any         `json:"res,omitempty"`
+	Keep  int64       `json:"keep"`
+	// Undo state for a reversible tally (spec 8.1). Undoing is the call key
+	// of a reversal in progress, persisted before the reversal runs, so a
+	// crash mid-reversal is never mistaken for "nothing happened". Undone is
+	// the call key of the reversal that succeeded, and UndoRes its body.
+	Undoing string `json:"undoing,omitempty"`
+	Undone  string `json:"undone,omitempty"`
+	UndoRes any    `json:"undo_res,omitempty"`
 }
 
 // FileStore is the four executor stores of spec section 9 in one JSON file,
 // rewritten on every mutation. It is deliberately simple: durability across
-// restart is a conformance requirement, throughput is not.
+// restart is a conformance requirement, throughput is not. Every mutation
+// that the protocol relies on reports a failed write, and the caller refuses
+// rather than claim durability it does not have.
 type FileStore struct {
 	mu      sync.Mutex
 	path    string
@@ -62,40 +72,63 @@ func OpenFileStore(path string) (*FileStore, error) {
 	return s, nil
 }
 
-func (s *FileStore) flush() {
+// flush writes the whole store to a temporary file, syncs it, and renames it
+// over the store. The caller holds s.mu.
+func (s *FileStore) flush() error {
 	if s.path == "" {
-		return
+		return nil
 	}
-	b, _ := json.MarshalIndent(s, "", " ")
+	b, err := json.MarshalIndent(s, "", " ")
+	if err != nil {
+		return err
+	}
 	tmp := s.path + ".tmp"
-	_ = os.WriteFile(tmp, b, 0o600)
-	_ = os.Rename(tmp, s.path)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		return err
+	}
+	// Make the rename durable. Not every platform can sync a directory, and
+	// the file itself is already synced, so a failure here is not fatal.
+	if d, err := os.Open(filepath.Dir(s.path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 func callKey(leaf, cid string) string { return leaf + "|" + cid }
 
-func (s *FileStore) getCall(leaf, cid string) (*Record, bool) {
+// admit runs spec section 7 steps 9 and 10 as one atomic operation. When the
+// call store already has an entry for the call, admit returns it and changes
+// nothing. Otherwise, when every writ id with a count bound is below it, admit
+// increments each, records rec as the pending entry, persists both, and
+// returns nil, true, nil. When a count is exhausted it returns nil, false, nil
+// and records nothing. When the store cannot be written, admit undoes its
+// changes and returns the error: nothing may run that is not recorded.
+func (s *FileStore) admit(rec *Record, ids []string, bounds map[string]int64) (*Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.Calls[callKey(leaf, cid)]
-	return r, ok
-}
-
-func (s *FileStore) putCall(r *Record) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Calls[callKey(r.LeafID, r.CID)] = r
-	s.flush()
-}
-
-// consume increments the count entry for every writ id if all are below their
-// bound; returns false and consumes nothing otherwise.
-func (s *FileStore) consume(ids []string, bounds map[string]int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	key := callKey(rec.LeafID, rec.CID)
+	if prior, ok := s.Calls[key]; ok {
+		return prior, true, nil
+	}
 	for _, id := range ids {
 		if b, ok := bounds[id]; ok && s.Counts[id] >= b {
-			return false
+			return nil, false, nil
 		}
 	}
 	for _, id := range ids {
@@ -103,15 +136,35 @@ func (s *FileStore) consume(ids []string, bounds map[string]int64) bool {
 			s.Counts[id]++
 		}
 	}
-	s.flush()
-	return true
+	s.Calls[key] = rec
+	if err := s.flush(); err != nil {
+		for _, id := range ids {
+			if _, ok := bounds[id]; ok {
+				s.Counts[id]--
+			}
+		}
+		delete(s.Calls, key)
+		return nil, false, err
+	}
+	return nil, true, nil
 }
 
-func (s *FileStore) putTally(id string, rec *tallyRec) {
+// finish records a call's final tally in the tally store and the call store
+// in one write, so no crash can leave one without the other. On a failed
+// write the call stays pending and the error is returned.
+func (s *FileStore) finish(tid string, t *tallyRec, rec *Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Tallies[id] = rec
-	s.flush()
+	key := callKey(rec.LeafID, rec.CID)
+	prior := s.Calls[key]
+	s.Tallies[tid] = t
+	s.Calls[key] = rec
+	if err := s.flush(); err != nil {
+		delete(s.Tallies, tid)
+		s.Calls[key] = prior
+		return err
+	}
+	return nil
 }
 
 func (s *FileStore) getTally(id string) (*tallyRec, bool) {
@@ -121,26 +174,80 @@ func (s *FileStore) getTally(id string) (*tallyRec, bool) {
 	return r, ok
 }
 
+// talliesUnder returns every tally indexed under writID in the order spec
+// section 8.2 fixes: ascending acc, ties by tally identity as byte strings.
 func (s *FileStore) talliesUnder(writID string) []wire.Object {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []wire.Object
-	for _, r := range s.Tallies {
+	type hit struct {
+		id  string
+		acc int64
+		obj wire.Object
+	}
+	var hits []hit
+	for tid, r := range s.Tallies {
 		for _, id := range r.Chain {
 			if id == writID {
-				out = append(out, r.Tally)
+				acc, _ := r.Tally["acc"].(json.Number).Int64()
+				hits = append(hits, hit{tid, acc, r.Tally})
 				break
 			}
 		}
 	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].acc != hits[j].acc {
+			return hits[i].acc < hits[j].acc
+		}
+		return hits[i].id < hits[j].id
+	})
+	out := make([]wire.Object, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.obj)
+	}
 	return out
+}
+
+// undoState reports whether a reversal of rec has succeeded (and its body),
+// or was claimed and never settled, which after a restart means its outcome
+// is unknown.
+func (s *FileStore) undoState(rec *tallyRec) (done bool, res any, claimed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return rec.Undone != "", rec.UndoRes, rec.Undoing != ""
+}
+
+// claimUndo persists that the call by is about to reverse rec.
+func (s *FileStore) claimUndo(rec *tallyRec, by string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec.Undoing = by
+	if err := s.flush(); err != nil {
+		rec.Undoing = ""
+		return err
+	}
+	return nil
+}
+
+// settleUndo records the reversal's result: on success rec is undone for
+// good; on failure the claim is released so a later undo may try again. A
+// failed write leaves the claim on disk, which a restart reads as unknown.
+func (s *FileStore) settleUndo(rec *tallyRec, by string, ok bool, res any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec.Undoing = ""
+	if ok {
+		rec.Undone, rec.UndoRes = by, res
+	}
+	_ = s.flush()
 }
 
 func (s *FileStore) revoke(writID string, exp int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Revoked[writID] = exp
-	s.flush()
+	// A revoke that cannot be written still holds in memory, which only
+	// narrows authority; the revoke store is SHOULD-durable (spec 9).
+	_ = s.flush()
 }
 
 func (s *FileStore) isRevoked(writID string) bool {
