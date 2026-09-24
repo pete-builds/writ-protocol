@@ -9,6 +9,7 @@
 //	writ revoke -seed <hex> -chain <writ.json,...> > revoke.json
 //	writ inspect <object.json>                       print type, identity, and signer
 //	writ conformance <dir>                           run every vector, exit non-zero on failure
+//	writ scenarios <dir>                             run every executor scenario, exit non-zero on failure
 package main
 
 import (
@@ -72,7 +73,7 @@ func emit(v any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ <keygen|issue|call|send|verify|revoke|inspect|conformance> ...")
+		die("usage: writ <keygen|issue|call|send|verify|revoke|inspect|conformance|scenarios> ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -204,6 +205,16 @@ func main() {
 			die("usage: writ conformance <dir>")
 		}
 		pass, fail, report := conformance.RunDir(args[0])
+		fmt.Print(report)
+		fmt.Printf("%d passed, %d failed\n", pass, fail)
+		if fail > 0 {
+			os.Exit(1)
+		}
+	case "scenarios":
+		if len(args) != 1 {
+			die("usage: writ scenarios <dir>")
+		}
+		pass, fail, report := conformance.RunScenarioDir(args[0])
 		fmt.Print(report)
 		fmt.Printf("%d passed, %d failed\n", pass, fail)
 		if fail > 0 {

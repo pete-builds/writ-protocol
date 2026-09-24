@@ -108,6 +108,15 @@ func Run(v Vector) (bool, string) {
 		}
 		_, _, err = writ.VerifyTally(w, k, tobj, in["res"])
 		reason = writ.CodeOf(err)
+	case "verify_revoke":
+		in := decode(v.Input)
+		obj, _ := in["revoke"].(map[string]any)
+		var r *writ.Revoke
+		r, err = writ.ParseRevoke(obj)
+		if err == nil {
+			err = writ.CheckRevoke(r)
+		}
+		reason = writ.CodeOf(err)
 	default:
 		return false, "unknown op " + v.Op
 	}

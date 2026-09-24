@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "revoke": {
+   "chain": [],
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "sig": "j6BcLFrN5mb0WMci2BsZFM7RECa8lvI11I7Rl_sGLoCNxI5jKkezBYhnzz_G_QAWHPP7Wo6A3R9lTQAvnpzCDg",
+   "typ": "revoke",
+   "v": 1,
+   "writ": "*"
+  }
+ },
+ "name": "key-wide revoke",
+ "op": "verify_revoke"
+}

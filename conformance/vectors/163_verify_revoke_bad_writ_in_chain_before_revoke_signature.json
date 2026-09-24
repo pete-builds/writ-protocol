@@ -1,0 +1,60 @@
+{
+ "expect": "reject",
+ "input": {
+  "revoke": {
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": "soon",
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "FepbNS2EvsB9L2xRLjG3wsLHwQ4L2mrri93t8LhNJaCz7kAlR6o6jl_egiuvRAz1uFuqteYehEP_po5xxZtxDw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "sig": "pa62dw_kHD6lB5N80adaKuF7EpBnOlXfpXpp0BDF3QyfVkUwR6_c-F580QOHAk5BEq5pp5Ykzyb513dnuHC9AQ",
+   "typ": "revoke",
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U"
+  }
+ },
+ "name": "bad writ in chain before revoke signature",
+ "op": "verify_revoke",
+ "reason": "malformed"
+}

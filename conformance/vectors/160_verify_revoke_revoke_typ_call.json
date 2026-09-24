@@ -1,0 +1,60 @@
+{
+ "expect": "reject",
+ "input": {
+  "revoke": {
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "sig": "j-XgPVbqP0ZN1YEI8MXsiQzzLt0W4L_-OzTzSxaiZqk_gztdEEfYARWaggeXpuQtLEMMo47EjmAqucOOk3rzDg",
+   "typ": "call",
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U"
+  }
+ },
+ "name": "revoke typ call",
+ "op": "verify_revoke",
+ "reason": "wrong_type"
+}

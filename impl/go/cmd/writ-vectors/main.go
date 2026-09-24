@@ -403,5 +403,74 @@ func main() {
 	tLate, _, _ := writ.NewTally(C, writ.TallyInput{Call: kBC, Acc: w2.Exp, St: "ok", Used: map[string]int64{"amount": 58900}})
 	tv("forward tally acc at leaf exp", w2, kBC, tLate.Raw, nil, writ.Expired)
 
+	// Revokes (spec section 9.1), in the section's check order: the revoke's
+	// own members, every writ in its chain, its signature, then the chain,
+	// the leaf, and standing. Appended last so earlier files keep their bytes.
+	rv := func(target string, chain []any, iss string, signer *keys.Identity) wire.Object {
+		if chain == nil {
+			chain = []any{}
+		}
+		o := wire.Object{"v": 1, "typ": "revoke", "writ": target, "iss": iss, "chain": chain}
+		bb, _ := json.Marshal(o)
+		o = must(wire.Decode(bb))
+		_ = wire.Sign(o, signer)
+		return o
+	}
+	rvv := func(name string, r wire.Object, reason writ.Reason) {
+		expect := "accept"
+		if reason != "" {
+			expect = "reject"
+		}
+		write(name, "verify_revoke", map[string]any{"revoke": r}, expect, reason, nil)
+	}
+	rvv("revoke root by its issuer", must(writ.NewRevoke(A, []*writ.Writ{w1})).Raw, "")
+	rvv("revoke leaf by the root issuer", must(writ.NewRevoke(A, []*writ.Writ{w1, w2})).Raw, "")
+	rvv("revoke leaf by its issuer", must(writ.NewRevoke(B, []*writ.Writ{w1, w2})).Raw, "")
+	rvv("key-wide revoke", must(writ.NewRevoke(A, nil)).Raw, "")
+	write("revoke after expiry", "verify_revoke", map[string]any{"revoke": must(writ.NewRevoke(A, []*writ.Writ{w1})).Raw}, "accept", "", &rootExpired)
+	rvv("revoke by the leaf holder", rv(w2.ID, raws(w1, w2), C.DID(), C), writ.NoStanding)
+	rvv("revoke by a stranger", rv(w1.ID, raws(w1), S.DID(), S), writ.NoStanding)
+	rvv("revoke leaf mismatch", rv(w2.ID, raws(w1), A.DID(), A), writ.ChainBroken)
+	rvv("revoke chain out of order", rv(w1.ID, raws(w2, w1), A.DID(), A), writ.ChainBroken)
+	rvv("key-wide revoke with a chain", rv("*", raws(w1), A.DID(), A), writ.Malformed)
+	rvv("revoke of one writ without a chain", rv(w1.ID, nil, A.DID(), A), writ.Malformed)
+	rvv("revoke wrong signer", func() wire.Object { o := rv(w1.ID, raws(w1), A.DID(), A); _ = wire.Sign(o, S); return o }(), writ.BadSignature)
+	rvv("revoke iss not a key", rv(w1.ID, raws(w1), "did:web:a.example", A), writ.BadKey)
+	rvv("revoke writ not a hash", rv("w1", raws(w1), A.DID(), A), writ.Noncanonical)
+	rvv("revoke typ call", func() wire.Object {
+		o := rv(w1.ID, raws(w1), A.DID(), A)
+		o["typ"] = "call"
+		_ = wire.Sign(o, A)
+		return o
+	}(), writ.WrongType)
+	nine := []*writ.Writ{w1}
+	for len(nine) < 9 {
+		parent := nine[len(nine)-1]
+		nine = append(nine, must(writ.Issue(B, B.DID(), parent.Raw["bnd"].(map[string]any), parent.Exp, parent)))
+	}
+	rvv("revoke chain of nine", rv(nine[8].ID, raws(nine...), A.DID(), A), writ.TooLarge)
+	// First-failure order across the four steps.
+	rvv("key-wide with chain and wrong signer is malformed first", func() wire.Object {
+		o := rv("*", raws(w1), A.DID(), A)
+		_ = wire.Sign(o, S)
+		return o
+	}(), writ.Malformed)
+	badWrit := resign(w1, A, func(o wire.Object) { o["exp"] = "soon" })
+	rvv("bad writ in chain before revoke signature", func() wire.Object {
+		o := rv(w1.ID, []any{badWrit}, A.DID(), A)
+		_ = wire.Sign(o, S)
+		return o
+	}(), writ.Malformed)
+	rvv("wrong signer before leaf mismatch", func() wire.Object {
+		o := rv(w2.ID, raws(w1), A.DID(), A)
+		_ = wire.Sign(o, S)
+		return o
+	}(), writ.BadSignature)
+	rvv("leaf mismatch before standing", rv(w2.ID, raws(w1), S.DID(), S), writ.ChainBroken)
+
+	// A standing call whose sys/ operation section 8 does not define.
+	write("standing call undefined operation", "verify_call", map[string]any{"call": must(writ.NewCall(A, []*writ.Writ{w1, w2}, "sys/other", map[string]any{})).Raw}, "reject", writ.ForbiddenOp, nil)
+	write("standing call by a stranger to an undefined operation", "verify_call", map[string]any{"call": must(writ.NewCall(S, []*writ.Writ{w1, w2}, "sys/other", map[string]any{})).Raw}, "reject", writ.NoStanding, nil)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }

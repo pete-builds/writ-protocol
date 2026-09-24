@@ -1,0 +1,751 @@
+{
+ "name": "sys/tallies order and contents",
+ "executor": {
+  "seed": "0303030303030303030303030303030303030303030303030303030303030303",
+  "accept": [
+   "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+  ]
+ },
+ "steps": [
+  {
+   "do": "call",
+   "note": "two tallies with the same acc",
+   "now": 1788400010,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzMQ",
+    "op": "travel/a",
+    "sig": "bu2BeO5tVQ_18xjsDh19trxcm173w2t_W7CY4r1EKuW77fc7jVnRheepVe667H0O6vrYC5gV2RlZwMcXc44UBA",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "ok",
+    "res": {
+     "n": 1
+    }
+   },
+   "expect": {
+    "res": {
+     "n": 1
+    },
+    "tally": {
+     "acc": 1788400010,
+     "call": "NLFoK3ProQ2FGKoifXazGHEqi3SKY4cZJAaMqkj99kY",
+     "err": null,
+     "op": "travel/a",
+     "out": "K_0U9D0X_HzqJOCReoh5tLL4gLi67sG52Q-6rWVecb0",
+     "rev": null,
+     "sig": "3VUSZvsk276DgiWEoUYeYFlP8Yko2oS7BADkt3_zxUvW4slSLS1y6UsCmSGGtV9mAKo2cXUURy-Rr__iFeL2AQ",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "are ordered by identity",
+   "now": 1788400010,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzMg",
+    "op": "travel/b",
+    "sig": "mYSTbaoSaArGg1SIJBE7m-L3s6TqbQYUN-qYHmubWwIppEOqGkzyPR8qfJ5BX8cnfribCBE-Zvim0HrIyEBGDg",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "ok",
+    "res": {
+     "n": 2
+    }
+   },
+   "expect": {
+    "res": {
+     "n": 2
+    },
+    "tally": {
+     "acc": 1788400010,
+     "call": "be3IV6vBsB8adY4kkGT5NkkophjXbelO1mcjlSdF4uI",
+     "err": null,
+     "op": "travel/b",
+     "out": "NjN5dC-AtRvbkgZXmvd1SRFUMHm5OZyz_DFfsZn0dug",
+     "rev": null,
+     "sig": "HgmldJ4BPdqwH4roYph1oiR75irwA1tyT-MI1g2Hp6W-EGTBTbKpnY6r0i45plUDJViVp9PiAb4SEk1qmCG3CQ",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "an earlier acc sorts first, and a failed operation is still held",
+   "now": 1788400005,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzMw",
+    "op": "travel/c",
+    "sig": "bfphQ-uBb6AruFsFJBLto2rDjDyDb3Ica7Ycpmv9hX_XahJu4i5hIvFU7De_qxDLTd1OXXM14aP5PfFRSrPKDg",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "failed",
+    "code": "app/declined"
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400005,
+     "call": "Gf1nWzZQ3XpJmy3BMJPCw37KtLO5vQbRAh6IRP4RS9c",
+     "err": {
+      "code": "app/declined"
+     },
+     "op": "travel/c",
+     "out": null,
+     "rev": null,
+     "sig": "3W3L3zlKYB3IFTw2HT0h2k5agfgLAeecGXJNv2ombs3lIShyjA8sIw2Kgs-VP4I5mV5OpWf1l-AlGozcJlE6Bw",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "a forward refusal is not held",
+   "now": 1788400020,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzNA",
+    "op": "cars/x",
+    "sig": "MqEJHJYV1MNWRhR3x0jW_1hB4n26nGQIX3uPxVLci53p_pGquagRMzzLGu_R-D93V42p2Bzjf37KjHQetoL1BA",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400020,
+     "call": "b-jyloK9TzVbY8yHzHFHZvvszNoXVkPRRvTn4Pt-6Mc",
+     "err": {
+      "code": "forbidden_op"
+     },
+     "op": "cars/x",
+     "out": null,
+     "rev": null,
+     "sig": "2HpA8CvEcacm0CXUw-Y9U_jykkb62Aes72vbamjPIvN6HWw_wGlsCKCm3dzC2ILhm8GzACQJdyYBk-10O5O5Dg",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "nor a refused standing call",
+   "now": 1788400021,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzNQ",
+    "op": "sys/other",
+    "sig": "oD8qBbAjVhWK62LLhvtaKJIHRBG4Cbnn49wM6tfM7nhQiQ6i5RpOwNaGWb9nfGWlKz5xknHtUuY3ZkPQpMm2CQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400021,
+     "call": "ASSia60CWW8Ioy2WZXD1Ug3XqwCh_KOiHL2HhOKcUaI",
+     "err": {
+      "code": "forbidden_op"
+     },
+     "op": "sys/other",
+     "out": null,
+     "rev": null,
+     "sig": "vFls89177pMrNzh053xhgPoWk7ggjVStK94-zvoxpMVbRhT_bKLykECFBc92xeT398jQZlrmo565x2W-eCPODw",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "three tallies, and not this call's own",
+   "now": 1788400030,
+   "call": {
+    "args": {
+     "writ": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU"
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDEzNg",
+    "op": "sys/tallies",
+    "sig": "VdY_oTYweZWCfr8gSLMiqfWOS9Ils08HjZ_0N1Pl5zbljZDAWh4xAWEbHLYBL9S75WMMoXbtR1dU_8MrLT1LAQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "tallies": [
+      {
+       "acc": 1788400005,
+       "call": "Gf1nWzZQ3XpJmy3BMJPCw37KtLO5vQbRAh6IRP4RS9c",
+       "err": {
+        "code": "app/declined"
+       },
+       "op": "travel/c",
+       "out": null,
+       "rev": null,
+       "sig": "3W3L3zlKYB3IFTw2HT0h2k5agfgLAeecGXJNv2ombs3lIShyjA8sIw2Kgs-VP4I5mV5OpWf1l-AlGozcJlE6Bw",
+       "st": "failed",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "be3IV6vBsB8adY4kkGT5NkkophjXbelO1mcjlSdF4uI",
+       "err": null,
+       "op": "travel/b",
+       "out": "NjN5dC-AtRvbkgZXmvd1SRFUMHm5OZyz_DFfsZn0dug",
+       "rev": null,
+       "sig": "HgmldJ4BPdqwH4roYph1oiR75irwA1tyT-MI1g2Hp6W-EGTBTbKpnY6r0i45plUDJViVp9PiAb4SEk1qmCG3CQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "NLFoK3ProQ2FGKoifXazGHEqi3SKY4cZJAaMqkj99kY",
+       "err": null,
+       "op": "travel/a",
+       "out": "K_0U9D0X_HzqJOCReoh5tLL4gLi67sG52Q-6rWVecb0",
+       "rev": null,
+       "sig": "3VUSZvsk276DgiWEoUYeYFlP8Yko2oS7BADkt3_zxUvW4slSLS1y6UsCmSGGtV9mAKo2cXUURy-Rr__iFeL2AQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      }
+     ]
+    },
+    "tally": {
+     "acc": 1788400030,
+     "call": "wWJ-_AS3NEFM57cczncqMicgp9aoCiK3U5oopL_FadE",
+     "err": null,
+     "op": "sys/tallies",
+     "out": "8I0h7dr1BHGhM7opmKNcRlefHVjTNgqBN3ib5_Sz-84",
+     "rev": null,
+     "sig": "CrtYD0Ea2ykcBegrxlr46RLoWNj9PsC53eOYi38I-V5C4KvKlvae84sOwNS_rGaYiiTZyXEzxagyp2rPf5JwCQ",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "four now, the previous recovery included",
+   "now": 1788400040,
+   "call": {
+    "args": {
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw"
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDEzNw",
+    "op": "sys/tallies",
+    "sig": "vIoGvozyRKhIiR2TDBmYG6KVkU6NMeGIpAid67Z-uTfr1hzKvO2yMHF_IhPqDU7R46LKFEES4MAfzWOTKMpbCQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "tallies": [
+      {
+       "acc": 1788400005,
+       "call": "Gf1nWzZQ3XpJmy3BMJPCw37KtLO5vQbRAh6IRP4RS9c",
+       "err": {
+        "code": "app/declined"
+       },
+       "op": "travel/c",
+       "out": null,
+       "rev": null,
+       "sig": "3W3L3zlKYB3IFTw2HT0h2k5agfgLAeecGXJNv2ombs3lIShyjA8sIw2Kgs-VP4I5mV5OpWf1l-AlGozcJlE6Bw",
+       "st": "failed",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "be3IV6vBsB8adY4kkGT5NkkophjXbelO1mcjlSdF4uI",
+       "err": null,
+       "op": "travel/b",
+       "out": "NjN5dC-AtRvbkgZXmvd1SRFUMHm5OZyz_DFfsZn0dug",
+       "rev": null,
+       "sig": "HgmldJ4BPdqwH4roYph1oiR75irwA1tyT-MI1g2Hp6W-EGTBTbKpnY6r0i45plUDJViVp9PiAb4SEk1qmCG3CQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "NLFoK3ProQ2FGKoifXazGHEqi3SKY4cZJAaMqkj99kY",
+       "err": null,
+       "op": "travel/a",
+       "out": "K_0U9D0X_HzqJOCReoh5tLL4gLi67sG52Q-6rWVecb0",
+       "rev": null,
+       "sig": "3VUSZvsk276DgiWEoUYeYFlP8Yko2oS7BADkt3_zxUvW4slSLS1y6UsCmSGGtV9mAKo2cXUURy-Rr__iFeL2AQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400030,
+       "call": "wWJ-_AS3NEFM57cczncqMicgp9aoCiK3U5oopL_FadE",
+       "err": null,
+       "op": "sys/tallies",
+       "out": "8I0h7dr1BHGhM7opmKNcRlefHVjTNgqBN3ib5_Sz-84",
+       "rev": null,
+       "sig": "CrtYD0Ea2ykcBegrxlr46RLoWNj9PsC53eOYi38I-V5C4KvKlvae84sOwNS_rGaYiiTZyXEzxagyp2rPf5JwCQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      }
+     ]
+    },
+    "tally": {
+     "acc": 1788400040,
+     "call": "Y3v8Igqqpz9bmM58aS7zTCB8NrjaPGXrV6PmDSOdsnk",
+     "err": null,
+     "op": "sys/tallies",
+     "out": "dTi76pCCDIt5HEj4aTNlLfKyJUfTBWDqqz94EhDjFfA",
+     "rev": null,
+     "sig": "LLT6daMpqnGAKCFHzvH873QOyLOKLSwT0JRmNYZ7r8gKXfOlhhNEfnTv6xryOKByQ-m0F6t4uapdZa53V23xBw",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "a replay returns the stored answer",
+   "now": 1788400050,
+   "call": {
+    "args": {
+     "writ": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU"
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDEyOQ",
+      "prv": null,
+      "sig": "yTS_kLH_vfvXusWJCNlagudPytmKWa4dL0nfR1G4XzFV3b_z8cuYCoKvX0GREkYgb_q6UycwhtpeOtnHseGBBQ",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDEzMA",
+      "prv": "TGt0VPiTG0BNSQbNROm2cEj3mPfIQ_jHleyAlEJYrAU",
+      "sig": "gBraanig3e-9zTj0Fz2JhG2Sfc5ZkvWoDdDcJuJSy8gKwxvkahiHtNfZaCQmA9GiRpUep713bSa8JWsFv1urCw",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDEzNg",
+    "op": "sys/tallies",
+    "sig": "VdY_oTYweZWCfr8gSLMiqfWOS9Ils08HjZ_0N1Pl5zbljZDAWh4xAWEbHLYBL9S75WMMoXbtR1dU_8MrLT1LAQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "tallies": [
+      {
+       "acc": 1788400005,
+       "call": "Gf1nWzZQ3XpJmy3BMJPCw37KtLO5vQbRAh6IRP4RS9c",
+       "err": {
+        "code": "app/declined"
+       },
+       "op": "travel/c",
+       "out": null,
+       "rev": null,
+       "sig": "3W3L3zlKYB3IFTw2HT0h2k5agfgLAeecGXJNv2ombs3lIShyjA8sIw2Kgs-VP4I5mV5OpWf1l-AlGozcJlE6Bw",
+       "st": "failed",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "be3IV6vBsB8adY4kkGT5NkkophjXbelO1mcjlSdF4uI",
+       "err": null,
+       "op": "travel/b",
+       "out": "NjN5dC-AtRvbkgZXmvd1SRFUMHm5OZyz_DFfsZn0dug",
+       "rev": null,
+       "sig": "HgmldJ4BPdqwH4roYph1oiR75irwA1tyT-MI1g2Hp6W-EGTBTbKpnY6r0i45plUDJViVp9PiAb4SEk1qmCG3CQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      },
+      {
+       "acc": 1788400010,
+       "call": "NLFoK3ProQ2FGKoifXazGHEqi3SKY4cZJAaMqkj99kY",
+       "err": null,
+       "op": "travel/a",
+       "out": "K_0U9D0X_HzqJOCReoh5tLL4gLi67sG52Q-6rWVecb0",
+       "rev": null,
+       "sig": "3VUSZvsk276DgiWEoUYeYFlP8Yko2oS7BADkt3_zxUvW4slSLS1y6UsCmSGGtV9mAKo2cXUURy-Rr__iFeL2AQ",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {},
+       "v": 1,
+       "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+       "wrt": []
+      }
+     ]
+    },
+    "tally": {
+     "acc": 1788400030,
+     "call": "wWJ-_AS3NEFM57cczncqMicgp9aoCiK3U5oopL_FadE",
+     "err": null,
+     "op": "sys/tallies",
+     "out": "8I0h7dr1BHGhM7opmKNcRlefHVjTNgqBN3ib5_Sz-84",
+     "rev": null,
+     "sig": "CrtYD0Ea2ykcBegrxlr46RLoWNj9PsC53eOYi38I-V5C4KvKlvae84sOwNS_rGaYiiTZyXEzxagyp2rPf5JwCQ",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "2U_xgP0lAPC5D8OtpfDD6oVkUmNv8JoUl34OLxGurFw",
+     "wrt": []
+    }
+   }
+  }
+ ]
+}
