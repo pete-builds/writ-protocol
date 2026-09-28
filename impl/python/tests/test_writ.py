@@ -437,6 +437,16 @@ class CallTest(Base):
     def test_revoked(self):
         self.assertReason("revoked", V.verify_call, FX.callB, now=NOW, revoked={O.identity(FX.w1)})
 
+    def test_undo_target_not_an_object_is_malformed(self):
+        # Section 8.1: "args.tally is an object (malformed)" comes before the
+        # section 6.1 check whose failures are not_reversible. A string used
+        # to be parsed as JSON text and reported not_reversible.
+        for bad in ("not an object", None, [FX.tC]):
+            undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": bad})
+            self.assertReason("malformed", V.verify_call, undo, now=NOW)
+        undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {})
+        self.assertReason("malformed", V.verify_call, undo, now=NOW)
+
     def test_standing_survives_expiry_and_revocation(self):
         # Section 7 step 6: a forward call is expired at exp, and stays so
         # however the chain is presented; a standing call is not.

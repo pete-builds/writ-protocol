@@ -48,11 +48,51 @@ Verdicts:
 - Corpus: scenario 014 expects call identities beginning `4FUw`, `yxBo`, `zdyA`, in that order. That is ASCII order of the text; the decoded bytes (`4` is 56, `y` is 50, `z` is 51) would put `4FUw` last. The corpus settles it for the text reading; the spec sentence should say "the ASCII bytes of the identity string".
 - Verdict: SPEC_AMBIGUOUS
 
+### 5. The `acc` of a tally for a call the executor never accepted
+
+- Implementing: refusals at section 7 steps 3 to 10.
+- Spec: section 6 table, "`acc` | integer | yes | the time the executor accepted the call; for a forward call, bounds and expiry are judged at this time". Section 7, "every later failure MUST be answered with a signed tally with `st` `failed` and the reason in `err.code`". Section 7 step 11, "E records `acc` = now", which a refused call never reaches. Section 9.1, "`canceled` for calls not yet accepted".
+- Decision: a refused call was never accepted, yet its signed tally needs an integer `acc`, and nothing says which time to use (receipt, zero, or something else). This implementation uses the executor's clock when it received the call. The other members of a refusal follow from the table: `used` `{}` ("absent names mean zero"), `out` null ("null when there is none"), `rev` null, `sub` and `wrt` empty. The same gap covers a `canceled` tally for a call "not yet accepted" in a revoke's answer; this executor never holds such a call, because admission and revocation take one lock, so it never had to choose there.
+- Corpus: every refusal in the scenarios carries the step's `now` as `acc` (003 step 2 says so outright: "a refusal is not stored: the retry is checked again and signed at the new time"). This matches.
+- Verdict: SPEC_SILENT
+
+### 6. Unsigned or signed rejection at section 7 steps 1 and 2
+
+- Implementing: the executor's answer when the call fails section 6.1 steps 1 to 5, a chain writ fails section 6.1, or the call's signature fails.
+- Spec: section 7, "A failure at step 1 or 2 MAY be answered with an unsigned error; every later failure MUST be answered with a signed tally". Section 14.1, "`{"error": <reason>}` for an unsigned rejection at section 7 steps 1 and 2", and "two conforming executors given the same scenario sign the same bytes".
+- Decision: after a step 2 failure the call has parsed, so it has an identity and a leaf, and an executor may take the other branch of the MAY and sign a `failed` tally. That executor conforms to section 7 and fails scenario 009 step 1, which expects `{"error": "bad_signature"}`. This implementation answers unsigned at both steps. For conformance the MAY is a MUST, and the text should say so.
+- Corpus: 009 step 1 expects the unsigned form.
+- Verdict: SPEC_AMBIGUOUS
+
+### 7. A second sys/undo for a tally whose reversal is running
+
+- Implementing: section 8.1 serialization of reversals.
+- Spec: section 8.1, "Reversals of one tally MUST NOT run concurrently, and the executor MUST durably record that a reversal of the tally has begun before it performs one."
+- Decision: the text forbids concurrency but does not say what a second undo of the same target, under a different call `id`, receives while the first is running: to wait, a pending tally, or a refusal (and if a refusal, with what code, and whether it is recorded, since it is not one of steps 3 to 10). This implementation admits it (recorded pending at steps 9 and 11), queues it behind the running reversal, and answers `{"inflight": true}`. When the running reversal returns, success answers the queued call `ok` with that reversal's body and reverses nothing; failure lets the queued call run its own reversal. After a restart a queued call resolves like any pending record, to `unknown_outcome`.
+- Corpus: not exercised; scenario 015 runs one reversal alone.
+- Verdict: SPEC_SILENT
+
+### 8. A held scenario operation's `app.st` is the empty string
+
+- Implementing: the section 14.1 runner.
+- Spec: section 14.1, "Its members are `st` (`ok`, `failed`, or `canceled`), `code` (the `err.code`, present exactly when `st` is not `ok`), and optionally [...] `hold`".
+- Decision: the runner reads `hold` first and ignores `st` for a held operation, whose outcome comes from the later `finish` step.
+- Corpus: scenarios 013 to 017 script held operations as `{"st": "", "hold": true}`: `st` is none of the three values, and `code` is absent although `st` is not `ok`. A runner that validated `app` as the text describes would reject these steps. This is format only; no executor behavior depends on it.
+- Verdict: CORPUS_CONTRADICTS_SPEC
+
+### 9. The library's sys/undo check misreported a target that is not an object
+
+- Implementing: section 7 step 8 argument checks for sys/undo, shared by `verify_call` and the executor.
+- Spec: section 8.1, "in this order: `args.tally` is an object (`malformed`); it passes section 6.1 with this executor's own key as signer, any failure there being `not_reversible`".
+- Decision: none needed. The pre-existing `check_standing_args` skipped the object check and handed a string to section 6.1, whose loader treats a string as received JSON text, so `{"tally": "not an object"}` came out `not_reversible`, and a missing `tally` also escaped `malformed`.
+- Corpus: scenario 006 step 7 expects `malformed`. The executor now calls the fixed library function; `test_undo_target_not_an_object_is_malformed` fails on the old code.
+- Verdict: PYTHON_BUG
+
 ## Counts
 
 | Verdict | Count |
 |---|---|
-| PYTHON_BUG | 1 |
-| SPEC_AMBIGUOUS | 1 |
-| SPEC_SILENT | 2 |
-| CORPUS_CONTRADICTS_SPEC | 0 |
+| PYTHON_BUG | 2 |
+| SPEC_AMBIGUOUS | 2 |
+| SPEC_SILENT | 4 |
+| CORPUS_CONTRADICTS_SPEC | 1 |

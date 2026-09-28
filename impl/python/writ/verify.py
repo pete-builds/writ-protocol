@@ -112,32 +112,39 @@ STANDING_OPS = ("sys/undo", "sys/tallies")
 
 
 def check_standing_args(op, args, writs, ids, now):
-    """Section 8: the stateless checks on a standing call's args.
+    """Section 8: the checks on a standing call's args that need no store.
 
     An op under sys/ that is not a defined standing operation is
-    forbidden_op. sys/undo: the target tally verifies under the leaf hld
-    (not_reversible), names the leaf writ (tally_mismatch), is reversible
-    now (not_reversible), and is ok (not_reversible). sys/tallies: the
-    named writ is in the chain (tally_mismatch).
+    forbidden_op. sys/undo (section 8.1, in its order): args.tally is an
+    object (malformed); it passes section 6.1 signed by the leaf hld, which
+    at an executor is its own key (any failure is not_reversible); it names
+    the leaf writ (tally_mismatch); it has a rev, now < rev.until, and st
+    is ok (not_reversible). The last 8.1 check, that the tally is held in
+    the executor's tally store, is the executor's. sys/tallies: args.writ
+    is the identity of a writ in the chain (tally_mismatch).
+
+    Returns the parsed target tally for sys/undo, else None.
     """
     if op not in STANDING_OPS:
         raise WritError("forbidden_op", f"{op!r} is not a standing operation")
     leaf = writs[-1]
     if op == "sys/undo":
         target = args.get("tally")
+        if not isinstance(target, dict):
+            raise WritError("malformed", "args.tally is not an object")
         try:
             target = O.verify_object(target, "tally", signer=leaf["hld"])
         except WritError as e:
-            raise WritError("not_reversible", f"target tally does not verify under the leaf hld: {e.message}") from None
+            raise WritError("not_reversible", f"target tally does not verify under the leaf hld: {e.reason}: {e.message}") from None
         if target["writ"] != ids[-1]:
             raise WritError("tally_mismatch", "target tally names a writ other than the leaf")
-        if target["rev"] is None or now >= target["rev"]["until"]:
-            raise WritError("not_reversible", "target tally has no rev or its until has passed")
-        if target["st"] != "ok":
-            raise WritError("not_reversible", "target tally is not ok")
-    elif op == "sys/tallies":
-        if args.get("writ") not in ids:
-            raise WritError("tally_mismatch", "args.writ is not the identity of a writ in the chain")
+        if target["rev"] is None or now >= target["rev"]["until"] or target["st"] != "ok":
+            raise WritError("not_reversible", "target tally has no rev, is past rev.until, or is not ok")
+        return target
+    w = args.get("writ")
+    if not isinstance(w, str) or w not in ids:
+        raise WritError("tally_mismatch", "args.writ is not the identity of a writ in the chain")
+    return None
 
 
 def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None, standing_ops=True):
