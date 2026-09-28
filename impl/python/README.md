@@ -1,16 +1,21 @@
 # Writ v0.1, Python implementation
 
-A second implementation of the Writ protocol, in a different language
-from the Go reference, written from `docs/spec/writ-v0.1.md` without
-consulting the Go code. The verifier was produced by the same author as the
-Go implementation, so it is a consistency check between two readings of
-the spec. The executor (`executor.py`, `stores.py`, and the scenario
-runner) was then written for the "stranger test": from the spec text
-revised 2026-09-28, the conformance corpus, and this verifier, without
-reading `impl/go/`, `demo/`, or `docs/design/`. Every place where that
-needed a guess is in [DIVERGENCES.md](DIVERGENCES.md), with the spec
-sentences quoted and a verdict per entry. Python 3.12 or later (tested on
-3.13 and 3.14) and the `cryptography` package are the only requirements.
+A second implementation of the Writ protocol, in a different language from the Go reference, written from `docs/spec/writ-v0.1.md` without consulting the Go code. It has two halves:
+
+- **The verifier** checks writs, chains, calls, tallies, and revokes. It was written by the same author as the Go implementation, so it checks that one text reads the same way twice.
+- **The executor** (`executor.py`, `stores.py`, and the scenario runner) receives calls and does the work. It was written for the "stranger test": from the spec text as revised on 2026-09-28, the conformance corpus, and this verifier, without reading `impl/go/`, `demo/`, or `docs/design/`. Every place where that needed a guess is in [DIVERGENCES.md](DIVERGENCES.md), with the spec sentences quoted and a verdict for each.
+
+Requirements: Python 3.12 or later (tested on 3.13 and 3.14) and the `cryptography` package. Nothing else.
+
+## Quick start
+
+From this directory:
+
+    python3 -B -m unittest discover -s tests                           # unit tests
+    python3 -B -m writ.cli conformance ../../conformance/vectors       # the shared vectors
+    python3 -B -m writ.cli scenarios ../../conformance/scenarios       # the executor scenarios
+
+Pass `-B`, so a stale `.pyc` can never stand in for the source. `tests/test_writ.py` covers the verifier. `tests/test_executor.py` covers the stores, the executor, and the scenario runner, and runs every corpus scenario.
 
 ## Layout
 
@@ -27,21 +32,9 @@ sentences quoted and a verdict per entry. Python 3.12 or later (tested on
 | `writ/executor.py` | 7, 7.1 to 7.5, 8, 9, 9.1, 9.2: the `Executor` |
 | `writ/cli.py` | `python3 -m writ.cli`, including the section 14 and 14.1 runners |
 
-`narrow()` is the only way to produce a child writ. It starts from a parent
-writ the caller holds, applies overrides, checks section 4, and signs what
-it built. Nothing in the package signs a writ object handed to it as data.
+`narrow()` is the only way to produce a child writ. It starts from a parent writ the caller holds, applies overrides, checks section 4, and signs what it built. Nothing in the package signs a writ object handed to it as data.
 
-## Tests
-
-From this directory:
-
-    python3 -B -m unittest discover -s tests
-
-`tests/test_writ.py` covers the verifier; `tests/test_executor.py` covers
-the stores, the executor, and the scenario runner, and runs every corpus
-scenario. Pass `-B` so a stale `.pyc` can never stand in for the source.
-
-## Executor
+## Using the executor
 
     from writ.executor import Executor, Outcome, HELD
 
@@ -52,104 +45,66 @@ scenario. Pass `-B` so a stale `.pyc` can never stand in for the source.
     ex.complete(call_id, Outcome("ok", res={...}))   # a held operation returns
     ex.restart()                     # crash and reopen: resolves pending records
 
-Answers are the section 10 and 14.1 shapes. `my_app(op)` performs a
-forward operation (`op.kind == "forward"`) or a reversal (`"undo"`) and
-returns an `Outcome(st, code, res, used, rev)`, or `HELD` to finish later
-through `complete()`; `op.stop_requested()` turns true when a revoke tells
-it to stop. An application that raises has an unknown outcome
-(`unknown_outcome`). `sys/tallies` never calls the application.
+Answers take the shapes of spec sections 10 and 14.1. Your application, `my_app(op)`, performs a forward operation (`op.kind == "forward"`) or a reversal (`"undo"`), and returns an `Outcome(st, code, res, used, rev)`, or `HELD` to finish later through `complete()`. `op.stop_requested()` turns true when a revoke tells the operation to stop. An application that raises has an unknown outcome (`unknown_outcome`). `sys/tallies` never calls the application.
 
-- Steps 9 and 10 (replay and count) and the pending record of step 11 are
-  admitted under one lock with revocation, so no two calls can pass replay
-  with one id or spend one last use, and no revoke slips between a call's
-  step 7 and its admission.
-- A refusal at steps 3 to 10 is signed at the executor's clock and stored
-  nowhere; a failure at steps 1 and 2 is the unsigned `{"error": ...}`.
-- `sys/undo` reverses at most once per target tally, records that a
-  reversal began before starting it, lets a failed reversal be retried,
-  answers later undos with the successful reversal's body, and after a
-  crash mid-reversal answers `unknown_outcome` for good. A second undo of
-  a tally whose reversal is running waits for it.
-- A revoke answers with pending tallies for in-flight forward calls under
-  the revoked writ, in call identity order, and tells those operations to
-  stop; standing calls are neither stopped nor listed.
-- A forward operation can delegate onward (section 7.5): `op.issue()`
-  narrows the held leaf into a child, `op.make_call()` signs a sub-call,
-  and `op.receive_tally()` verifies a sub-tally under 6.2 and persists it
-  before returning. Final and resolved tallies carry every issued writ in
-  `wrt` and every sub-tally in `sub`. A valid revoke is passed to an
-  optional `forward_revoke(revoke, holder)` for every holder of a writ
-  issued under the revoked writ.
-- If the call or count store cannot be written at admission, the call is
-  refused with `writ-py/store_write_failed` and nothing is recorded; if a
-  final tally cannot be persisted, the answer is the pending tally that the
-  record resolves to after a restart.
+How it behaves:
 
-The stores live under one directory: `calls/`, `counts/`, `tallies/`,
-`revokes/`, and `reversals/`, one fsynced, atomically renamed JSON file per
-record, named by the SHA-256 of its key. `Stores.prune(now)` applies the
-section 9 lifetimes; nothing prunes automatically.
+- **Admission is atomic.** Steps 9 and 10 (replay and count) and the pending record of step 11 are admitted under one lock, shared with revocation. No two calls can pass replay with one id or spend one last use, and no revoke can slip between a call's step 7 and its admission.
+- **Refusals are signed and forgotten.** A refusal at steps 3 to 10 is signed at the executor's clock and stored nowhere. A failure at steps 1 and 2 is the unsigned `{"error": ...}`.
+- **Standing operations check their own arguments when they run.** The checks of `sys/undo` and `sys/tallies` (sections 8.1 and 8.2) run when the operation is performed, after replay. A failure there is a stored outcome, so a retry of the same call gets it back.
+- **`sys/undo` reverses at most once** per target tally. It records that a reversal began before starting it, lets a failed reversal be retried, answers later undos with the successful reversal's body, and after a crash mid-reversal answers `unknown_outcome` for good. A second undo of a tally whose reversal is running waits for it.
+- **`sys/tallies` is scoped.** It names a writ the caller issued, or one below it.
+- **A revoke stops work in flight.** It answers with pending tallies for forward calls in flight under the revoked writ, in call identity order, and tells those operations to stop. Standing calls are neither stopped nor listed.
+- **Operations can delegate onward** (section 7.5). `op.issue()` narrows the held leaf into a child, `op.make_call()` signs a sub-call, and `op.receive_tally()` verifies a sub-tally under 6.2 and persists it before returning. Final and resolved tallies carry every issued writ in `wrt` and every sub-tally in `sub`. A valid revoke is passed to an optional `forward_revoke(revoke, holder)` for every holder of a writ issued under the revoked writ.
+- **Store failures never pass silently.** If the call or count store cannot be written at admission, the call is refused with `writ-py/store_write_failed` and nothing is recorded. If a final tally cannot be persisted, the answer is the pending tally the record resolves to after a restart.
 
-What it does not do: the HTTP binding (section 10), policy for root
-acceptance beyond a fixed list (section 7.1), compensation in which a
-reversal issues its own `sys/undo` calls to sub-executors, and a
-`canceled` answer for calls not yet accepted, which never exist here
-because admission and revocation are serialized.
+The stores live under one directory: `calls/`, `counts/`, `tallies/`, `revokes/`, and `reversals/`, with one fsynced, atomically renamed JSON file per record, named by the SHA-256 of its key. `Stores.prune(now)` applies the section 9 lifetimes; nothing prunes automatically.
 
-## Conformance runner
+What it does not do:
+- the HTTP binding (section 10);
+- any policy for root acceptance beyond a fixed list (section 7.1);
+- compensation in which a reversal issues its own `sys/undo` calls to sub-executors;
+- a `canceled` answer for calls not yet accepted, which never exist here, because admission and revocation are serialized.
+
+## The conformance runner
 
     python3 -m writ.cli conformance <dir>
 
-Runs every `*.json` vector in the directory, prints `PASS` or `FAIL` per
-vector and a summary, and exits non-zero on any failure. Vector files are
-loaded with a lenient reader so that deliberately broken embedded objects
-(duplicate members, floats, out of range integers, lone surrogate escapes)
-reach the verifier and are rejected with the spec's reason code. Supported
-ops: `verify_writ`, `verify_chain`, `verify_call`, `verify_tally`,
-`verify_revoke`, `narrows`, `satisfies`, `canonicalize`. `verify_call` covers section 6.1 on the call,
-section 4 on its chain, expiry for forward calls only (a standing `sys/`
-call is authorized by the chain as historical proof, spec section 7 step
-4), and the section 5 classification with 7.2 for forward calls; executor
-state (7 steps 5 to 7) and section 8 argument checks are outside it. A `now` member fixes the clock; a vector without
-one is judged with no clock, so expiry is not checked. The CLI commands use
-real time unless given `--now`.
+Runs every `*.json` vector in the directory, prints `PASS` or `FAIL` for each and a summary, and exits non-zero on any failure. An unexpected exception is reported as that vector's failure (`CRASH`), and the run carries on.
 
-Executor scenarios (section 14.1):
+- **Loading.** Vector files are loaded with a lenient reader, so deliberately broken embedded objects (duplicate members, floats, out-of-range integers, lone surrogate escapes) reach the verifier and are rejected with the spec's reason code.
+- **Ops supported:** `verify_writ`, `verify_chain`, `verify_call`, `verify_tally`, `verify_revoke`, `narrows`, `satisfies`, `canonicalize`.
+- **`verify_call` covers** section 6.1 on the call, section 4 on its chain, expiry for forward calls only (a standing `sys/` call is authorized by the chain as historical proof, spec section 7 step 4), and the section 5 classification, with 7.2 for forward calls. Executor state (section 7 steps 5 to 7) and section 8's argument checks are outside it.
+- **Clock.** A `now` member fixes the clock; a vector without one is judged with no clock, so expiry is not checked. The CLI commands use real time unless given `--now`.
+
+## The scenario runner
 
     python3 -B -m writ.cli scenarios <dir>
 
-Runs each scenario against a fresh executor with empty stores in a
-temporary directory, compares every step's answer with `expect` by
-canonical form, checks `signaled` before a `finish`, fails a step with no
-`app` whose executor calls the application, prints `PASS` or `FAIL` per
-scenario and a summary, reports an unexpected exception as `FAIL <name>:
-CRASH <type>: <msg>` and continues, and exits non-zero on any failure.
+Runs each scenario (spec section 14.1) against a fresh executor with empty stores in a temporary directory. It compares every step's answer with `expect` by canonical form, checks `signaled` before a `finish`, and fails a step with no `app` if the executor calls the application. It prints `PASS` or `FAIL` for each scenario and a summary, reports an unexpected exception as `FAIL <name>: CRASH <type>: <msg>` and continues, and exits non-zero on any failure.
 
-Other commands:
+## Other commands
 
     python3 -m writ.cli keygen --seed <hex32> [--out file]
     python3 -m writ.cli verify-writ <file>
     python3 -m writ.cli verify-chain <file-with-array> [--now N]
     python3 -m writ.cli verify-tally --writ <file> --call <file> --tally <file> [--res <file>]
 
-Exit status: 0 accept or valid, 1 reject or any other verdict, 2 usage.
+Exit status: 0 for accept or valid, 1 for reject or any other verdict, 2 for usage errors.
 
 ## Interoperability vectors
 
-`vectors/` holds vectors produced by this implementation from fixed seeds
-(0x01, 0x02, 0x03 repeated, for A, B, C). Regenerate with
+`vectors/` holds vectors this implementation produced from fixed seeds (0x01, 0x02, 0x03 repeated, for A, B, and C). Regenerate them with
 
     python3 tools/gen_vectors.py
 
 and run them with `python3 -m writ.cli conformance vectors`.
 
-## Spec ambiguities found
+## Spec ambiguities found while writing the verifier
 
-These were found while writing the verifier, before the 2026-09 revisions
-pinned most of them; the executor's findings are in
-[DIVERGENCES.md](DIVERGENCES.md). Each entry names the section, quotes or paraphrases the sentence, and
-states the choice this implementation made. Where two implementations could
-reasonably differ, the conformance corpus will show it.
+These 35 were found while writing the verifier, before the September 2026 revisions answered most of them; the executor's findings are in [DIVERGENCES.md](DIVERGENCES.md). Each entry names the section, quotes or paraphrases the sentence, and states the choice this implementation made at the time. Where two implementations could reasonably differ, the conformance corpus shows it.
+
+**Later changes.** The spec revisions of 2026-09-28 settled several of these differently, and this implementation now follows the spec: a chain longer than 8 is `too_large` as a step 5 rule at the `chain` member, after `id` and after `v` and `typ` (item 17); a pending tally's whole shape is checked, including `err.code` `pending` and empty `sub` and `wrt` (item 19); a sub-tally that is not an object makes its tally `malformed` at section 6.1 rather than `sub_unmatched` (item 22); and the conformance op checks `forbidden_op` as well as `no_standing` for a `sys/` op, while section 8's argument checks now run inside the operation, after replay (item 34). The items are kept below as they were written.
 
 1. **1.6 and 6.1 step 1, "Byte length within section 1.6" before "Parse".** The limits are in canonical bytes, which are unknown until after parsing. Choice: for raw input, reject when the received bytes exceed the limit (`too_large`) before parsing, then check the canonical length after parsing; for an already parsed object only the canonical length is checked. A received form padded with whitespace past the limit is rejected although its canonical form would fit. An object that both contains a float and is oversized reports `noncanonical`, because its canonical form cannot be computed.
 
@@ -223,12 +178,4 @@ reasonably differ, the conformance corpus will show it.
 
 ## Revision of 2026-09-04: standing calls after expiry
 
-Items 16 and 34 above were written when the spec checked expiry for every
-call. The spec now applies expiry (section 7 step 4) and revocation (step
-7) to forward calls only; a standing call (`sys/undo`, `sys/tallies`) is
-accepted under an expired or revoked chain and is bounded by `rev.until`
-and by tally retention instead. This implementation follows that:
-`verify_call` skips both checks for a `sys/` op, and section 6.2 step 5
-(`acc` before `exp`) is skipped for a tally whose `op` is under `sys/`.
-Tests `test_standing_survives_expiry_and_revocation` and
-`test_standing_tally_acc_after_exp`, and vectors 022 to 025, pin it.
+Items 16 and 34 above were written when the spec checked expiry for every call. The spec now applies expiry (section 7 step 4) and revocation (step 7) to forward calls only; a standing call (`sys/undo`, `sys/tallies`) is accepted under an expired or revoked chain and is bounded by `rev.until` and by tally retention instead. This implementation follows that: `verify_call` skips both checks for a `sys/` op, and section 6.2 step 5 (`acc` before `exp`) is skipped for a tally whose `op` is under `sys/`. The tests `test_standing_survives_expiry_and_revocation` and `test_standing_tally_acc_after_exp`, and vectors 022 to 025, pin it.
