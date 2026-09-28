@@ -71,8 +71,10 @@ func New(id *keys.Identity, store *FileStore) *Executor {
 }
 
 // Recover resolves every pending call record left by a crash to a final tally
-// with unknown_outcome (spec section 9). Call it once after opening the store.
+// with unknown_outcome (spec section 9), and drops revokes of writs that have
+// since expired. Call it once after opening the store.
 func (e *Executor) Recover() int {
+	_ = e.Store.purgeRevoked(e.Now())
 	e.Store.mu.Lock()
 	var pending []*Record
 	for _, r := range e.Store.Calls {
@@ -327,11 +329,17 @@ func (e *Executor) undo(ctx context.Context, k *writ.Call) Result {
 // exactly as before them: it returns whatever the tally store still holds
 // under the named writ, which is the recovery path when a caller never
 // received its tally.
+//
+// The named writ must be one from issued or one below it. A writ above it
+// would index work under sibling delegations from never issued or saw.
 func (e *Executor) tallies(k *writ.Call) Result {
 	id, _ := k.Args["writ"].(string)
-	found := false
+	found, issued := false, false
 	for _, w := range k.Chain {
-		if w.ID == id {
+		if w.Iss == k.From {
+			issued = true
+		}
+		if issued && w.ID == id {
 			found = true
 		}
 	}

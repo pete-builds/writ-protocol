@@ -36,19 +36,34 @@ type tallyRec struct {
 	UndoRes any    `json:"undo_res,omitempty"`
 }
 
-// FileStore is the four executor stores of spec section 9 in one JSON file,
+// FileStore is the executor stores of spec section 9. The call, count, and
+// tally stores (with each tally's reversal state) are one JSON file,
 // rewritten on every mutation. It is deliberately simple: durability across
 // restart is a conformance requirement, throughput is not. Every mutation
 // that the protocol relies on reports a failed write, and the caller refuses
 // rather than claim durability it does not have.
+//
+// The revoke store is an append-only log beside that file. Anyone can send a
+// valid key-wide revoke, since it needs no accepted root, so a revoke must
+// cost one appended line, not a rewrite of every store (security review
+// finding 7). Per-writ entries are dropped after the writ's exp by
+// purgeRevoked; key-wide entries are kept for good (spec section 9).
 type FileStore struct {
 	mu      sync.Mutex
 	path    string
 	Calls   map[string]*Record   `json:"calls"`   // key leaf|id
 	Counts  map[string]int64     `json:"counts"`  // writ identity
 	Tallies map[string]*tallyRec `json:"tallies"` // tally identity
-	Revoked map[string]int64     `json:"revoked"` // writ identity to exp
+	Revoked map[string]int64     `json:"-"`       // writ identity, or "*:" and a key, to exp
 }
+
+// revokeEntry is one line of the revoke log.
+type revokeEntry struct {
+	Writ string `json:"writ"`
+	Exp  int64  `json:"exp"`
+}
+
+func (s *FileStore) revokeLog() string { return s.path + ".revoked" }
 
 // OpenFileStore loads or creates a store at path ("" for memory only).
 func OpenFileStore(path string) (*FileStore, error) {
@@ -56,6 +71,9 @@ func OpenFileStore(path string) (*FileStore, error) {
 		Tallies: map[string]*tallyRec{}, Revoked: map[string]int64{}}
 	if path == "" {
 		return s, nil
+	}
+	if err := s.loadRevoked(); err != nil {
+		return nil, err
 	}
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -70,6 +88,25 @@ func OpenFileStore(path string) (*FileStore, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// loadRevoked reads the revoke log. A line that does not parse is the tail of
+// an append a crash interrupted, and is skipped.
+func (s *FileStore) loadRevoked() error {
+	b, err := os.ReadFile(s.revokeLog())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		var e revokeEntry
+		if json.Unmarshal(line, &e) == nil && e.Writ != "" {
+			s.Revoked[e.Writ] = e.Exp
+		}
+	}
+	return nil
 }
 
 // flush writes the whole store to a temporary file, syncs it, and renames it
@@ -241,13 +278,64 @@ func (s *FileStore) settleUndo(rec *tallyRec, by string, ok bool, res any) {
 	_ = s.flush()
 }
 
+// revoke records a revoke by appending one line to the revoke log and syncing
+// it. A revoke that cannot be written still holds in memory, which only
+// narrows authority; the revoke store is SHOULD-durable (spec 9).
 func (s *FileStore) revoke(writID string, exp int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.Revoked[writID]; ok {
+		return
+	}
 	s.Revoked[writID] = exp
-	// A revoke that cannot be written still holds in memory, which only
-	// narrows authority; the revoke store is SHOULD-durable (spec 9).
-	_ = s.flush()
+	if s.path == "" {
+		return
+	}
+	line, err := json.Marshal(revokeEntry{Writ: writID, Exp: exp})
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.revokeLog(), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(line, '\n')); err == nil {
+		_ = f.Sync()
+	}
+}
+
+// purgeRevoked drops per-writ revokes whose writ has expired, since no call
+// under an expired writ is accepted anyway (spec 9, revoke store lifetime),
+// and compacts the log once. Key-wide revokes never expire.
+func (s *FileStore) purgeRevoked(now int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := false
+	for id, exp := range s.Revoked {
+		if exp <= now {
+			delete(s.Revoked, id)
+			dropped = true
+		}
+	}
+	if !dropped || s.path == "" {
+		return nil
+	}
+	ids := make([]string, 0, len(s.Revoked))
+	for id := range s.Revoked {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var buf bytes.Buffer
+	for _, id := range ids {
+		line, _ := json.Marshal(revokeEntry{Writ: id, Exp: s.Revoked[id]})
+		buf.Write(append(line, '\n'))
+	}
+	tmp := s.revokeLog() + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.revokeLog())
 }
 
 func (s *FileStore) isRevoked(writID string) bool {
