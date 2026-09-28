@@ -96,11 +96,52 @@ Verdicts:
 - Corpus: not exercised. Section 14.1 says "Scripted outcomes carry no `sub` or `wrt`; tally trees are tested by `verify_tally` vectors", which test verification of a given tree, not which tree an executor builds.
 - Verdict: SPEC_SILENT
 
+### 11. Section 7 step 3 against section 4's chain order, and depth
+
+- Implementing: section 7 step 3 in the executor.
+- Spec: section 7 step 3, "For each adjacent pair in the chain, section 4 holds. Root: `chain[0].prv` is null (`chain_broken`)." Section 4, "Chain verification, as an operation, is: [...] the root's `prv` is null (`chain_broken`); every adjacent pair passes steps 1 to 5 above, root first; `depth` holds." Section 5, "Checks on a call after section 6.1 apply in this order: chain verification (section 4); [...]".
+- Decision: step 3 read on its own checks the pairs before the root's `prv`, and does not mention `depth`, which is a rule over the whole chain rather than a pair. Section 4's operation checks the root first and ends with `depth`. The two readings report different first failures for a chain whose root has a non-null `prv` and whose child widens a bound (`not_narrowed` against `chain_broken`), and differ on whether an executor enforces `depth` at all. This executor runs section 4's operation at step 3, because sections 5 and 14 name it for a call.
+- Corpus: nothing pins it for the executor. The three corpus chains with a non-null root `prv` (`wrong order`, `call chain broken`, `revoke chain out of order`) fail with `chain_broken` under either reading, and no scenario carries a `depth` bound. Step 3 should say "the chain passes section 4's chain verification".
+- Verdict: SPEC_AMBIGUOUS
+
+### 12. Whether section 8.1's checks run before or after replay
+
+- Implementing: a retry of a `sys/undo` call (section 7 steps 8 and 9, section 8.1).
+- Spec: section 7 step 8, "Standing call: [...] that operation's argument checks apply." Section 8.1, "The executor checks, after section 7 steps 1 to 8 (with steps 4 and 7 skipped, as for every standing call), in this order: [...]" and, in the same paragraph, "A retry of the same signed call is answered from the call store (section 7 step 9)."
+- Decision: step 8 puts the undo checks before replay at step 9. Section 8.1 places them "after section 7 steps 1 to 8", which can mean the end of step 8 or somewhere after it, and then says without condition that a retry is answered from the call store. They disagree on a retry of a successful undo that arrives at or after the target's `rev.until`, or after the target has left the tally store: checked first, it is refused `not_reversible` and the caller cannot get its tally back except through `sys/tallies`; replayed first, it gets the stored `ok`. This executor checks at step 8, as the forward path does for revocation (scenario 013 step 6: "a replay after the revoke is refused at step 7, before replay at step 9; recovery is sys/tallies").
+- Corpus: no scenario retries an undo after `rev.until`; 005 step 4 retries one second later, when both orders give the same answer.
+- Verdict: SPEC_AMBIGUOUS
+
+### 13. Which writ a `sys/tallies` caller may ask about
+
+- Implementing: the `sys/tallies` argument check (section 8.2).
+- Spec: section 8.2, "`args` is `{"writ": <hash>}`; a `writ` member that is absent, not a string, or not the identity of a writ in `chain` is `tally_mismatch`. `from` is any `iss` on the chain." Section 12, "`sys/tallies` lets a delegator ask any executor it learns of what ran under its writ"; section 7.3, "`sys/tallies` lets it ask any executor it learns of".
+- Decision: section 8.2 lets any issuer on the chain name any writ in the chain, including a writ above its own position. An issuer lower on the chain can then list every tally the executor holds under an ancestor writ, which includes work done under sibling delegations it never issued or saw. Section 12's "its writ" suggests the intent is the writ the caller issued, or one below it. This executor follows section 8.2 as written and accepts any writ in the chain.
+- Corpus: every `sys/tallies` scenario step names exactly the writ its `from` issued (008, 010, 013, 016, and 018 steps 5 to 7), so the corpus agrees with both readings. The difference is confidentiality, not interoperability, but two executors will answer the same call differently if one restricts it.
+- Verdict: SPEC_AMBIGUOUS
+
+### 14. A resolved reversal stayed unknown after a restart
+
+- Implementing: resolving a pending `sys/undo` record after a restart (sections 8.1 and 9).
+- Spec: section 9, "A pending call record found after a restart MUST be resolved to a final tally: `ok` or `failed` when the outcome can be determined, otherwise `failed` with `unknown_outcome`." Section 8.1, "Only a reversal that succeeded counts: [...] a reversal that failed consumes nothing and a later `sys/undo` may try again", and "A record of a reversal that began and never reported, found after a restart, means its outcome is unknown".
+- Decision: none needed. The first executor marked every begun reversal unknown at restart and never revisited it, so when the application's resolver determined the outcome, a failed reversal still blocked every later undo with `unknown_outcome`, and a successful one was not recorded as the reversal later undos should answer with. Found in review, not by the corpus (the scenarios have no resolver: an operation lost in a crash is always unknown). Fixed so that the resolved outcome of the call that began the reversal updates its state; `test_resolver_decides_an_interrupted_reversal` fails on the old code both ways.
+- Verdict: PYTHON_BUG
+
 ## Counts
 
 | Verdict | Count |
 |---|---|
-| PYTHON_BUG | 2 |
-| SPEC_AMBIGUOUS | 2 |
+| PYTHON_BUG | 3 |
+| SPEC_AMBIGUOUS | 5 |
 | SPEC_SILENT | 5 |
 | CORPUS_CONTRADICTS_SPEC | 1 |
+
+SPEC_AMBIGUOUS plus SPEC_SILENT: 10. Each of those entries names at least
+one spec sentence that should change, which is the unit `docs/adoption.md`
+counts for this phase. The one CORPUS_CONTRADICTS_SPEC entry is a scenario
+format detail; no scenario expected executor behavior the spec text rules
+out. The three PYTHON_BUG entries are this implementation's own errors
+against clear text: two in the pre-existing verifier (one caught by a
+corpus vector, one found while sharing its checks with the executor, which
+scenario 006 step 7 would have caught), and one in the new executor, caught
+in review.
