@@ -484,6 +484,16 @@ class CallTest(Base):
         self.assertReason("chain_broken", V.verify_revoke, resign(r, A, chain=[FX.w2]))
         self.assertReason("bad_signature", V.verify_revoke, {**r, "iss": BK.did})
 
+    def test_revoke_check_order(self):
+        """Section 9.1: chain writs (step 2) before the revoke's signature
+        (step 3), and the signature before the chain's validity (step 4)."""
+        r = issue.make_revoke(A, FX.w2, chain=[FX.w1, FX.w2])
+        bad_writ = {k: v for k, v in FX.w1.items() if k != "nnc"}
+        # A malformed chain writ and a forged signature: the writ is reported.
+        self.assertReason("malformed", V.verify_revoke, {**r, "chain": [bad_writ, FX.w2]})
+        # A broken chain and a forged signature: the signature is reported.
+        self.assertReason("bad_signature", V.verify_revoke, {**r, "chain": [FX.w2]})
+
 
 # ----------------------------------------------------------------- tally
 
