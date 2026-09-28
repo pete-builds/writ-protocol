@@ -460,6 +460,34 @@ func main() {
 		b.call(now+50, kt, nil, "ok with 3", "a replay returns the stored answer")
 		b.write()
 	}
+	// Added 2026-09-28, after a second executor written from the spec alone
+	// ran the section 8.1 checks before replay (its divergence log, entry 12).
+	{
+		b := scenario("undo checks are part of the operation, after replay", A)
+		w1, w2 := chargeChain()
+		ch := []*writ.Writ{w1, w2}
+		t := b.call(now+10, call(B, ch, "travel/charge", map[string]any{"amount": 58900}), charge, "ok", "the charge, reversible until now+86400")
+		u := undo(A, ch, t)
+		b.call(now+20, u, refund, "ok", "the reversal")
+		forged := undo(A, ch, resigned(t, S, func(o wire.Object) {}))
+		b.call(now+30, forged, nil, "failed:not_reversible", "an undo whose own checks fail has a failed outcome; it is not a refusal at step 8")
+		b.call(now+40, forged, nil, "failed:not_reversible", "so it is stored, and a retry returns the same tally signed at the first time")
+		b.call(now+50, call(A, ch, "sys/tallies", map[string]any{"writ": w1.ID}), nil, "ok with 3", "and held: the charge, the reversal, and the failed undo")
+		b.call(now+86400, u, nil, "ok", "a retry of the reversal at rev.until is answered from the call store, not refused")
+		b.write()
+	}
+	// Added 2026-09-28: an issuer lists tallies under a writ it issued or one
+	// below it, never an ancestor's, whose index covers sibling delegations.
+	{
+		b := scenario("sys/tallies names a writ the caller issued or one below it", A)
+		w1, w2 := plainChain("travel")
+		ch := []*writ.Writ{w1, w2}
+		b.call(now+10, call(B, ch, "travel/a", map[string]any{}), ok(map[string]any{"n": 1}), "ok", "work under w2")
+		b.call(now+20, call(B, ch, "sys/tallies", map[string]any{"writ": w1.ID}), nil, "failed:tally_mismatch", "B did not issue w1, whose index also covers A's other delegations")
+		b.call(now+30, call(B, ch, "sys/tallies", map[string]any{"writ": w2.ID}), nil, "ok with 2", "B issued w2: the work and the failed query")
+		b.call(now+40, call(A, ch, "sys/tallies", map[string]any{"writ": w2.ID}), nil, "ok with 3", "A issued w1, so w2 below it is A's to ask about")
+		b.write()
+	}
 
 	fmt.Printf("wrote %d scenarios to %s\n", count, dir)
 }
