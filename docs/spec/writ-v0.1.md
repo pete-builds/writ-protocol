@@ -1,6 +1,6 @@
 # The Writ Protocol, version 0.1
 
-Status: draft for independent implementation. Date: 2026-09-04, revised the same day to fix the standing-operation expiry and revocation rule (section 7 steps 4 and 7, section 8). Revised 2026-09-23 to add executor scenarios and `verify_revoke` vectors to the conformance corpus (section 14), and to pin the executor details those scenarios compare byte for byte: the pending tally's `err` (section 6), atomic replay and count (section 7 steps 9 and 10), what the tally store holds (section 9), the order of `sys/tallies` results and of a revoke's answer, which undo counts and how reversals of one tally are serialized (section 8), the order of revoke checks and that a revoke leaves standing calls running (section 9.1), a writ with several `count` bounds (section 7 step 10), store write failures (section 9), and a nesting limit (sections 1.1 and 1.6). No member, object, or reason code changed meaning; `pending` is named as the pending tally's `err.code`.
+Status: draft for independent implementation. Date: 2026-09-04, revised the same day to fix the standing-operation expiry and revocation rule (section 7 steps 4 and 7, section 8). Revised 2026-09-23 to add executor scenarios and `verify_revoke` vectors to the conformance corpus (section 14), and to pin the executor details those scenarios compare byte for byte: the pending tally's `err` (section 6), atomic replay and count (section 7 steps 9 and 10), what the tally store holds (section 9), the order of `sys/tallies` results and of a revoke's answer, which undo counts and how reversals of one tally are serialized (section 8), the order of revoke checks and that a revoke leaves standing calls running (section 9.1), a writ with several `count` bounds (section 7 step 10), store write failures (section 9), and a nesting limit (sections 1.1 and 1.6). No member, object, or reason code changed meaning; `pending` is named as the pending tally's `err.code`. Revised 2026-09-28 to pin every first-failure order a differential fuzzer found open between two implementations: the checks inside one bound (section 3); which binary members section 6.1 step 2 covers; the order of `crit` checks; member order in section 6.1 step 5, including inside `bnd`, `chain`, and `err`; that a tally's `wrt` and `sub` entries are checked at section 6.2 steps 8 and 9, after the tally's own signature, with `depth` applied to `wrt` entries; the order of section 7 steps 1 and 2 for the `verify_call` vector; that every element of a chain is checked to be an object before any writ in it is verified (section 4); and the operand order of the `narrows` vector (section 14). Two rules changed: a pending tally's shape is now checked in full (section 6.1 step 5), and a tally whose `sub` names a writ absent from its `wrt` is `signed_unauthorized`, an admission by its signer, where the 2026-09-23 text also called it `unverifiable`.
 
 Writ: pass narrowable authority between agents and bring back a signed account of what was done under it.
 
@@ -24,7 +24,7 @@ The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, MAY are to be interp
 2. Numbers MUST be integers in the range negative (2^53 minus 1) to positive (2^53 minus 1), written without fraction or exponent. Any other number is a rejection with reason `noncanonical`. The literal `-0` is accepted and canonicalizes to `0`.
 3. Strings MUST be valid UTF-8. A `\u` escape MUST NOT encode an unpaired surrogate. Producers SHOULD emit NFC-normalized strings. Verifiers compare bytes and MUST NOT normalize.
 4. An object MUST NOT repeat a member name at any depth.
-5. Binary values (signatures, hashes, nonces, identifiers) are base64url (RFC 4648 section 5) without padding. A verifier MUST reject, with reason `noncanonical`, a value containing padding, characters outside the base64url alphabet, or an encoding that does not re-encode to the same string (non-zero trailing bits, or a length congruent to 1 modulo 4), so that every byte string has exactly one encoding. A value that decodes to the wrong number of bytes for its member (32 for a hash, 64 for a signature, fewer than 16 for `nnc` or `id`) is a rejection with reason `malformed`.
+5. Binary values (signatures, hashes, nonces, identifiers) are base64url (RFC 4648 section 5) without padding. A verifier MUST reject, with reason `noncanonical`, a value that is empty, contains padding or characters outside the base64url alphabet, or is an encoding that does not re-encode to the same string (non-zero trailing bits, or a length congruent to 1 modulo 4), so that every byte string has exactly one encoding. A value that decodes to the wrong number of bytes for its member (32 for a hash, 64 for a signature, fewer than 16 for `nnc` or `id`) is a rejection with reason `malformed`.
 6. Times are integer Unix seconds, UTC.
 7. Arrays and objects MUST NOT nest more than 64 levels deep, the outermost value being level 1. Deeper input is a rejection with reason `too_large`, found before any other rule of this section is applied, so a verifier can refuse it without building it.
 
@@ -120,7 +120,7 @@ The authority under a chain is the leaf writ's bounds. Because the attenuation r
 | `set` | array of strings or integers, no duplicates | every child element is in parent | arg is an element of v |
 | `window` | `[lo, hi]` integers, lo <= hi | parent.lo <= child.lo and child.hi <= parent.hi | lo <= arg <= hi |
 
-A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max` or `count` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it.
+A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max` or `count` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. A verifier checks one bound in this order and reports the first failure: it is an object, its members are exactly `t` and `v`, and `t` is a string (`malformed`); `t` is in this table (`unknown_bound`); `v` has the JSON type for `t` (`malformed`); the value rule (`noncanonical`). A `set` is checked element by element in array order, each element's type (`malformed`) before whether it repeats an earlier element (`noncanonical`). A `window` is checked for its shape, an array of two integers (`malformed`), before `lo` is compared with `hi`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it.
 
 ### 3.1 Prefix matching
 
@@ -154,7 +154,7 @@ A writ C is a valid child of a writ P when all of the following hold. A verifier
 
 The `depth` bound is checked over the whole chain after every adjacent pair has passed: for the writ at zero-based index i in a chain of n writs, if it carries `depth`, then (n minus 1 minus i) <= `depth.v`. Reason: `not_narrowed`.
 
-Chain verification, as an operation, is: the chain is non-empty (`malformed`) and at most 8 writs (`too_large`, checked before any signature); every writ passes section 6.1; the root's `prv` is null (`chain_broken`); every adjacent pair passes steps 1 to 5 above, root first; `depth` holds. Expiry (section 7 step 4) is a separate check because it needs a clock.
+Chain verification, as an operation, is: the chain is an array (`malformed`) of at most 8 elements (`too_large`, checked before any signature), each an object (`malformed`), and not empty (`malformed`), which are the rules section 6.1 step 5 applies to a call's `chain`; every writ passes section 6.1, in array order; the root's `prv` is null (`chain_broken`); every adjacent pair passes steps 1 to 5 above, root first; `depth` holds. Expiry (section 7 step 4) is a separate check because it needs a clock.
 
 Authority never widens: a child cannot drop, retype, or loosen a bound, cannot outlive its parent, and cannot be issued by anyone but the parent's holder. A holder MAY issue a child to itself; doing so gains nothing, because `count` is consumed against every writ in the chain (section 7.3).
 
@@ -217,7 +217,7 @@ A tally is the executor's signed account of one call.
 
 The result body travels beside the tally, never inside it (section 10). `out` commits to it.
 
-`sub` and `wrt` are REQUIRED even when empty, so that "I delegated nothing" is a signed statement. Every tally in `sub` MUST name in its `writ` member a writ present in `wrt`; a verifier MUST reject a tally violating this, reason `sub_unmatched`.
+`sub` and `wrt` are REQUIRED even when empty, so that "I delegated nothing" is a signed statement. Every tally in `sub` MUST name in its `writ` member a writ present in `wrt`; a verifier MUST reject a tally violating this, reason `sub_unmatched` (section 6.2 step 9).
 
 A tally with `st` `pending` is not final: the executor has accepted the call and cannot yet report the outcome. A later tally with the same `call` from the same executor supersedes it. A pending tally has `err` `{"code":"pending"}`, `used` `{}`, `rev` null, `out` null, `sub` `[]`, `wrt` `[]`, and the `acc` at which the call was accepted.
 
@@ -237,10 +237,15 @@ B's tally for A's call embeds C's tally in `sub` and writ_2 in `wrt`.
 For a writ, call, tally, or revoke, in this order:
 
 1. Byte length within section 1.6: the received bytes before parsing and the canonical bytes after; and nesting depth within section 1.1 rule 7. Reason `too_large`.
-2. Parse; section 1.1 rules 2 to 4, and rule 5 for every binary member the expected type defines. Reason `noncanonical`.
+2. Parse; section 1.1 rules 2 to 4 anywhere in the object, then rule 5 for the object's own binary members whose value is a string: `sig` of every type; a writ's `prv` and `nnc`; a call's `id`; a tally's `call`, `writ`, and `out`, and the `ref` member of its `err` when `err` is an object; a revoke's `writ` unless it is `"*"`. Reason `noncanonical`. A binary member that is not a string is left to step 5, and a writ or tally nested in `chain`, `sub`, or `wrt` meets rule 5 when it passes this section itself.
 3. `v` is the integer 1; anything else, including a missing `v`, is `unsupported_version`. `typ` is the expected type; anything else, including a missing `typ`, is `wrong_type`.
-4. `crit`, section 1.7. Reason `unsupported_critical`; a `crit` that is not an array of strings, or that names an absent member, is `malformed`.
-5. Every required member present with the required type; bound rules of section 3 and 3.2; identifiers are valid keys (`bad_key`); decoded lengths of binary members (`malformed`). Bounds are checked in canonical member-name order after the presence of `act`. Reason `malformed` unless stated otherwise.
+4. `crit`, section 1.7: first, `crit` is an array of strings (`malformed`); then each name in array order is one the verifier understands (`unsupported_critical`) and is present in the object (`malformed`).
+5. The remaining members, in the order of the object's member table (sections 2, 5, 6, and 9.1). Each member is checked completely before the next: present, of the required type, a valid key where the table says key (`bad_key`), the decoded length of a binary member, and the member's own rules below. Reason `malformed` unless stated otherwise.
+    - A writ's `bnd`: an object; `act` is present; every bound, in canonical member-name order, passes section 3; then `act` is a `prefix`, `hld` if present is a `set` whose elements, in array order, are strings and valid keys (`bad_key`), and `depth` if present is a `max` (section 3.2).
+    - A call's or revoke's `chain`: an array; at most 8 elements (`too_large`); every element an object. A call's chain is not empty. A revoke's chain is empty exactly when its `writ` is `"*"`. The writs themselves are verified afterwards (section 7 step 2, section 9.1 step 2).
+    - A tally's `err`: null when `st` is `ok`; otherwise an object whose `code` is a string and whose `ref`, if present, is a hash. `used`: an object whose members are integers of zero or more. `rev`: null, or an object whose `until` is an integer.
+    - A tally's `sub` and `wrt`: arrays of objects. Their elements are checked at section 6.2 steps 8 and 9, after the tally's own signature.
+    - After a tally's `wrt`: when `st` is `pending`, `err.code` is `pending`, `used` is empty, `rev` and `out` are null, and `sub` and `wrt` are empty (section 6).
 6. Signature verifies under the signer's key (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`). Reason `bad_signature`.
 
 A tally names its writ by hash, so a tally can only be verified by a party holding that writ (section 6.2). A refusal with reason `wrong_executor` is signed by the party that received the call, which is not the leaf holder; it is evidence of the refusal but does not verify under section 6.2.
@@ -249,14 +254,14 @@ A tally names its writ by hash, so a tally can only be verified by a party holdi
 
 A verifier V that made a call K under a chain whose leaf writ is W, and received a tally T with an optional result body R, checks in this order:
 
-1. T passes section 6.1 with signer `W.hld`.
+1. T passes section 6.1 with signer `W.hld`. There, `T.sub` and `T.wrt` are only checked to be arrays of objects; their elements are checked at steps 8 and 9.
 2. `T.call` equals the identity of K. Reason `tally_mismatch`.
 3. `T.writ` equals the identity of W. Reason `tally_mismatch`.
 4. `T.op` equals `K.op`. Reason `tally_mismatch`.
 5. If `T.op` does not begin with `sys/`: `T.acc` < `W.exp`. Reason `expired`. A tally for a standing operation is not bound to `W.exp`, because the operation was authorized after it (section 7 step 4); its time bound is operation-specific (section 8), and a verifier that holds the target of a `sys/undo` MAY additionally check the undo tally's `acc` against that target's `rev.until`.
 6. If R is present, `T.out` is not null and equals the hash of R's canonical form. Reason `tally_mismatch`. A non-null `out` with no R is accepted; the verifier simply has no body to check.
 7. For each `max` bound N in `W.bnd`: `T.used[N]` (zero if absent) <= `W.bnd[N].v`. Reason `out_of_bounds`.
-8. Every writ in `T.wrt` passes section 6.1 and is a valid child of W under section 4. Reason as reported.
+8. Every writ X in `T.wrt`, in array order: X passes section 6.1; X is a valid child of W under section 4 steps 1 to 5; and section 4's `depth` rule holds over the chain to W followed by X. The chain to W is `K.chain`; at step 9, the chain to a sub-tally's writ X is the chain to its parent's writ followed by X. Each writ is checked completely before the next. Reason as reported.
 9. Every tally S in `T.sub`, in array order: S is an object whose `writ` member names a writ X in `T.wrt` (`sub_unmatched` otherwise, checked before anything else about S); S passes section 6.1 with signer `X.hld`; then steps 3, 5, 7, 8, 9, and 10 apply to S with X in place of W and are completed for S's whole subtree before the next element of `T.sub` is examined.
 10. After every element of `T.sub`: for each `max` bound N in `W.bnd`, the sum of `S.used[N]` over the tallies in `T.sub` <= `W.bnd[N].v`. Reason `out_of_bounds`. This is the executor's own accounting and it is evidence, not enforcement (section 7.3).
 
@@ -264,14 +269,14 @@ Names in `used` that are not `max` bounds of the writ are ignored. This procedur
 
 A verifier cannot check `S.call` for a sub-tally because it does not hold the call B made; the sub-tally binds C to a call that B can produce in a dispute.
 
-The result of verification for each tally is one of `valid`, `signed_unauthorized` (section 6.1 passed for T but a later step failed, anywhere in the tree: an admission by a signer), or `unverifiable` (T itself fails section 6.1, including `sub_unmatched` found while parsing it). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
+The result of verification for each tally is one of `valid`, `signed_unauthorized` (section 6.1 passed for T but a later step failed, anywhere in the tree, including a `sub_unmatched` in T itself: an admission by a signer), or `unverifiable` (T itself fails section 6.1). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
 
 ## 7. Executing a call
 
 An executor E receiving a call K over a transport binding (section 10) proceeds in this order, stopping at the first failure. A failure at step 1 or 2 MAY be answered with an unsigned error; every later failure MUST be answered with a signed tally with `st` `failed` and the reason in `err.code`, so that a refusal is evidence.
 
-1. K passes section 6.1 steps 1 to 5. Chain length 1 to 8.
-2. Every writ in `K.chain` passes section 6.1. `K.sig` verifies under `K.from`.
+1. K passes section 6.1 steps 1 to 5, which include the chain's length, 1 to 8, and that each element is an object.
+2. Every writ in `K.chain` passes section 6.1, in array order. Then `K.sig` verifies under `K.from`.
 3. For each adjacent pair in the chain, section 4 holds. Root: `chain[0].prv` is null (`chain_broken`).
 4. Forward call only: for every writ in the chain, `now` < `exp`, by E's own clock (`expired`). No member of any message is used as the current time. A standing call skips this step; see the note after step 12.
 5. E accepts the root issuer `chain[0].iss` (section 7.1). Reason `root_not_accepted`.
@@ -367,7 +372,7 @@ The tally store holds every final tally the executor signs at section 7 step 12 
 
 A verifier checks a revoke in this order, which is the order of section 7 steps 1 to 3 for a call:
 
-1. Section 6.1 steps 1 to 5 on the revoke. Here step 5 requires `writ` to be a hash or the string `"*"`, `iss` to be a key, and `chain` to be an array of objects, of at most 8 elements (`too_large`), that is empty exactly when `writ` is `"*"` (`malformed`).
+1. Section 6.1 steps 1 to 5 on the revoke. Here step 5 requires `writ` to be a hash or the string `"*"`, `iss` to be a key, and `chain` to be an array of at most 8 elements (`too_large`), each an object, that is empty exactly when `writ` is `"*"` (`malformed`).
 2. Every writ in `chain` passes section 6.1, in array order.
 3. The revoke's signature verifies under `iss` (`bad_signature`).
 4. Unless `writ` is `"*"`: the chain is valid (section 4, with its reasons); the identity of its leaf equals `writ` (`chain_broken`); `iss` is the `iss` of some writ in `chain` (`no_standing`).
@@ -439,7 +444,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 **Enforcement point.** Every check in sections 4, 6, 7, 8, and 9 MUST be performed by deterministic code in the receiving implementation before any effect, independent of any language model. A model may decide whether to delegate and to whom; it never decides whether a chain is valid. An implementation MUST NOT sign a writ received as data (section 7.5). Conformance tests present a literal writ to an issuing implementation and expect refusal.
 
-**Fixed verification order.** Two implementations MUST reject the same object for the same reason. The orders in sections 4, 6.1, 6.2, and 7 are normative.
+**Fixed verification order.** Two implementations MUST reject the same object for the same reason. The orders in sections 3, 4, 6.1, 6.2, 7, 9.1, and 14 are normative.
 
 **Canonical bytes.** Signatures cover canonical bytes with a type prefix (section 1.4). Duplicate members, unpaired surrogates, non-integer numbers, and padded base64url are rejections, because a lenient parser would verify a signature over one reading and enforce another.
 
@@ -491,11 +496,11 @@ An implementation conforms when it passes the conformance corpus: a directory of
 | `op` | `input` | Checks |
 |---|---|---|
 | `canonicalize` | `{"raw": <JSON text>, "canonical": <expected text>}` | section 1.1 and 1.2 |
-| `narrows` | `{"child": <bound>, "parent": <bound>}` | section 3 |
-| `satisfies` | `{"bound": <bound>, "arg": <value>}` | section 3, never `count` |
+| `narrows` | `{"child": <bound>, "parent": <bound>}` | section 3 on the child, then on the parent, then a type change (`not_narrowed`), then the narrowing rule (`not_narrowed`) |
+| `satisfies` | `{"bound": <bound>, "arg": <value>}` | section 3 on the bound, then the satisfaction rule (`out_of_bounds`); never `count` |
 | `verify_writ` | `{"writ": <writ>}` | section 6.1 |
 | `verify_chain` | `{"chain": [<writ>...]}` | section 4 as an operation, then expiry at `now` if given |
-| `verify_call` | `{"call": <call>}` | section 6.1 on the call, section 4 on its chain, expiry at `now` if given and the call is forward, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state, and not section 8's argument checks |
+| `verify_call` | `{"call": <call>}` | section 7 steps 1 and 2 (section 6.1 steps 1 to 5 on the call, section 6.1 on each writ of its chain, then the call's signature), section 4 on its chain, expiry at `now` if given and the call is forward, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state, and not section 8's argument checks |
 | `verify_tally` | `{"writ": <leaf writ>, "call": <call>, "tally": <tally>, "res": <body, optional>}` | section 6.2 |
 | `verify_revoke` | `{"revoke": <revoke>}` | section 9.1's checks, in its order |
 
