@@ -1,0 +1,50 @@
+# Weekly differential fuzz on a fresh seed. The per-push job in ci.yml
+# always replays seed 1, which can only catch a regression on inputs it has
+# already seen; this one explores new inputs. The seed is printed first, so
+# a failure reproduces locally with the same two commands.
+name: fuzz-weekly
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_CRYPTOGRAPHY: "cryptography>=42,<47"
+
+jobs:
+  fuzz:
+    name: differential fuzz, random seed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "$PYTHON_CRYPTOGRAPHY"
+      - name: pick the seed
+        run: |
+          seed=$(( ${{ github.run_id }} % 1000000000 + 1000 ))
+          echo "SEED=$seed" >> "$GITHUB_ENV"
+          echo "seed $seed; reproduce with: go run ./cmd/writ-fuzz -seed $seed -n 50000 -out DIR, then python -m writ.cli conformance DIR"
+      - name: generate and judge with Go
+        working-directory: impl/go
+        run: go run ./cmd/writ-fuzz -seed "$SEED" -n 50000 -out "$RUNNER_TEMP/fuzz"
+      - name: Python must agree on every input
+        working-directory: impl/python
+        run: |
+          if ! python -m writ.cli conformance "$RUNNER_TEMP/fuzz" > "$RUNNER_TEMP/fuzz.log"; then
+            echo "seed $SEED"
+            grep '^FAIL' "$RUNNER_TEMP/fuzz.log" | head -100
+            tail -1 "$RUNNER_TEMP/fuzz.log"
+            exit 1
+          fi
+          echo "seed $SEED"
+          tail -1 "$RUNNER_TEMP/fuzz.log"
