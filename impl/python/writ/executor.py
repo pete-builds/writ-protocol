@@ -1,0 +1,570 @@
+"""The executor: sections 7, 7.1 to 7.5, 8, 9, 9.1 and 9.2.
+
+An Executor holds one Ed25519 key, the root issuers it accepts (section
+7.1), a clock that can be set, the durable stores of section 9 (stores.py),
+and an application callback that performs operations.
+
+Answers are the section 14.1 shapes, which are also the section 10 HTTP
+bodies:
+
+- ``{"error": <reason>}``: an unsigned rejection at section 7 steps 1 and 2,
+  or an invalid revoke.
+- ``{"tally": <tally>}`` or ``{"tally": <tally>, "res": <body>}``: a signed
+  reply, final or pending.
+- ``{"inflight": True}``: the call was accepted and its operation has not
+  returned; its final tally comes from ``complete()``.
+- ``{"tallies": [...]}``: the answer to a valid revoke.
+
+The application
+---------------
+
+``app(op)`` is called with an Operation at section 7 step 11, for a forward
+call (``op.kind == "forward"``) and for a sys/undo reversal (``"undo"``).
+It returns an Outcome, or HELD to say the operation is still running; the
+application then reports later with ``executor.complete(op.call_id,
+outcome)``. ``op.stop_requested()`` turns true when a revoke tells the
+operation to stop (section 9.1). sys/tallies never calls the application.
+An application that raises has an unknown outcome: the call's tally is
+``failed`` with ``unknown_outcome``.
+
+Concurrency
+-----------
+
+One lock covers admission (steps 1 to 10 and the pending record of step
+11), completion, revocation, and restart, so steps 9 and 10 are atomic with
+respect to every other call and a revoke can never slip between a call's
+revocation check and its admission. The application runs outside the lock.
+"""
+
+import threading
+import time
+
+from . import bounds as B
+from . import chain as C
+from . import objects as O
+from . import verify as V
+from .errors import WritError
+from .keys import Key
+from .stores import BEGAN, DONE, FINAL, PENDING, UNKNOWN, Stores
+
+HELD = object()
+"""Returned by an application whose operation has not finished yet."""
+
+STORE_WRITE_FAILED = "writ-py/store_write_failed"
+"""Implementation code (section 11) for a call refused because the call or
+count store could not be written at section 7 steps 9 and 10 (section 9)."""
+
+OUTCOME_STATES = ("ok", "failed", "canceled")
+
+
+class Outcome:
+    """What an operation returned: the application's side of a tally.
+
+    ``st`` is ok, failed, or canceled; ``code`` the err.code, required
+    exactly when st is not ok; ``res`` the result body or None; ``used``
+    the tally's used object; ``rev`` the rev.until time or None.
+    """
+
+    def __init__(self, st, code=None, res=None, used=None, rev=None):
+        if st not in OUTCOME_STATES:
+            raise ValueError(f"outcome st must be one of {OUTCOME_STATES}, not {st!r}")
+        if (st == "ok") != (code is None):
+            raise ValueError("an outcome has a code exactly when st is not ok")
+        self.st = st
+        self.code = code
+        self.res = res
+        self.used = dict(used or {})
+        self.rev = rev
+
+    @classmethod
+    def from_json(cls, d):
+        """Build an Outcome from a section 14.1 ``app`` object."""
+        return cls(d["st"], code=d.get("code"), res=d.get("res"), used=d.get("used"), rev=d.get("rev"))
+
+    def __repr__(self):
+        return f"Outcome({self.st}, code={self.code!r})"
+
+
+class Operation:
+    """One operation the executor asks its application to perform."""
+
+    def __init__(self, kind, call, call_id, leaf_id, acc, target=None, target_id=None):
+        self.kind = kind            # "forward" or "undo"
+        self.call = call            # the parsed call; its chain is parsed writs
+        self.call_id = call_id      # identity of the call
+        self.leaf_id = leaf_id
+        self.acc = acc
+        self.target = target        # sys/undo: the tally being reversed
+        self.target_id = target_id
+        self._stop = threading.Event()
+
+    @property
+    def op(self):
+        return self.call["op"]
+
+    @property
+    def args(self):
+        return self.call["args"]
+
+    def stop_requested(self):
+        """True once a revoke has told this operation to stop (section 9.1)."""
+        return self._stop.is_set()
+
+    def _signal(self):
+        self._stop.set()
+
+
+class Executor:
+    """A Writ executor over durable stores in ``store_dir``.
+
+    ``key`` is a keys.Key or a 32-byte seed (bytes or hex). ``accept`` is
+    the iterable of root issuer keys this executor acts under (section 7.1).
+    ``clock`` is a callable returning integer Unix seconds; ``set_time()``
+    fixes the clock instead. ``resolver(record)`` may return an Outcome for a
+    pending record found after a restart, when the application can tell
+    what happened; otherwise the record resolves to ``unknown_outcome``.
+
+    Opening an executor over a directory that holds pending records is a
+    restart: they are resolved at once, and ``resolved_at_open`` says how
+    many were.
+    """
+
+    def __init__(self, key, accept, store_dir, app=None, clock=None, resolver=None):
+        self.key = key if isinstance(key, Key) else Key.from_seed(key)
+        self.did = self.key.did
+        self.accept = frozenset(accept)
+        self.store_dir = store_dir
+        self.app = app
+        self.resolver = resolver
+        self._clock = clock or (lambda: int(time.time()))
+        self._fixed = None
+        self._lock = threading.RLock()
+        self._running = {}      # call identity -> Operation
+        self._waiting = {}      # target tally identity -> [Operation], queued undos
+        self._revoked_mem = []  # revokes the revoke store could not persist
+        self.stores = Stores(store_dir)
+        self.resolved_at_open = self._recover()
+
+    # ------------------------------------------------------------ clock
+
+    def set_time(self, t):
+        """Fix the executor's clock at t (integer Unix seconds)."""
+        self._fixed = t
+
+    def now(self):
+        return self._fixed if self._fixed is not None else self._clock()
+
+    # ------------------------------------------------------------ calls
+
+    def receive_call(self, data):
+        """Section 7 for one call (bytes, text, or a parsed object)."""
+        with self._lock:
+            answer, op = self._admit(data)
+        if op is None:
+            return answer
+        return self._perform(op)
+
+    def _admit(self, data):
+        """Steps 1 to 10 and the pending record of step 11.
+
+        Returns (answer, None) when the call is answered without performing
+        anything, or (None, Operation) when the application must run.
+        """
+        try:                                                        # step 1
+            call = O.check_structure(data, "call")
+        except WritError as e:
+            return {"error": e.reason}, None
+        try:                                                        # step 2
+            writs = [O.verify_object(w, "writ") for w in call["chain"]]
+            O.check_signature(call, call["from"])
+        except WritError as e:
+            return {"error": e.reason}, None
+        call_id = O.identity(call)
+        leaf_id = O.identity(writs[-1])
+        now = self.now()
+        standing = call["op"].startswith("sys/")
+        target = target_id = None
+        try:
+            ids = C.check_chain(writs)                              # step 3
+            if not standing:                                        # step 4
+                for w in writs:
+                    if now >= w["exp"]:
+                        raise WritError("expired", f"a writ expired at {w['exp']}")
+            if writs[0]["iss"] not in self.accept:                  # step 5
+                raise WritError("root_not_accepted", "root issuer is not accepted")
+            if writs[-1]["hld"] != self.did:                        # step 6
+                raise WritError("wrong_executor", "this executor is not the leaf hld")
+            if not standing:                                        # step 7
+                for i, w in zip(ids, writs):
+                    if self._is_revoked(i, w["iss"]):
+                        raise WritError("revoked", f"writ {i} is revoked")
+            if standing:                                            # step 8
+                target, target_id = self._check_standing(call, writs, ids, now)
+            else:
+                self._check_forward(call, writs[-1])
+        except WritError as e:
+            return self._refusal(call_id, leaf_id, call["op"], now, e.reason), None
+
+        rec = self.stores.calls.lookup(leaf_id, call["id"])        # step 9
+        if rec is not None:
+            if rec["state"] == FINAL:
+                return self._stored_answer(rec), None
+            return {"tally": self._pending_tally(rec)}, None
+
+        counted = []
+        if not standing:                                            # step 10
+            for i, w in zip(ids, writs):
+                limits = [b["v"] for b in w["bnd"].values() if b["t"] == "count"]
+                if not limits:
+                    continue
+                used = self.stores.counts.used(i)
+                if used >= min(limits):
+                    return self._refusal(call_id, leaf_id, call["op"], now, "count_exhausted"), None
+                counted.append((i, used, w["exp"]))
+
+        rec = {                                                     # step 11
+            "state": PENDING, "leaf": leaf_id, "id": call["id"], "call": call_id,
+            "op": call["op"], "acc": now, "chain": ids, "iss": [w["iss"] for w in writs],
+            "exp": writs[-1]["exp"], "standing": standing,
+        }
+        if target_id is not None:
+            rec["target"] = target_id
+        if not self._write_admission(rec, counted):
+            return self._refusal(call_id, leaf_id, call["op"], now, STORE_WRITE_FAILED), None
+
+        call["chain"] = writs
+        kind = "forward" if not standing else call["op"][len("sys/"):]
+        op = Operation(kind, call, call_id, leaf_id, now, target=target, target_id=target_id)
+        return None, op
+
+    def _check_forward(self, call, leaf):
+        """Step 8 for a forward call."""
+        if call["from"] != leaf["iss"]:
+            raise WritError("no_standing", "from is not the leaf iss")
+        if not B.prefix_matches(leaf["bnd"]["act"]["v"], call["op"]):
+            raise WritError("forbidden_op", "op is not matched by the leaf act")
+        V.check_forward_args(leaf, call["args"])
+
+    def _check_standing(self, call, writs, ids, now):
+        """Step 8 for a standing call: standing, a defined operation, then
+        that operation's argument checks (sections 8.1 and 8.2).
+
+        Returns (target tally, its identity) for sys/undo, else (None, None).
+        """
+        if call["from"] not in {w["iss"] for w in writs}:
+            raise WritError("no_standing", "from is not the iss of any writ in the chain")
+        target = V.check_standing_args(call["op"], call["args"], writs, ids, now)
+        if target is None:
+            return None, None
+        target_id = O.identity(target)
+        if not self.stores.tallies.holds(target_id):                # section 8.1, last check
+            raise WritError("not_reversible", "the target tally is not in this executor's tally store")
+        return target, target_id
+
+    def _is_revoked(self, writ_id, writ_iss):
+        if self.stores.revokes.revokes_writ(writ_id, writ_iss):
+            return True
+        for r in self._revoked_mem:
+            if r["writ"] == writ_id or (r["writ"] == "*" and r["iss"] == writ_iss):
+                return True
+        return False
+
+    def _write_admission(self, rec, counted):
+        """Persist steps 10 and 11: every count increment, then the pending
+        record. On a write failure undo what was written and return False,
+        so that a refused call records nothing (section 9). Count entries
+        are written first so that a crash between the two writes leaves a
+        use consumed, never an operation performed without one."""
+        written = []
+        try:
+            for i, used, exp in counted:
+                self.stores.counts.set_used(i, used + 1, exp)
+                written.append((i, used, exp))
+            self.stores.calls.record(rec)
+        except OSError:
+            for i, used, exp in written:
+                try:
+                    if used:
+                        self.stores.counts.set_used(i, used, exp)
+                    else:
+                        self.stores.counts.delete(i)
+                except OSError:
+                    pass
+            return False
+        return True
+
+    # ------------------------------------------------------- performing
+
+    def _perform(self, op):
+        """Step 11 outside the lock: run the operation, or answer at once."""
+        if op.kind == "tallies":
+            with self._lock:
+                return self._finish_tallies(op)
+        if op.kind == "undo":
+            with self._lock:
+                state = self.stores.reversals.state(op.target_id)
+                if state is not None and state["state"] == DONE:
+                    return self._finish(op, Outcome("ok", res=state.get("res")), reversal=False)
+                if state is not None and state["state"] == UNKNOWN:
+                    return self._finish(op, Outcome("failed", "unknown_outcome"), reversal=False)
+                if state is not None and state["state"] == BEGAN:
+                    # Section 8.1: reversals of one tally never run at once.
+                    # This call waits for the running one (see DIVERGENCES.md).
+                    self._waiting.setdefault(op.target_id, []).append(op)
+                    return {"inflight": True}
+                try:
+                    self.stores.reversals.begin(op.target_id, op.call_id)
+                except OSError:
+                    # Nothing was performed; the pending record resolves.
+                    return {"tally": self._pending_tally(self._record_of(op))}
+                self._running[op.call_id] = op
+        else:
+            with self._lock:
+                self._running[op.call_id] = op
+        return self._invoke(op)
+
+    def _invoke(self, op):
+        """Call the application for op and complete it if it returned."""
+        try:
+            outcome = self.app(op) if self.app is not None else None
+            if outcome is None:
+                raise RuntimeError("no application is configured")
+            if outcome is not HELD and not isinstance(outcome, Outcome):
+                raise TypeError(f"application returned {type(outcome).__name__}, not an Outcome")
+        except Exception:  # noqa: BLE001, an application failure has an unknown outcome
+            outcome = Outcome("failed", "unknown_outcome")
+            with self._lock:
+                answer = self._complete_locked(op, outcome, unknown=True)
+            return answer
+        if outcome is HELD:
+            return {"inflight": True}
+        return self.complete(op.call_id, outcome)
+
+    def complete(self, call_id, outcome):
+        """The operation of call ``call_id`` returned ``outcome``.
+
+        Signs and persists the final tally (step 12) and returns the answer
+        the caller would have received. Raises KeyError when no such
+        operation is running (after a restart it is lost, and its record has
+        been resolved).
+        """
+        if isinstance(outcome, dict):
+            outcome = Outcome.from_json(outcome)
+        with self._lock:
+            op = self._running.get(call_id)
+            if op is None:
+                raise KeyError(f"no running operation for call {call_id}")
+            answer = self._complete_locked(op, outcome)
+        return answer
+
+    def signaled(self, call_id):
+        """True when the running operation of call_id was told to stop."""
+        op = self._running.get(call_id)
+        return op is not None and op.stop_requested()
+
+    def running(self):
+        """Identities of calls whose operation is running now."""
+        return sorted(self._running)
+
+    def _complete_locked(self, op, outcome, unknown=False):
+        self._running.pop(op.call_id, None)
+        answer = self._finish(op, outcome, reversal=op.kind == "undo", unknown=unknown)
+        if op.kind == "undo":
+            self._release_waiters(op.target_id)
+        return answer
+
+    def _release_waiters(self, target_id):
+        """Run the undos that queued behind a reversal of target_id."""
+        queue = self._waiting.pop(target_id, [])
+        while queue:
+            nxt = queue.pop(0)
+            state = self.stores.reversals.state(target_id)
+            if state is not None and state["state"] == DONE:
+                self._finish(nxt, Outcome("ok", res=state.get("res")), reversal=False)
+                continue
+            if state is not None and state["state"] == UNKNOWN:
+                self._finish(nxt, Outcome("failed", "unknown_outcome"), reversal=False)
+                continue
+            if queue:
+                self._waiting[target_id] = queue
+            try:
+                self.stores.reversals.begin(target_id, nxt.call_id)
+            except OSError:
+                return
+            self._running[nxt.call_id] = nxt
+            # Started from inside the lock; an application that must not
+            # block should return HELD and report with complete().
+            self._invoke(nxt)
+            return
+
+    def _finish(self, op, outcome, reversal, unknown=False):
+        """Step 12: sign and persist the final tally, update the reversal
+        state when op performed a reversal, return the answer."""
+        if reversal:
+            try:
+                if unknown:
+                    self.stores.reversals.put(op.target_id, {"state": UNKNOWN, "call": op.call_id})
+                elif outcome.st == "ok":
+                    self.stores.reversals.done(op.target_id, op.call_id, outcome.res)
+                else:
+                    # Only a reversal that succeeded counts (section 8.1).
+                    self.stores.reversals.clear(op.target_id)
+            except OSError:
+                pass  # the began record stays, and resolves to unknown after a restart
+        rev = None
+        if op.kind == "forward" and outcome.rev is not None:
+            rev = {"until": outcome.rev}
+        tally = self._sign_tally(
+            op.call_id, op.leaf_id, op.op, op.acc, outcome.st,
+            None if outcome.st == "ok" else {"code": outcome.code},
+            None if outcome.res is None else O.hash_body(outcome.res),
+            outcome.used, rev,
+        )
+        return self._persist_final(self._record_of(op), tally, outcome.res)
+
+    def _finish_tallies(self, op):
+        """Section 8.2: the list is computed before this call's own tally
+        is signed, so it never contains it."""
+        body = {"tallies": self.stores.tallies.under(op.args["writ"])}
+        tally = self._sign_tally(op.call_id, op.leaf_id, op.op, op.acc, "ok", None,
+                                 O.hash_body(body), {}, None)
+        return self._persist_final(self._record_of(op), tally, body)
+
+    def _record_of(self, op):
+        rec = self.stores.calls.lookup(op.leaf_id, op.call["id"])
+        if rec is None:
+            writs = op.call["chain"]
+            rec = {"state": PENDING, "leaf": op.leaf_id, "id": op.call["id"], "call": op.call_id,
+                   "op": op.op, "acc": op.acc, "chain": [O.identity(w) for w in writs],
+                   "iss": [w["iss"] for w in writs], "exp": writs[-1]["exp"],
+                   "standing": op.kind != "forward"}
+        return rec
+
+    def _persist_final(self, rec, tally, res):
+        """Persist a final tally in the call store, then the tally store.
+
+        If the call store cannot be written the executor must not answer as
+        if it had (section 9): it answers pending, which is what the durable
+        record resolves to after a restart. A crash between the two writes
+        is repaired when the stores are reopened (_recover)."""
+        final = dict(rec, state=FINAL, tally=tally)
+        if res is not None:
+            final["res"] = res
+        try:
+            self.stores.calls.record(final)
+        except OSError:
+            return {"tally": self._pending_tally(rec)}
+        try:
+            self.stores.tallies.add(O.identity(tally), tally, rec["chain"])
+        except OSError:
+            pass  # re-added from the call store at the next open
+        return self._stored_answer(final)
+
+    # ----------------------------------------------------------- tallies
+
+    def _sign_tally(self, call_id, leaf_id, op, acc, st, err, out, used, rev):
+        body = {
+            "v": 1, "typ": "tally", "call": call_id, "writ": leaf_id, "op": op,
+            "acc": acc, "st": st, "err": err, "out": out, "used": dict(used),
+            "rev": rev, "sub": [], "wrt": [],
+        }
+        body["sig"] = self.key.sign(O.signing_input(body))
+        return body
+
+    def _refusal(self, call_id, leaf_id, op, now, reason):
+        """A failure at steps 3 to 10: signed, returned, recorded nowhere."""
+        return {"tally": self._sign_tally(call_id, leaf_id, op, now, "failed", {"code": reason},
+                                          None, {}, None)}
+
+    def _pending_tally(self, rec):
+        """Section 6: the pending tally for a record, at the record's acc."""
+        return self._sign_tally(rec["call"], rec["leaf"], rec["op"], rec["acc"], "pending",
+                                {"code": "pending"}, None, {}, None)
+
+    @staticmethod
+    def _stored_answer(rec):
+        answer = {"tally": rec["tally"]}
+        if "res" in rec:
+            answer["res"] = rec["res"]
+        return answer
+
+    # ----------------------------------------------------------- revokes
+
+    def receive_revoke(self, data):
+        """Section 9.1: verify, record, and answer with the tallies of every
+        forward call under the revoked writ that is not yet final."""
+        with self._lock:
+            try:
+                r = V.verify_revoke(data)
+            except WritError as e:
+                return {"error": e.reason}
+            exp = None if r["writ"] == "*" else r["chain"][-1]["exp"]
+            try:
+                self.stores.revokes.add(r, exp)
+            except OSError:
+                self._revoked_mem.append(r)  # SHOULD survive restart; this one cannot
+            hit = []
+            for rec in self.stores.calls.pending():
+                if rec["standing"]:
+                    continue  # a revoke ends forward authority, not standing
+                if r["writ"] == "*":
+                    under = r["iss"] in rec["iss"]
+                else:
+                    under = r["writ"] in rec["chain"]
+                if under:
+                    hit.append(rec)
+            hit.sort(key=lambda rec: rec["call"].encode("ascii"))
+            tallies = []
+            for rec in hit:
+                # Every pending forward record here belongs to an operation
+                # that is running, so it is answered pending and told to stop.
+                op = self._running.get(rec["call"])
+                if op is not None:
+                    op._signal()
+                tallies.append(self._pending_tally(rec))
+            return {"tallies": tallies}
+
+    # ----------------------------------------------------------- restart
+
+    def restart(self):
+        """Lose everything not in a durable store, as in a crash, reopen the
+        stores, and resolve pending records (section 9). Returns how many
+        pending records were resolved."""
+        with self._lock:
+            for op in self._running.values():
+                op._signal()
+            self._running.clear()
+            self._waiting.clear()
+            self._revoked_mem = []
+            self.stores = Stores(self.store_dir)
+            return self._recover()
+
+    def _recover(self):
+        """Resolve every pending record, after repairing the tally store."""
+        calls, tallies = self.stores.calls, self.stores.tallies
+        for _, rec in calls.items():
+            if rec["state"] == FINAL:
+                tid = O.identity(rec["tally"])
+                if not tallies.holds(tid):
+                    tallies.add(tid, rec["tally"], rec["chain"])
+        # A reversal that began and never reported has an unknown outcome.
+        self.stores.reversals.mark_unknown()
+        n = 0
+        for rec in calls.pending():
+            outcome = self.resolver(rec) if self.resolver is not None else None
+            if outcome is None:
+                outcome = Outcome("failed", "unknown_outcome")
+            if rec.get("target") is not None and outcome.st == "ok":
+                self.stores.reversals.done(rec["target"], rec["call"], outcome.res)
+            rev = None
+            if not rec["standing"] and outcome.rev is not None:
+                rev = {"until": outcome.rev}
+            tally = self._sign_tally(
+                rec["call"], rec["leaf"], rec["op"], rec["acc"], outcome.st,
+                None if outcome.st == "ok" else {"code": outcome.code},
+                None if outcome.res is None else O.hash_body(outcome.res),
+                outcome.used, rev,
+            )
+            self._persist_final(rec, tally, outcome.res)
+            n += 1
+        return n

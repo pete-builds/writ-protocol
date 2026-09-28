@@ -5,19 +5,24 @@
   verify-chain <file-with-array> [--now N]
   verify-tally --writ <file> --call <file> --tally <file> [--res <file>] [--now N]
   conformance <dir>
+  scenarios <dir>
 
-Exit status 0 on accept, 1 on reject or any failing vector, 2 on usage error.
+Exit status 0 on accept, 1 on reject or any failing vector or scenario, 2
+on usage error.
 """
 
 import argparse
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 from . import bounds as B
 from . import canon
 from . import verify as V
 from .errors import WritError
+from .executor import HELD, Executor, Outcome
 from .keys import Key
 
 
@@ -185,6 +190,94 @@ def cmd_conformance(args):
     return 1 if failed else 0
 
 
+# ------------------------------------------------------------- scenarios
+
+class ScenarioFailure(Exception):
+    """A step's answer or behavior differed from the scenario."""
+
+
+def _canon_text(value):
+    return canon.canonicalize(value).decode("utf-8")
+
+
+def run_scenario(sc, store_dir):
+    """Run one section 14.1 scenario against a fresh executor whose stores
+    live in store_dir. Raises ScenarioFailure at the first step that does
+    not match; any other exception is a crash."""
+    conf = sc["executor"]
+    script = {"app": None, "invoked": []}
+
+    def app(op):
+        a = script["app"]
+        script["invoked"].append(op.call_id)
+        if a is None:
+            raise RuntimeError("the application was invoked on a step with no app")
+        if a.get("hold"):
+            return HELD
+        return Outcome.from_json(a)
+
+    ex = Executor(conf["seed"], conf["accept"], store_dir, app=app)
+    for i, step in enumerate(sc["steps"]):
+        do = step["do"]
+        where = f"step {i} ({do}{': ' + step['note'] if 'note' in step else ''})"
+        script["invoked"] = []
+        if do == "call":
+            script["app"] = step.get("app")
+            ex.set_time(step["now"])
+            got = ex.receive_call(step["call"])
+            if "app" not in step and script["invoked"]:
+                raise ScenarioFailure(f"{where}: the application was invoked, and the step has no app")
+        elif do == "revoke":
+            script["app"] = None
+            ex.set_time(step["now"])
+            got = ex.receive_revoke(step["revoke"])
+        elif do == "finish":
+            script["app"] = None
+            if ex.signaled(step["call"]) != bool(step["signaled"]):
+                raise ScenarioFailure(f"{where}: signaled is {ex.signaled(step['call'])}, expected {step['signaled']}")
+            got = ex.complete(step["call"], step["app"])
+        elif do == "restart":
+            script["app"] = None
+            got = {"resolved": ex.restart()}
+        else:
+            raise ScenarioFailure(f"{where}: unknown step {do!r}")
+        if do != "call" and script["invoked"]:
+            raise ScenarioFailure(f"{where}: the application was invoked")
+        want = step["expect"]
+        if _canon_text(got) != _canon_text(want):
+            raise ScenarioFailure(f"{where}: got {_canon_text(got)} expected {_canon_text(want)}")
+
+
+def cmd_scenarios(args):
+    files = sorted(f for f in os.listdir(args.dir) if f.endswith(".json"))
+    if not files:
+        print(f"no .json scenarios in {args.dir}", file=sys.stderr)
+        return 2
+    passed = failed = 0
+    for name in files:
+        path = os.path.join(args.dir, name)
+        label = name
+        store_dir = tempfile.mkdtemp(prefix="writ-scenario-")
+        try:
+            sc = canon.loads_lenient(_read(path))
+            label = sc.get("name", name) if isinstance(sc, dict) else name
+            run_scenario(sc, store_dir)
+        except ScenarioFailure as e:
+            failed += 1
+            print(f"FAIL {label}: {e}")
+            continue
+        except Exception as e:  # noqa: BLE001, a crash is a finding, not an abort
+            failed += 1
+            print(f"FAIL {label}: CRASH {type(e).__name__}: {e}")
+            continue
+        finally:
+            shutil.rmtree(store_dir, ignore_errors=True)
+        passed += 1
+        print(f"PASS {label}")
+    print(f"{passed} passed, {failed} failed, {passed + failed} total")
+    return 1 if failed else 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python3 -m writ.cli", description="Writ v0.1 verifier")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -215,6 +308,10 @@ def main(argv=None):
     v = sub.add_parser("conformance", help="run every vector in a directory")
     v.add_argument("dir")
     v.set_defaults(fn=cmd_conformance)
+
+    sc = sub.add_parser("scenarios", help="run every section 14.1 executor scenario in a directory")
+    sc.add_argument("dir")
+    sc.set_defaults(fn=cmd_scenarios)
 
     args = p.parse_args(argv)
     return args.fn(args)
