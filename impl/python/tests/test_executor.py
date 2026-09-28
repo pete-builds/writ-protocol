@@ -508,6 +508,28 @@ class RestartTest(Base):
         self.assertEqual((t["err"], t["acc"]), ({"code": "unknown_outcome"}, T0 + 40))
         self.assertEqual([k for k, _ in self.app.calls], ["forward", "undo"])
 
+    def test_resolver_decides_an_interrupted_reversal(self):
+        # Section 8.1: a reversal that failed consumes nothing, even when
+        # that is learned only after a restart; one that succeeded counts.
+        for resolved, retry_runs in ((Outcome("failed", "app/declined"), True),
+                                     (Outcome("ok", res={"refund": 9}), False)):
+            with self.subTest(resolved=resolved.st):
+                self.tearDown()
+                self.setUp()
+                ch, first = self.charge()
+                undo = lambda n: issue.make_call(A, ch, "sys/undo", {"tally": first["tally"]}, call_id=cid(n))  # noqa: E731,B023
+                self.app.push(HELD)
+                self.ex.receive_call(undo(2))
+                self.ex.resolver = lambda rec, out=resolved: out
+                self.assertEqual(self.ex.restart(), 1)
+                if retry_runs:
+                    self.app.push(Outcome("ok", res={"refund": 1}))
+                again = self.ex.receive_call(undo(3))
+                self.assertEqual(again["tally"]["st"], "ok")
+                self.assertEqual(len(self.app.calls), 3 if retry_runs else 2)
+                if not retry_runs:
+                    self.assertEqual(again["res"], {"refund": 9})
+
     def test_resolver_can_supply_the_outcome(self):
         ch = chain()
         self.app.push(HELD)
