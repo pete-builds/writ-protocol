@@ -26,10 +26,22 @@ type Vector struct {
 	Now    *int64          `json:"now,omitempty"`
 }
 
-// Run evaluates one vector and returns (pass, detail).
-func Run(v Vector) (bool, string) {
+// Verdict is this implementation's answer to one vector: the rejection
+// reason and its error, or "" and nil on acceptance, plus the canonical form
+// when a canonicalize vector is accepted.
+type Verdict struct {
+	Reason    writ.Reason
+	Err       error
+	Canonical string
+}
+
+// Judge evaluates one vector's input. A non-nil error means the vector itself
+// is unusable. Run compares a verdict with the vector's expectation; the
+// differential fuzzer records it as one.
+func Judge(v Vector) (Verdict, error) {
 	var reason writ.Reason
 	var err error
+	var canonical string
 	switch v.Op {
 	case "canonicalize":
 		var in struct{ Raw, Canonical string }
@@ -37,9 +49,8 @@ func Run(v Vector) (bool, string) {
 		c, cerr := jcs.Canonicalize([]byte(in.Raw))
 		if cerr != nil {
 			reason, err = writ.Noncanonical, cerr
-		} else if v.Expect == "accept" && string(c) != in.Canonical {
-			return false, fmt.Sprintf("canonical form %s, want %s", c, in.Canonical)
 		}
+		canonical = string(c)
 	case "narrows":
 		in := decode(v.Input)
 		child, e1 := bound.Parse(in["child"])
@@ -100,11 +111,11 @@ func Run(v Vector) (bool, string) {
 		tobj, _ := in["tally"].(map[string]any)
 		w, e1 := writ.ParseWrit(wobj)
 		if e1 != nil {
-			return false, "vector's writ is invalid: " + e1.Error()
+			return Verdict{}, fmt.Errorf("vector's writ is invalid: %v", e1)
 		}
 		k, e2 := writ.ParseCall(cobj)
 		if e2 != nil {
-			return false, "vector's call is invalid: " + e2.Error()
+			return Verdict{}, fmt.Errorf("vector's call is invalid: %v", e2)
 		}
 		_, _, err = writ.VerifyTally(w, k, tobj, in["res"])
 		reason = writ.CodeOf(err)
@@ -118,7 +129,24 @@ func Run(v Vector) (bool, string) {
 		}
 		reason = writ.CodeOf(err)
 	default:
-		return false, "unknown op " + v.Op
+		return Verdict{}, fmt.Errorf("unknown op %s", v.Op)
+	}
+	return Verdict{reason, err, canonical}, nil
+}
+
+// Run evaluates one vector and returns (pass, detail).
+func Run(v Vector) (bool, string) {
+	vd, herr := Judge(v)
+	if herr != nil {
+		return false, herr.Error()
+	}
+	reason, err, canonical := vd.Reason, vd.Err, vd.Canonical
+	if v.Op == "canonicalize" && err == nil && v.Expect == "accept" {
+		var in struct{ Canonical string }
+		_ = json.Unmarshal(v.Input, &in)
+		if canonical != in.Canonical {
+			return false, fmt.Sprintf("canonical form %s, want %s", canonical, in.Canonical)
+		}
 	}
 	switch v.Expect {
 	case "accept":
