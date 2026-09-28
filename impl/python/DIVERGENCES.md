@@ -88,11 +88,19 @@ Verdicts:
 - Corpus: scenario 006 step 7 expects `malformed`. The executor now calls the fixed library function; `test_undo_target_not_an_object_is_malformed` fails on the old code.
 - Verdict: PYTHON_BUG
 
+### 10. Which received sub-tallies go into `sub`
+
+- Implementing: delegating onward (section 7.5) and the tally's `sub` member (section 6).
+- Spec: section 6 table, "`sub` | array of tally | yes | every tally this executor received from calls it made under child writs, signed members only". Section 7.5, "It MUST persist each sub-tally it receives before acting on the sub-tally's contents, MUST include every sub-tally in `sub` and every issued writ in `wrt`, whatever its own `st`". Section 6, "A later tally with the same `call` from the same executor supersedes it." Section 6.2 step 9 recurses into every element of `sub`, and section 6.2's result makes T `signed_unauthorized` when a check fails "anywhere in the tree".
+- Decision: "every tally received" does not say what to do with (a) an object that fails section 6.1 under the child's holder, which proves nothing about who made it and would make the executor's own tally fail verification, (b) a tally that passes section 6.1 but fails a later section 6.2 check, a signed admission by the sub-executor that also marks the executor's own tally `signed_unauthorized`, or (c) a pending sub-tally later superseded by a final one: listed both, or replaced. This implementation leaves (a) out, includes (b) as evidence against the sub-executor, and replaces (c) in place, so `sub` holds one tally per sub-call, the latest.
+- Corpus: not exercised. Section 14.1 says "Scripted outcomes carry no `sub` or `wrt`; tally trees are tested by `verify_tally` vectors", which test verification of a given tree, not which tree an executor builds.
+- Verdict: SPEC_SILENT
+
 ## Counts
 
 | Verdict | Count |
 |---|---|
 | PYTHON_BUG | 2 |
 | SPEC_AMBIGUOUS | 2 |
-| SPEC_SILENT | 4 |
+| SPEC_SILENT | 5 |
 | CORPUS_CONTRADICTS_SPEC | 1 |
