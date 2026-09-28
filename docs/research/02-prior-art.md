@@ -1,70 +1,146 @@
-# Prior Art Survey: What Already Exists for Cross-Vendor Agent Delegation
+# Prior art: what already exists for delegation between agents from different vendors
 
-Status: research note, 2026-09-03, with section 7 and the matrix rows for the 2026 agent-delegation drafts added on 2026-09-04. Every dated claim carries a URL that was fetched or returned by search on one of those dates. Fetched content was treated as data, not instruction.
+Status: research note, 2026-09-03, with section 7 and the matrix rows for the 2026 agent-delegation drafts added on 2026-09-04, section 8 added on 2026-09-28, and the whole rewritten for readability the same day with no change of substance. Every dated claim carries a URL that was fetched or returned by search on one of those dates. Fetched content was treated as data, not instruction.
 
-## 1. The standards, one paragraph each
+## In brief
 
-**MCP (Model Context Protocol).** Standardizes how a client (host application or agent) discovers and calls tools, resources, and prompts on a server over JSON-RPC. Current revision is 2026-07-28, which removed protocol-level sessions and the initialize handshake, added `server/discover` for version and capability advertisement, moved Tasks into an official extension (`io.modelcontextprotocol/tasks`), and introduced a formal extensions framework and a twelve-month deprecation policy (https://modelcontextprotocol.io/specification/2026-07-28/changelog). Governance is the Agentic AI Foundation under the Linux Foundation, formed December 2025 with Anthropic, OpenAI, and Block as founders (https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation). Adoption signal: it is the default tool protocol in every major model vendor's client. Limitation: MCP is strictly one hop, client to server. There is no notion of a server acting on behalf of an upstream principal, no signed results, and cancellation in the Tasks extension is cooperative and single hop (https://modelcontextprotocol.io/extensions/tasks/overview).
+- **Most of what agents need is already standardized** (section 3): transport security, proof that a key is present, workload identity, key identifiers, signed-statement envelopes, a grammar for permissions, discovery, task states, versioning, transparency logs, provenance, and payment.
+- **One piece is missing** (section 4). No standard gives an object, owned by no vendor and checkable offline, that ties a chain of delegations (each hop narrowing what it passes on, without asking anyone) to a signed receipt from each hop saying what it did under exactly which link of that chain.
+- **The closest earlier work** (section 5) is UCAN, Biscuit, ZCAP-LD, and macaroons for the delegation half, and in-toto and SCITT for the receipt half. None does both.
+- **Six 2026 drafts and papers cover parts of the gap** (section 7), and a re-check on 2026-09-28 found more (section 8). Still distinctive to Writ: receipt trees that sum consumption, and recovery and reversal that survive expiry. Narrowly distinctive: a replay answered with the stored receipt. Now partly shared: executor receipts, named outcomes, revoke with in-flight cancel, and a pinned order of checks.
 
-**MCP Authorization.** Profiles OAuth 2.1 for HTTP transports: servers MUST publish RFC 9728 Protected Resource Metadata, clients MUST send RFC 8707 `resource`, and Client ID Metadata Documents replace Dynamic Client Registration, which is now deprecated (https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization). The Enterprise-Managed Authorization extension (often called Cross App Access) is stable as of July 2026 with Okta, Microsoft, and Anthropic adoption (https://www.datawiza.com/blog/mcp-authentication-explained). Limitation, quoted from the spec: "MCP servers MUST NOT accept or transit any other tokens." Authority cannot flow through a server to a downstream server. Each hop needs its own grant from its own authorization server, online.
+How to read the rest: section 1 has one entry per standard, section 2 compares them all in one matrix, sections 3 and 4 say what is solved and what is not, section 5 ranks the closest prior art, section 6 lists names already taken, and sections 7 and 8 place Writ against the 2026 drafts.
 
-**A2A (Agent2Agent).** Standardizes peer discovery via Agent Cards, task creation and streaming, and artifact return between agents. v1.0.0 shipped 2026-03-12 and v1.0.1 on 2026-05-28 (https://github.com/a2aproject/A2A/releases). v1.0 added JWS-signed Agent Cards, three formal bindings (JSON-RPC, gRPC, HTTP+JSON), eight task states including `TASK_STATE_CANCELED` and `TASK_STATE_AUTH_REQUIRED`, `CancelTask`, versioned extensions, and a `tenant` routing field (https://a2a-protocol.org/latest/whats-new-v1/). Governance moved from the Linux Foundation project to the Agentic AI Foundation in August 2026 (https://www.axios.com/2026/08/17/a2a-agentic-ai-foundation-open-ai-standards, https://aaif.io/projects/agent2agent). Adoption: 150+ organizations and production use at Microsoft, AWS, and Google as of April 2026 (https://www.linuxfoundation.org/press/a2a-protocol-surpasses-150-organizations-lands-in-major-cloud-platforms-and-sees-enterprise-production-use-in-first-year). Limitation: only the Agent Card is signed. Messages, parts, and artifacts carry no signature, `tenant` is "an opaque routing identifier," and nothing in a task says under whose authority the callee acts (https://a2a-protocol.org/latest/specification/).
+## 1. The standards, one entry each
 
-**ACP (IBM BeeAI Agent Communication Protocol).** Standardized REST-based agent invocation for the BeeAI platform, launched March 2025. It merged into A2A under the Linux Foundation on 2025-08-29; IBM took a seat on the A2A TSC and BeeAI now ships an A2A adapter (https://lfaidata.foundation/communityblog/2025/08/29/acp-joins-forces-with-a2a-under-the-linux-foundations-lf-ai-data/). Treat as historical. Its limitation is A2A's limitation.
+**MCP (Model Context Protocol).** How a client (a host application or an agent) discovers and calls tools, resources, and prompts on a server, over JSON-RPC.
+- *Status:* the current revision is 2026-07-28. It removed protocol-level sessions and the initialize handshake, added `server/discover` for advertising version and capabilities, moved Tasks into an official extension (`io.modelcontextprotocol/tasks`), and introduced a formal extensions framework and a twelve-month deprecation policy (https://modelcontextprotocol.io/specification/2026-07-28/changelog).
+- *Governance:* the Agentic AI Foundation under the Linux Foundation, formed December 2025 with Anthropic, OpenAI, and Block as founders (https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation).
+- *Adoption:* the default tool protocol in every major model vendor's client.
+- *Where it stops:* strictly one hop, client to server. There is no notion of a server acting for an upstream principal, no signed results, and cancellation in the Tasks extension is cooperative and reaches one hop (https://modelcontextprotocol.io/extensions/tasks/overview).
 
-**ANP (Agent Network Protocol).** A Chinese-origin open protocol with a three-layer design: `did:wba` identity (a did:web derivative, v0.2), agent description in JSON-LD, and discovery via `.well-known` files; the current line is ANP 1.1 (https://agent-network-protocol.com/specs/did-method.html, https://agentnetworkprotocol.com/en/specs/01-agentnetworkprotocol-technical-white-paper/). Governance is a small GitHub community, adoption is thin outside China. Limitation: authentication is per-request DID signatures, but authorization is out of scope; there is no delegation object and no receipts.
+**MCP Authorization.** A profile of OAuth 2.1 for HTTP transports.
+- *What it requires:* servers MUST publish RFC 9728 Protected Resource Metadata, clients MUST send RFC 8707 `resource`, and Client ID Metadata Documents replace Dynamic Client Registration, which is now deprecated (https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
+- *Status:* the Enterprise-Managed Authorization extension (often called Cross App Access) is stable as of July 2026, adopted by Okta, Microsoft, and Anthropic (https://www.datawiza.com/blog/mcp-authentication-explained).
+- *Where it stops,* quoted from the spec: "MCP servers MUST NOT accept or transit any other tokens." Authority cannot flow through a server to a downstream server. Each hop needs its own grant from its own authorization server, online.
 
-**AP2 (Agent Payments Protocol).** Google's open extension for A2A that represents a purchase as a chain of signed mandates, described at launch as Intent, Cart, and Payment Mandates backed by verifiable digital credentials (https://cloud.google.com/blog/products/ai-machine-learning/announcing-agents-to-payments-ap2-protocol). v0.1.0 shipped 2025-09-16 and v0.2.0 on 2026-04-28 "focused on providing Human Not Present flows" (https://github.com/google-agentic-commerce/AP2/releases); the v0.2 docs reorganize around Checkout and Payment Mandates, each with Open and Closed stages, and say standardization "will continue within the Agentic Authentication Technical and Payments Technical Working Groups in FIDO" (https://ap2-protocol.org/). Limitation: the mandate chain is the closest shipped analog of a task receipt chain, but every object is payment-shaped and the chain is user to agent to merchant, not agent to sub-agent.
+**A2A (Agent2Agent).** Peer discovery through Agent Cards, creating and streaming tasks, and returning artifacts between agents.
+- *Status:* v1.0.0 shipped 2026-03-12 and v1.0.1 on 2026-05-28 (https://github.com/a2aproject/A2A/releases). v1.0 added JWS-signed Agent Cards, three formal bindings (JSON-RPC, gRPC, HTTP+JSON), eight task states including `TASK_STATE_CANCELED` and `TASK_STATE_AUTH_REQUIRED`, `CancelTask`, versioned extensions, and a `tenant` routing field (https://a2a-protocol.org/latest/whats-new-v1/).
+- *Governance:* moved from the Linux Foundation project to the Agentic AI Foundation in August 2026 (https://www.axios.com/2026/08/17/a2a-agentic-ai-foundation-open-ai-standards, https://aaif.io/projects/agent2agent).
+- *Adoption:* 150+ organizations, and production use at Microsoft, AWS, and Google, as of April 2026 (https://www.linuxfoundation.org/press/a2a-protocol-surpasses-150-organizations-lands-in-major-cloud-platforms-and-sees-enterprise-production-use-in-first-year).
+- *Where it stops:* only the Agent Card is signed. Messages, parts, and artifacts carry no signature, `tenant` is "an opaque routing identifier," and nothing in a task says under whose authority the callee acts (https://a2a-protocol.org/latest/specification/).
 
-**x402.** An HTTP 402 payment handshake: server returns `PAYMENT-REQUIRED`, client retries with `PAYMENT-SIGNATURE`, a facilitator verifies and settles. v1 launched 2025-05-06 and v2 on 2025-12-11 with CAIP-2 network ids and de-prefixed headers (https://x402.org/x402-v2-launch/). The x402 Foundation under the Linux Foundation became operational on 2026-07-14 with Visa, Mastercard, Stripe, AWS, Google, and Microsoft among members (https://www.linuxfoundation.org/press/linux-foundation-announces-operational-launch-of-x402-foundation-to-standardize-internet-native-payments-for-ai-agents-and-applications). Limitation: pure metering. No identity beyond a wallet key, no delegation, no task semantics.
+**ACP (IBM BeeAI Agent Communication Protocol).** REST-based agent invocation for the BeeAI platform, launched March 2025.
+- *Status:* merged into A2A under the Linux Foundation on 2025-08-29; IBM took a seat on the A2A TSC, and BeeAI now ships an A2A adapter (https://lfaidata.foundation/communityblog/2025/08/29/acp-joins-forces-with-a2a-under-the-linux-foundations-lf-ai-data/). Treat it as historical.
+- *Where it stops:* where A2A stops.
 
-**DIDs (did:key, did:web, DID Core 1.1).** Standardize a URI scheme that resolves to a document with verification keys. DID 1.1 reached Candidate Recommendation on 2026-03-05 (https://www.w3.org/news/2026/w3c-invites-implementations-of-decentralized-identifiers-dids-v1-1/). did:key (https://w3c-ccg.github.io/did-key-spec/) and did:web (https://w3c-ccg.github.io/did-method-web/) remain Credentials Community Group drafts, not Recommendations, yet are what UCAN, ZCAP, ANP, and AP2 all actually use. Limitation: identity only. A DID says who signed, never what they were allowed to do.
+**ANP (Agent Network Protocol).** An open protocol of Chinese origin with three layers: `did:wba` identity (a did:web derivative, v0.2), agent descriptions in JSON-LD, and discovery through `.well-known` files.
+- *Status:* the current line is ANP 1.1 (https://agent-network-protocol.com/specs/did-method.html, https://agentnetworkprotocol.com/en/specs/01-agentnetworkprotocol-technical-white-paper/).
+- *Governance and adoption:* a small GitHub community, with thin adoption outside China.
+- *Where it stops:* each request is authenticated by a DID signature, but authorization is out of scope. There is no delegation object and no receipts.
 
-**W3C Verifiable Credentials Data Model 2.0.** A JSON-LD envelope for signed claims by an issuer about a subject. Became a Recommendation on 2025-05-15; v2.1 has a First Public Working Draft in 2026 (https://www.w3.org/TR/vc-data-model-2.0/, https://www.w3.org/news/2026/first-public-working-draft-verifiable-credentials-data-model-v2-1/). Adoption: EU digital identity wallet, AP2 mandates. Limitation: VCs are attestations, not capabilities. A holder cannot narrow a credential and hand it on; the model has no chaining rule that says a re-issued credential must be a subset of what the re-issuer held.
+**AP2 (Agent Payments Protocol).** Google's open extension for A2A that represents a purchase as a chain of signed mandates, described at launch as Intent, Cart, and Payment Mandates backed by verifiable digital credentials (https://cloud.google.com/blog/products/ai-machine-learning/announcing-agents-to-payments-ap2-protocol).
+- *Status:* v0.1.0 shipped 2025-09-16, and v0.2.0 on 2026-04-28, "focused on providing Human Not Present flows" (https://github.com/google-agentic-commerce/AP2/releases). The v0.2 docs reorganize around Checkout and Payment Mandates, each with Open and Closed stages, and say standardization "will continue within the Agentic Authentication Technical and Payments Technical Working Groups in FIDO" (https://ap2-protocol.org/).
+- *Where it stops:* the mandate chain is the closest shipped analog of a chain of task receipts, but every object is shaped like a payment, and the chain runs from user to agent to merchant, not from agent to sub-agent.
 
-**OAuth 2.1 and OpenID Connect.** The delegated-access baseline: a resource owner authorizes a client at an authorization server, which mints an audience-bound token. OAuth 2.1 is still draft-ietf-oauth-v2-1 (MCP cites -13) but is the de facto profile; OIDC supplies user identity on top. Limitation: three parties and one hop. Tokens are opaque to everyone except the AS and resource, so a downstream party cannot inspect or narrow what it received without going back to the issuer.
+**x402.** An HTTP 402 payment handshake: the server returns `PAYMENT-REQUIRED`, the client retries with `PAYMENT-SIGNATURE`, and a facilitator verifies and settles.
+- *Status:* v1 launched 2025-05-06, and v2 on 2025-12-11 with CAIP-2 network ids and de-prefixed headers (https://x402.org/x402-v2-launch/).
+- *Governance:* the x402 Foundation under the Linux Foundation became operational on 2026-07-14, with Visa, Mastercard, Stripe, AWS, Google, and Microsoft among its members (https://www.linuxfoundation.org/press/linux-foundation-announces-operational-launch-of-x402-foundation-to-standardize-internet-native-payments-for-ai-agents-and-applications).
+- *Where it stops:* pure metering. No identity beyond a wallet key, no delegation, no task semantics.
 
-**RFC 8693 Token Exchange and RFC 9396 Rich Authorization Requests.** 8693 (January 2020) lets a client trade one token for another, recording delegation in `act` and `may_act` claims (https://www.rfc-editor.org/rfc/rfc8693). 9396 (May 2023) replaces flat scopes with structured `authorization_details` objects (https://www.rfc-editor.org/rfc/rfc9396). Together they can express "B acts for A with these details." Limitation: every exchange is an online round trip to an AS that both hops trust, and cross-domain exchange needs the identity-chaining pattern, still an individual draft. Nothing is offline.
+**DIDs (did:key, did:web, DID Core 1.1).** A URI scheme that resolves to a document holding verification keys.
+- *Status:* DID 1.1 reached Candidate Recommendation on 2026-03-05 (https://www.w3.org/news/2026/w3c-invites-implementations-of-decentralized-identifiers-dids-v1-1/). did:key (https://w3c-ccg.github.io/did-key-spec/) and did:web (https://w3c-ccg.github.io/did-method-web/) remain Credentials Community Group drafts, not Recommendations, yet they are what UCAN, ZCAP, ANP, and AP2 all actually use.
+- *Where it stops:* identity only. A DID says who signed, never what they were allowed to do.
 
-**RFC 9449 DPoP and RFC 9421 HTTP Message Signatures.** DPoP (September 2023) binds an access token to a client key (https://www.rfc-editor.org/rfc/rfc9449). 9421 (February 2024) signs selected HTTP components with any key (https://www.rfc-editor.org/rfc/rfc9421). Adoption for 9421 is real but slow: most of the fediverse still runs draft-cavage-12 and Fedify "double-knocks" both (https://socialhub.activitypub.rocks/t/rfc-9421-http-signatures-in-2026/8427, https://hackers.pub/@fedify/2026/why-activitypub-is-hard). Limitation: they prove possession of a key on a wire, which is a good message-layer primitive, but say nothing about what the key holder may do.
+**W3C Verifiable Credentials Data Model 2.0.** A JSON-LD envelope for signed claims by an issuer about a subject.
+- *Status:* a Recommendation since 2025-05-15; v2.1 had a First Public Working Draft in 2026 (https://www.w3.org/TR/vc-data-model-2.0/, https://www.w3.org/news/2026/first-public-working-draft-verifiable-credentials-data-model-v2-1/).
+- *Adoption:* the EU digital identity wallet, and AP2 mandates.
+- *Where it stops:* VCs are attestations, not capabilities. A holder cannot narrow a credential and hand it on, and the model has no chaining rule saying a re-issued credential must be a subset of what the re-issuer held.
 
-**RFC 9635 GNAP.** A ground-up successor to OAuth (October 2024) where the client negotiates a grant, keys replace pre-registration, and access rights are structured objects (https://www.rfc-editor.org/rfc/rfc9635). Adoption is limited; no major vendor has shipped it as a primary flow (https://oauth.net/gnap/). Limitation: still AS-centric. Attenuation and delegation route through the grant server.
+**OAuth 2.1 and OpenID Connect.** The baseline for delegated access: a resource owner authorizes a client at an authorization server, which mints a token bound to an audience.
+- *Status:* OAuth 2.1 is still draft-ietf-oauth-v2-1 (MCP cites -13), but it is the de facto profile; OIDC adds user identity on top.
+- *Where it stops:* three parties and one hop. Tokens are opaque to everyone but the AS and the resource, so a downstream party cannot inspect or narrow what it received without going back to the issuer.
 
-**SPIFFE/SPIRE and IETF WIMSE.** SPIFFE issues X.509 or JWT SVIDs to workloads after attestation; SPIRE v1.15.3 shipped 2026-08-21 (https://github.com/spiffe/spire/releases). WIMSE's architecture draft is at -08 (2026-07-06, Informational) with token-profile drafts behind it (https://datatracker.ietf.org/doc/draft-ietf-wimse-arch/). Adoption: Uber, Stripe, Netflix, and CNCF graduation. Limitation: identity inside one trust domain, federation between domains via bundle exchange. There is no delegation object, and an SVID names a workload, not a task.
+**RFC 8693 Token Exchange and RFC 9396 Rich Authorization Requests.**
+- *What they do:* 8693 (January 2020) lets a client trade one token for another, recording the delegation in `act` and `may_act` claims (https://www.rfc-editor.org/rfc/rfc8693). 9396 (May 2023) replaces flat scopes with structured `authorization_details` objects (https://www.rfc-editor.org/rfc/rfc9396). Together they can express "B acts for A with these details."
+- *Where they stop:* every exchange is an online round trip to an AS that both hops trust, and exchange across domains needs the identity-chaining pattern, which is still an individual draft. Nothing is offline.
 
-**Object capabilities and ZCAP-LD.** Authorization Capabilities for Linked Data is a CCG work item at v0.4.0-draft with commits into September 2026 (https://w3c-ccg.github.io/zcap-spec/, https://github.com/w3c-ccg/zcap-spec). It encodes a capability as a JSON-LD document signed with a Data Integrity proof, delegated by chaining documents with caveats, and exercised by a signed invocation. Adoption: Digital Bazaar products and some Solid experiments. Limitation: JSON-LD canonicalization cost, DID dependency, no invocation receipt, and no standards-track status after six years.
+**RFC 9449 DPoP and RFC 9421 HTTP Message Signatures.**
+- *What they do:* DPoP (September 2023) binds an access token to a client key (https://www.rfc-editor.org/rfc/rfc9449). 9421 (February 2024) signs selected HTTP components with any key (https://www.rfc-editor.org/rfc/rfc9421).
+- *Adoption:* real for 9421, but slow; most of the fediverse still runs draft-cavage-12, and Fedify "double-knocks" both (https://socialhub.activitypub.rocks/t/rfc-9421-http-signatures-in-2026/8427, https://hackers.pub/@fedify/2026/why-activitypub-is-hard).
+- *Where they stop:* they prove possession of a key on the wire, which is a good primitive at the message layer, but say nothing about what the key holder may do.
 
-**UCAN 1.0.** The UCAN Working Group spec is marked "Version 1.0.0" with sub-specs for Delegation, Invocation, Promise, and Revocation; each delegation "MUST either directly restate or attenuate (diminish) its capabilities," subjects are DIDs, and all UCANs "MUST be canonically encoded with DAG-CBOR for signing" (https://github.com/ucan-wg/spec/blob/main/README.md). I could not locate a dated 1.0 release announcement, so treat the version as self-declared. Adoption: Storacha (formerly web3.storage), Fission lineage, go-ucan. Limitation: IPLD and CID everywhere, DID-only principals, and Promise covers awaiting a result but not a signed receipt of what an executor actually did.
+**RFC 9635 GNAP.** A ground-up successor to OAuth (October 2024), in which the client negotiates a grant, keys replace pre-registration, and access rights are structured objects (https://www.rfc-editor.org/rfc/rfc9635).
+- *Adoption:* limited; no major vendor has shipped it as a primary flow (https://oauth.net/gnap/).
+- *Where it stops:* still centered on the AS. Attenuation and delegation go through the grant server.
 
-**Biscuit.** An Eclipse Foundation token format with Datalog policies, offline attenuation by appending blocks, and third-party blocks signed by external keys; v3.3 shipped 2024-11-27 with a clearer version scheme (https://www.biscuitsec.org/blog/biscuit-3-3/, https://github.com/eclipse-biscuit/biscuit). Limitation: verification needs the root public key, so only parties who know the issuer can check, and Datalog is a large surface for a minimal protocol. No receipts.
+**SPIFFE/SPIRE and IETF WIMSE.** SPIFFE issues X.509 or JWT SVIDs to workloads after attestation.
+- *Status:* SPIRE v1.15.3 shipped 2026-08-21 (https://github.com/spiffe/spire/releases). WIMSE's architecture draft is at -08 (2026-07-06, Informational), with token-profile drafts behind it (https://datatracker.ietf.org/doc/draft-ietf-wimse-arch/).
+- *Adoption:* Uber, Stripe, Netflix, and CNCF graduation.
+- *Where it stops:* identity inside one trust domain, with federation between domains by exchanging bundles. There is no delegation object, and an SVID names a workload, not a task.
 
-**Macaroons.** Google's 2014 bearer credential whose HMAC chain lets any holder add caveats offline and lets third parties discharge caveats (https://www.researchgate.net/publication/269196979_Macaroons_Cookies_with_Contextual_Caveats_for_Decentralized_Authorization_in_the_Cloud). Adoption: Lightning's L402, libmacaroons ports. Limitation: HMAC means only the root-key holder can verify, so a downstream hop cannot check what it received and a third party cannot audit. No signatures from the delegates.
+**Object capabilities and ZCAP-LD.** Authorization Capabilities for Linked Data encodes a capability as a JSON-LD document signed with a Data Integrity proof, delegated by chaining documents with caveats, and exercised by a signed invocation.
+- *Status:* a CCG work item at v0.4.0-draft, with commits into September 2026 (https://w3c-ccg.github.io/zcap-spec/, https://github.com/w3c-ccg/zcap-spec).
+- *Adoption:* Digital Bazaar products and some Solid experiments.
+- *Where it stops:* the cost of JSON-LD canonicalization, a dependency on DIDs, no receipt for an invocation, and no standards-track status after six years.
 
-**CapTP and OCapN.** Spritely and Agoric's capability transport protocol for distributed objects, with promise pipelining and network-level object references; OCapN is an explicit pre-standardization group with draft specs (https://ocapn.org/, https://github.com/ocapn/ocapn). Limitation: a live-session protocol. Authority is a reference held in a connection, not a portable document that survives offline or can be shown to a third party.
+**UCAN 1.0.** The UCAN Working Group spec is marked "Version 1.0.0", with sub-specs for Delegation, Invocation, Promise, and Revocation. Each delegation "MUST either directly restate or attenuate (diminish) its capabilities," subjects are DIDs, and all UCANs "MUST be canonically encoded with DAG-CBOR for signing" (https://github.com/ucan-wg/spec/blob/main/README.md).
+- *Status:* I could not find a dated 1.0 release announcement, so treat the version as self-declared.
+- *Adoption:* Storacha (formerly web3.storage), the Fission lineage, go-ucan.
+- *Where it stops:* IPLD and CIDs everywhere, principals that can only be DIDs, and a Promise that covers awaiting a result but is not a signed receipt of what an executor actually did.
 
-**WebAuthn Level 3 / passkeys.** Became a W3C Recommendation on 2026-08-25, adding PRF key derivation, Related Origin Requests, the Signal API, and conditional create (https://www.w3.org/TR/webauthn-3/). Limitation: authenticates a human to an origin. It is the right root for "a person approved this," but produces no reusable delegation artifact.
+**Biscuit.** An Eclipse Foundation token format with Datalog policies, offline attenuation by appending blocks, and third-party blocks signed by outside keys.
+- *Status:* v3.3 shipped 2024-11-27 with a clearer version scheme (https://www.biscuitsec.org/blog/biscuit-3-3/, https://github.com/eclipse-biscuit/biscuit).
+- *Where it stops:* verification needs the root public key, so only parties who know the issuer can check, and Datalog is a large surface for a minimal protocol. No receipts.
 
-**Matrix.** Federated real-time messaging; spec v1.19 landed July 2026 and Matrix 2.0 is being cut (https://matrix.org/blog/2026/07/17/this-week-in-matrix-2026-07-17/). Servers sign events, and rooms have a DAG with power levels. Limitation: authorization is room-membership based; there is no per-task attenuated capability, and the transport assumes homeservers.
+**Macaroons.** Google's 2014 bearer credential, whose HMAC chain lets any holder add caveats offline and lets third parties discharge caveats (https://www.researchgate.net/publication/269196979_Macaroons_Cookies_with_Contextual_Caveats_for_Decentralized_Authorization_in_the_Cloud).
+- *Adoption:* Lightning's L402, and ports of libmacaroons.
+- *Where it stops:* HMAC means only the holder of the root key can verify, so a downstream hop cannot check what it received and a third party cannot audit. The delegates never sign anything.
 
-**ActivityPub.** W3C social federation; a new Social Web Working Group was chartered 2026-01-15 through 2028-01-31 to maintain it (https://www.w3.org/2026/01/social-web-wg-charter.html). Limitation: actors and inboxes are a fine discovery and addressing model, but authorization is server-level HTTP signatures and there is no delegation or task semantics.
+**CapTP and OCapN.** Spritely's and Agoric's capability transport protocol for distributed objects, with promise pipelining and object references across the network. OCapN is an explicit pre-standardization group with draft specs (https://ocapn.org/, https://github.com/ocapn/ocapn).
+- *Where it stops:* it is a live-session protocol. Authority is a reference held in a connection, not a portable document that survives offline or can be shown to a third party.
 
-**IETF SCITT.** The architecture is now RFC 9943 (Proposed Standard, June 2026): an Issuer makes a COSE_Sign1 Signed Statement, a Transparency Service registers it and returns a Receipt, and the pair is a Transparent Statement verifiable without contacting the service (https://www.rfc-editor.org/info/rfc9943/). The reference API (SCRAPI) is still a draft (https://datatracker.ietf.org/doc/draft-ietf-scitt-scrapi/). Limitation: SCITT says nothing about authority. It makes a statement non-repudiable and timestamped; it does not say the statement-maker was allowed to act.
+**WebAuthn Level 3 and passkeys.** A W3C Recommendation since 2026-08-25, adding PRF key derivation, Related Origin Requests, the Signal API, and conditional create (https://www.w3.org/TR/webauthn-3/).
+- *Where it stops:* it authenticates a human to an origin. It is the right root for "a person approved this", but it produces no reusable delegation artifact.
 
-**in-toto attestations and SLSA.** in-toto defines a Statement (subject digests plus a typed predicate) inside a DSSE envelope; SLSA v1.2 (2025-11-24) defines the Provenance predicate and build levels (https://github.com/in-toto/attestation, https://slsa.dev/blog). Adoption: GitHub artifact attestations, Sigstore. Limitation: provenance about artifacts, not about actions under delegated authority. There is no link from a predicate to the capability that permitted the build.
+**Matrix.** Federated real-time messaging. Spec v1.19 landed in July 2026, and Matrix 2.0 is being cut (https://matrix.org/blog/2026/07/17/this-week-in-matrix-2026-07-17/). Servers sign events, and rooms have a DAG with power levels.
+- *Where it stops:* authorization is based on room membership. There is no narrowed capability per task, and the transport assumes homeservers.
 
-**C2PA.** Content Credentials: a manifest of assertions, a claim, and a claim signature bound to a media asset, with an X.509 trust list; v2.4 released April 2026 and supports chained manifests across successive editors (https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html). Limitation: media-shaped, X.509-only, and provenance without authorization.
+**ActivityPub.** W3C social federation. A new Social Web Working Group was chartered on 2026-01-15, through 2028-01-31, to maintain it (https://www.w3.org/2026/01/social-web-wg-charter.html).
+- *Where it stops:* actors and inboxes are a fine model for discovery and addressing, but authorization is server-level HTTP signatures, and there is no delegation and no task semantics.
 
-**OpenID AuthZEN.** Authorization API 1.0 became a Final Specification in January 2026, standardizing the PEP-to-PDP decision call (https://openid.net/notice-of-vote-to-approve-proposed-authorization-api-1-final-specification/). Working Group drafts add the Access Request and Approval Profile (human approval flows) and COAZ, a binding for MCP tool authorization (https://openid.net/openid-foundation-advances-authorization-for-the-agent-era-with-new-authzen-working-group-drafts/). Limitation: a PDP must be online for every decision. It is the opposite of offline verification.
+**IETF SCITT.** The architecture is now RFC 9943 (Proposed Standard, June 2026). An Issuer makes a COSE_Sign1 Signed Statement, a Transparency Service registers it and returns a Receipt, and the pair is a Transparent Statement that can be verified without contacting the service (https://www.rfc-editor.org/info/rfc9943/). The reference API (SCRAPI) is still a draft (https://datatracker.ietf.org/doc/draft-ietf-scitt-scrapi/).
+- *Where it stops:* SCITT says nothing about authority. It makes a statement non-repudiable and timestamped; it does not say the maker of the statement was allowed to act.
 
-**IETF agent-auth drafts.** draft-klrc-aiagent-auth-03 (2026-07-06, individual, authors from Defakto, AWS, Zscaler, Ping, OpenAI, Okta) composes WIMSE, token exchange, and transaction tokens into agent delegation chains (https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/). draft-oauth-transaction-tokens-for-agents (through -06, Informational) puts the agent in `act` with the principal in `sub` (https://datatracker.ietf.org/doc/draft-oauth-transaction-tokens-for-agents/). draft-ietf-oauth-client-id-metadata-document-02 (2026-07-06) is the CIMD mechanism MCP already depends on (https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/). The OpenID AIIM Community Group and a proposed W3C Agent Identity Registry Protocol CG (2026-04-24) are the discussion venues (https://openid.net/cg/artificial-intelligence-identity-management-community-group/, https://www.w3.org/community/blog/2026/04/24/proposed-group-agent-identity-registry-protocol-community-group/). Limitation shared by all: every design routes through an AS or a transaction-token service, online, and none define what a result receipt looks like.
+**in-toto attestations and SLSA.** in-toto defines a Statement (digests of the subject plus a typed predicate) inside a DSSE envelope, and SLSA v1.2 (2025-11-24) defines the Provenance predicate and build levels (https://github.com/in-toto/attestation, https://slsa.dev/blog).
+- *Adoption:* GitHub artifact attestations, Sigstore.
+- *Where it stops:* provenance about artifacts, not about actions under delegated authority. Nothing links a predicate to the capability that permitted the build.
 
-**AGNTCY.** Cisco's Outshift project, donated to the Linux Foundation on 2025-07-29: OASF (Open Agent Schema Framework) for capability description, an agent directory, an identity service, SLIM messaging, and observability (https://www.linuxfoundation.org/press/linux-foundation-welcomes-the-agntcy-project-to-standardize-open-multi-agent-system-infrastructure-and-break-down-ai-agent-silos). Limitation: infrastructure and directory, not a delegation model; identity verification presumes the AGNTCY identity service.
+**C2PA.** Content Credentials: a manifest of assertions, a claim, and a claim signature bound to a media asset, with an X.509 trust list. v2.4 was released in April 2026 and supports chained manifests across successive editors (https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html).
+- *Where it stops:* shaped for media, X.509 only, and provenance without authorization.
 
-**NANDA, Agora, LMOS.** NANDA (MIT Media Lab) proposes a hybrid registry index plus per-organization registries and an "AgentFacts" passport (https://projectnanda.org/). Agora (Oxford, arXiv 2410.11905) is a meta-protocol where agents negotiate content-addressed Protocol Documents from natural language (https://www.alphaxiv.org/overview/2410.11905). Eclipse LMOS builds on W3C Web of Things Thing Descriptions and runs in production at Deutsche Telekom, with a progress review scheduled 2026-09-23 (https://projects.eclipse.org/projects/technology.lmos/reviews/eclipse-lmos-2026.09-progress-review). Limitation common to all three: discovery and description, not authority or evidence.
+**OpenID AuthZEN.** Authorization API 1.0 became a Final Specification in January 2026, standardizing the decision call from a PEP to a PDP (https://openid.net/notice-of-vote-to-approve-proposed-authorization-api-1-final-specification/). Working Group drafts add the Access Request and Approval Profile (flows for human approval) and COAZ, a binding for authorizing MCP tools (https://openid.net/openid-foundation-advances-authorization-for-the-agent-era-with-new-authzen-working-group-drafts/).
+- *Where it stops:* a PDP must be online for every decision, which is the opposite of offline verification.
+
+**IETF agent-auth drafts.**
+- draft-klrc-aiagent-auth-03 (2026-07-06, individual, with authors from Defakto, AWS, Zscaler, Ping, OpenAI, and Okta) composes WIMSE, token exchange, and transaction tokens into agent delegation chains (https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/).
+- draft-oauth-transaction-tokens-for-agents (through -06, Informational) puts the agent in `act` and the principal in `sub` (https://datatracker.ietf.org/doc/draft-oauth-transaction-tokens-for-agents/).
+- draft-ietf-oauth-client-id-metadata-document-02 (2026-07-06) is the CIMD mechanism MCP already depends on (https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/).
+- The OpenID AIIM Community Group and a proposed W3C Agent Identity Registry Protocol CG (2026-04-24) are where the discussion happens (https://openid.net/cg/artificial-intelligence-identity-management-community-group/, https://www.w3.org/community/blog/2026/04/24/proposed-group-agent-identity-registry-protocol-community-group/).
+- *Where they all stop:* every design routes through an AS or a transaction-token service, online, and none defines what a result receipt looks like.
+
+**AGNTCY.** Cisco's Outshift project, donated to the Linux Foundation on 2025-07-29: OASF (Open Agent Schema Framework) for describing capabilities, an agent directory, an identity service, SLIM messaging, and observability (https://www.linuxfoundation.org/press/linux-foundation-welcomes-the-agntcy-project-to-standardize-open-multi-agent-system-infrastructure-and-break-down-ai-agent-silos).
+- *Where it stops:* infrastructure and a directory, not a delegation model; verifying identity presumes the AGNTCY identity service.
+
+**NANDA, Agora, LMOS.**
+- NANDA (MIT Media Lab) proposes a hybrid registry index plus per-organization registries and an "AgentFacts" passport (https://projectnanda.org/).
+- Agora (Oxford, arXiv 2410.11905) is a meta-protocol in which agents negotiate content-addressed Protocol Documents from natural language (https://www.alphaxiv.org/overview/2410.11905).
+- Eclipse LMOS builds on W3C Web of Things Thing Descriptions and runs in production at Deutsche Telekom, with a progress review scheduled for 2026-09-23 (https://projects.eclipse.org/projects/technology.lmos/reviews/eclipse-lmos-2026.09-progress-review).
+- *Where all three stop:* discovery and description, not authority or evidence.
 
 ## 2. Comparison matrix
 
-Y = defined by the standard. partial = present but incomplete for the cross-domain multi-hop case. N = absent. "Attenuation" means hop 2 can narrow what hop 1 got, offline, without the original issuer online.
+Y = defined by the standard. partial = present, but incomplete for the multi-hop case across domains. N = absent. "Attenuation" means hop 2 can narrow what hop 1 got, offline, without the original issuer online.
 
 | Standard | Identity | Discovery | Capability description | Authentication | Authorization | Delegation with attenuation | Task lifecycle | Receipts / provenance | Cancellation propagation | Idempotency | Compensation / rollback | Version negotiation | Central authority required? | Offline verifiable? |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -103,53 +179,80 @@ Y = defined by the standard. partial = present but incomplete for the cross-doma
 
 ## 3. What is solved
 
-These functions need no new standard. Reuse and profile.
+These functions need no new standard: reuse them, and profile them where needed.
 
-- Transport-level authentication of one client to one server: OAuth 2.1 as profiled by MCP, with RFC 9728 and RFC 8414 discovery and CIMD for registration-free client identity.
-- Proof of possession on the wire: RFC 9449 DPoP inside OAuth, RFC 9421 for any HTTP message.
-- Workload identity inside one trust domain: SPIFFE SVIDs, with WIMSE as the coming IETF framing.
-- Human approval as a root of trust: WebAuthn Level 3 assertions.
-- Decentralized key identifiers: did:key for ephemeral agent keys, did:web for domain-anchored ones. Do not invent a new identifier scheme.
-- Signed-statement envelope: COSE_Sign1 (SCITT) or DSSE (in-toto). Either is fine; pick one and stop.
-- Structured permission grammar: RFC 9396 `authorization_details` objects are a mature vocabulary for "what exactly," even outside OAuth.
-- Service discovery and capability description: A2A Agent Cards for agents, MCP `tools/list` plus `server/discover` for tools. OASF is a candidate schema layer if one is needed.
-- Task lifecycle states: A2A's eight states and MCP's Tasks extension already agree on the shape (submitted, working, input required, completed, failed, canceled).
-- Version negotiation: MCP's per-request `_meta` protocol version and `server/discover`; A2A's `protocolVersion` in the card.
-- Append-only transparency and timestamping: SCITT RFC 9943 Receipts when a public log is wanted.
-- Artifact provenance: in-toto Statements and SLSA Provenance for software, C2PA for media.
-- Payment: AP2 mandates over A2A or x402 over HTTP. Do not couple the core protocol to either.
-- Online policy decisions: AuthZEN when a PDP is acceptable.
-- Trace context: W3C `traceparent` in `_meta`, as MCP already documents.
+- **Authenticating one client to one server at the transport level:** OAuth 2.1 as profiled by MCP, with RFC 9728 and RFC 8414 discovery, and CIMD for client identity without registration.
+- **Proof of possession on the wire:** RFC 9449 DPoP inside OAuth, and RFC 9421 for any HTTP message.
+- **Workload identity inside one trust domain:** SPIFFE SVIDs, with WIMSE as the coming IETF framing.
+- **Human approval as a root of trust:** WebAuthn Level 3 assertions.
+- **Decentralized key identifiers:** did:key for short-lived agent keys, did:web for keys anchored to a domain. Do not invent a new identifier scheme.
+- **An envelope for signed statements:** COSE_Sign1 (SCITT) or DSSE (in-toto). Either is fine; pick one and stop.
+- **A grammar for structured permissions:** RFC 9396 `authorization_details` objects are a mature vocabulary for "what exactly," even outside OAuth.
+- **Service discovery and capability description:** A2A Agent Cards for agents, and MCP `tools/list` plus `server/discover` for tools. OASF is a candidate schema layer if one is needed.
+- **Task lifecycle states:** A2A's eight states and MCP's Tasks extension already agree on the shape (submitted, working, input required, completed, failed, canceled).
+- **Version negotiation:** MCP's per-request `_meta` protocol version and `server/discover`, and A2A's `protocolVersion` in the card.
+- **Append-only transparency and timestamping:** SCITT RFC 9943 Receipts, when a public log is wanted.
+- **Artifact provenance:** in-toto Statements and SLSA Provenance for software, and C2PA for media.
+- **Payment:** AP2 mandates over A2A, or x402 over HTTP. Do not couple the core protocol to either.
+- **Online policy decisions:** AuthZEN, when a PDP is acceptable.
+- **Trace context:** W3C `traceparent` in `_meta`, as MCP already documents.
 
 ## 4. The smallest important gap
 
-Scenario. Agent A (vendor 1) delegates to Agent B (vendor 2) a narrowly scoped task: "summarize tickets 100 to 200 in project P, read only." B sub-delegates part of it to Agent C (vendor 3) with strictly less authority: "read tickets 150 to 200 in P." B and C return results carrying verifiable evidence of who did what under which authority. A can verify all of that offline, and can cancel the work in flight or compensate afterward.
+**The scenario.** Agent A (vendor 1) gives Agent B (vendor 2) a narrow task: "summarize tickets 100 to 200 in project P, read only." B passes part of it to Agent C (vendor 3) with strictly less authority: "read tickets 150 to 200 in P." B and C return results carrying verifiable evidence of who did what under which authority. A can verify all of that offline, and can cancel the work in flight or compensate afterward.
 
-**Where MCP breaks.** Step 1 works: A is an MCP client of B and obtains a token from B's authorization server scoped to P. Step 2 breaks. B cannot hand C anything derived from A's grant, because "MCP servers MUST NOT accept or transit any other tokens" (https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization). B must go to C's authorization server as a fresh client and obtain a token whose scope is whatever C's AS is willing to grant to B, with no cryptographic tie to A's narrower grant. Step 3 breaks: MCP results are unsigned JSON-RPC `structuredContent`; C's result to B and B's result to A are bare data. Step 4 breaks: `tasks/cancel` reaches B, but nothing propagates to C except B's own code, and the extension states cancellation "does not prove that remote work stopped" (https://modelcontextprotocol.io/extensions/tasks/overview). Compensation has no primitive at all.
+**Where MCP breaks.**
+- *Step 1 works:* A is an MCP client of B and obtains a token from B's authorization server, scoped to P.
+- *Step 2 breaks:* B cannot hand C anything derived from A's grant, because "MCP servers MUST NOT accept or transit any other tokens" (https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization). B must go to C's authorization server as a fresh client and obtain a token whose scope is whatever C's AS will grant B, with no cryptographic tie to A's narrower grant.
+- *Step 3 breaks:* MCP results are unsigned JSON-RPC `structuredContent`. C's result to B and B's result to A are bare data.
+- *Step 4 breaks:* `tasks/cancel` reaches B, but nothing reaches C except through B's own code, and the extension states that cancellation "does not prove that remote work stopped" (https://modelcontextprotocol.io/extensions/tasks/overview). Compensation has no primitive at all.
 
-**Where A2A breaks.** Step 1 half-works: A verifies B's signed Agent Card, so it knows the endpoint belongs to vendor 2's domain, then opens a task with the OAuth or mTLS scheme B advertises. Step 2 breaks: B opens a second task with C. The only carrier for context is `tenant`, "an opaque routing identifier," so C never learns that it acts under A's authority narrowed to tickets 150 to 200 (https://a2a-protocol.org/latest/specification/). Step 3 breaks: only the Agent Card is signed; "no signature mechanisms are defined for individual messages, parts, or artifacts," so A cannot distinguish "C produced this under B's sub-delegation" from "B made it up." Step 4 breaks: `CancelTask` from A stops B's task; propagating to C is B's private behavior. A cannot verify offline because there is nothing signed to verify.
+**Where A2A breaks.**
+- *Step 1 half works:* A verifies B's signed Agent Card, so it knows the endpoint belongs to vendor 2's domain, then opens a task with the OAuth or mTLS scheme B advertises.
+- *Step 2 breaks:* B opens a second task with C. The only carrier for context is `tenant`, "an opaque routing identifier," so C never learns that it acts under A's authority, narrowed to tickets 150 to 200 (https://a2a-protocol.org/latest/specification/).
+- *Step 3 breaks:* only the Agent Card is signed; "no signature mechanisms are defined for individual messages, parts, or artifacts," so A cannot tell "C produced this under B's sub-delegation" from "B made it up."
+- *Step 4 breaks:* `CancelTask` from A stops B's task; passing it on to C is B's private behavior. A cannot verify offline, because there is nothing signed to verify.
 
-**Where OAuth breaks.** Step 1 works with RFC 9396 details describing the ticket range. Step 2 half-works only if A's AS, B, and C all trust one AS or a federation: B performs RFC 8693 token exchange, the AS narrows the scope and records `act`. That is online by construction, and cross-vendor it requires identity chaining that is still an individual draft (https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/). The holder (B) cannot itself produce a strictly narrower credential; only the issuer can. Step 3 breaks: an access token is permission, not evidence. Nothing in the OAuth family is a signed statement by C that "I did X with token T." Step 4 breaks: revocation is a call to the AS, and the AS cannot reach C's in-flight work. Offline verification of the chain is impossible because A never sees C's token, and C's token was minted by an AS A may not even know.
+**Where OAuth breaks.**
+- *Step 1 works,* with RFC 9396 details describing the ticket range.
+- *Step 2 half works,* and only if A's AS, B, and C all trust one AS or a federation. B performs RFC 8693 token exchange, and the AS narrows the scope and records `act`. That is online by construction, and across vendors it needs identity chaining, which is still an individual draft (https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/). The holder (B) cannot itself produce a strictly narrower credential; only the issuer can.
+- *Step 3 breaks:* an access token is permission, not evidence. Nothing in the OAuth family is a signed statement by C that "I did X with token T."
+- *Step 4 breaks:* revocation is a call to the AS, and the AS cannot reach C's work in flight. Verifying the chain offline is impossible, because A never sees C's token, and C's token was minted by an AS that A may not even know.
 
-**The gap in one sentence, as found against MCP, A2A, and OAuth on 2026-09-03.** Those three give no vendor-neutral, offline-verifiable object that binds a task-scoped delegation chain, which each hop can narrow without contacting any issuer, to a signed receipt from each hop stating what it did under exactly which link of that chain. Section 7 records that several 2026 drafts and papers outside those three now cover parts of this gap, and states what Writ still adds.
+**The gap in one sentence, as found against MCP, A2A, and OAuth on 2026-09-03.** Those three give no object, owned by no vendor and checkable offline, that ties a chain of delegations scoped to a task (each hop narrowing what it passes on, without contacting any issuer) to a signed receipt from each hop saying what it did under exactly which link of that chain. Section 7 records that several 2026 drafts and papers outside those three now cover parts of this gap, and says what Writ still adds.
 
-Everything else in the scenario (discovery, endpoint identity, transport auth, task states, cancellation at one hop) is already standardized. The missing piece is small: one attenuable authority envelope plus one receipt format that references it, with a rule that a receipt is valid only if its authority link is valid.
+Everything else in the scenario (discovery, endpoint identity, transport authentication, task states, cancellation at one hop) is already standardized. The missing piece is small: one envelope for authority that can be narrowed, plus one receipt format that references it, with the rule that a receipt is valid only if its link of authority is valid.
 
 ## 5. Closest prior art to the gap, ranked
 
-1. **UCAN 1.0.** Closest. Delegation with a mandatory attenuation rule, a separate Invocation that names the delegation chain, Promise for awaiting results, and Revocation. Missing: a signed executor receipt; Promise awaits a value but does not sign "who did what." Baggage: DAG-CBOR and CIDs (IPLD), DID-only principals, and a policy language of its own.
-
-2. **Biscuit 3.3.** Offline attenuation by appended blocks, third-party blocks signed by outside keys (a natural place for C's contribution), and a clean versioning story. Missing: receipts, and verification is bound to knowing the root public key, so a stranger cannot audit. Baggage: Datalog as the policy language, Protobuf encoding.
-
-3. **ZCAP-LD.** Explicit capability chain with caveats and a signed invocation, DID controllers, and Data Integrity proofs. Missing: any receipt and any standards-track home. Baggage: JSON-LD canonicalization, DID resolution, six years at v0.4-draft.
-
-4. **Macaroons.** The simplest attenuation primitive there is, and third-party caveats map to "C must discharge." Missing: public-key verification, so only the root issuer (A) can verify, and delegates never sign anything. Baggage: minimal, but HMAC makes it unusable as evidence to anyone but A.
-
-5. **AP2 mandates.** The only shipped agent-era chain of signed objects where each step references the previous one and the final object is the receipt. Missing: agent-to-sub-agent hops and anything not shaped as a purchase. Baggage: payments coupling, VC and JSON-LD encoding, FIDO working-group governance.
-
-6. **in-toto attestations.** The right receipt shape: subject digests plus a typed predicate in a DSSE envelope, chainable by referencing earlier statements. Missing: any authority model; a predicate cannot point at the capability that permitted the action. Baggage: light, which is why it is the strongest candidate to borrow for the receipt half.
-
-7. **SCITT RFC 9943.** Non-repudiable, timestamped Signed Statements with offline-verifiable Receipts. Missing: authority, and registration needs a Transparency Service online, which the scenario forbids for the verification step. Baggage: COSE and CBOR (fine), a transparency log operator (not fine as a requirement). Best used as an optional anchor for receipts, never as the core.
+1. **UCAN 1.0.** The closest.
+   - *Has:* delegation with a mandatory attenuation rule, a separate Invocation that names the delegation chain, Promise for awaiting results, and Revocation.
+   - *Missing:* a signed receipt from the executor; Promise awaits a value but does not sign "who did what."
+   - *Baggage:* DAG-CBOR and CIDs (IPLD), principals that can only be DIDs, and a policy language of its own.
+2. **Biscuit 3.3.**
+   - *Has:* offline attenuation by appended blocks, third-party blocks signed by outside keys (a natural place for C's contribution), and a clean versioning story.
+   - *Missing:* receipts; and verification is tied to knowing the root public key, so a stranger cannot audit.
+   - *Baggage:* Datalog as the policy language, and Protobuf encoding.
+3. **ZCAP-LD.**
+   - *Has:* an explicit capability chain with caveats and a signed invocation, DID controllers, and Data Integrity proofs.
+   - *Missing:* any receipt, and any home on a standards track.
+   - *Baggage:* JSON-LD canonicalization, DID resolution, and six years at v0.4-draft.
+4. **Macaroons.**
+   - *Has:* the simplest attenuation primitive there is, and third-party caveats map to "C must discharge."
+   - *Missing:* verification by public key, so only the root issuer (A) can verify, and delegates never sign anything.
+   - *Baggage:* minimal, but HMAC makes it useless as evidence to anyone but A.
+5. **AP2 mandates.**
+   - *Has:* the only shipped chain of signed objects from the agent era where each step references the previous one and the final object is the receipt.
+   - *Missing:* hops from agent to sub-agent, and anything not shaped like a purchase.
+   - *Baggage:* coupling to payments, VC and JSON-LD encoding, and FIDO working-group governance.
+6. **in-toto attestations.**
+   - *Has:* the right receipt shape: digests of the subject plus a typed predicate in a DSSE envelope, chainable by referencing earlier statements.
+   - *Missing:* any authority model; a predicate cannot point at the capability that permitted the action.
+   - *Baggage:* light, which is why it is the strongest candidate to borrow for the receipt half.
+7. **SCITT RFC 9943.**
+   - *Has:* Signed Statements that are non-repudiable and timestamped, with Receipts verifiable offline.
+   - *Missing:* authority; and registration needs a Transparency Service online, which the scenario forbids for the verification step.
+   - *Baggage:* COSE and CBOR (fine), and a transparency log operator (not fine as a requirement). Best used as an optional anchor for receipts, never as the core.
 
 ## 6. Names already taken
 
@@ -164,11 +267,11 @@ Avoid these, or expect collisions in search and in conversation.
 - **Coral**: Coral Protocol (Internet of Agents) and a separate CORAL autoresearch project.
 - **SLIM**, **OASF**: AGNTCY. **LMOS**: Eclipse. **goose**, **AGENTS.md**: AAIF projects.
 - **WARP**: Cloudflare's client and tunnel product.
-- **Transaction Token**: IETF OAuth term. **Cross App Access / XAA**: Okta. **EMA**: MCP's Enterprise-Managed Authorization extension.
+- **Transaction Token**: an IETF OAuth term. **Cross App Access / XAA**: Okta. **EMA**: MCP's Enterprise-Managed Authorization extension.
 - **AIP**: an arXiv "Agent Identity Protocol." **AIMS**: an IETF agent identity draft. **AIIM**: OpenID's community group. **AARP**, **COAZ**: AuthZEN profiles.
 - **Receipt**, **Signed Statement**, **Transparent Statement**: SCITT terms of art. **Statement**, **Predicate**: in-toto. **Content Credentials**: C2PA.
-- **Capability**: overloaded between MCP's feature flags and the object-capability meaning. If the protocol uses the ocap sense, say so once and never use the word for feature negotiation.
-- **Task**: both A2A and MCP own it with slightly different state machines. Reuse it only if the states match theirs.
+- **Capability**: overloaded between MCP's feature flags and the object-capability meaning. If the protocol uses the ocap sense, say so once, and never use the word for feature negotiation.
+- **Task**: both A2A and MCP own it, with slightly different state machines. Reuse it only if the states match theirs.
 - **Biscuit**, **Macaroon**, **Cookie**: the pastry lineage is taken.
 - **Matrix**, **Passkey**, **SPIFFE**, **WIMSE**, **GNAP**: established.
 
@@ -176,74 +279,122 @@ Avoid these, or expect collisions in search and in conversation.
 
 Section 8 re-checks this section on 2026-09-28 against newer revisions and five more sources, and supersedes 7.1 and 7.3 where they differ.
 
-Six pieces of work published between March and September 2026 address the same gap as section 4 from different directions. Each was fetched from its primary source on 2026-09-04; each is summarized as it describes itself, and the comparison is against the v0.1 specification as revised the same day.
+Six pieces of work published between March and September 2026 address the same gap as section 4, from different directions. Each was fetched from its primary source on 2026-09-04 and is summarized as it describes itself, and the comparison is against the v0.1 specification as revised the same day.
 
-**AIP and Invocation-Bound Capability Tokens** (arXiv 2603.24775v1, Sunil Prakash, Indian School of Business, 2026-03-25, https://arxiv.org/html/2603.24775v1). IBCTs come in two formats: a compact EdDSA-signed JWT carrying issuer, subject, scope, a budget in cents, a maximum delegation depth, and timestamps; and a chained Biscuit token whose Ed25519 append-only blocks carry attenuated scopes under Datalog evaluation, so that "each delegation block MUST be a subset of its parent's capabilities" and holders narrow "without contacting the issuer." Tokens are "verified offline without contacting an authorization server." Optional completion blocks appended after the work carry a result hash, a verification status, resource consumption, and cost; they are "self-reported by default" with escalation to counter-signed or third-party attested. Bindings: `X-AIP-Token` on every MCP tool call, and an `aip_token` field in A2A task metadata. Revocation is not provided; "AIP v1 relies on short-lived tokens." So: hash-linked offline attenuation, MCP and A2A bindings, and a form of completion evidence all exist here.
+**AIP and Invocation-Bound Capability Tokens** (arXiv 2603.24775v1, Sunil Prakash, Indian School of Business, 2026-03-25, https://arxiv.org/html/2603.24775v1).
+- *Two token formats:* a compact EdDSA-signed JWT carrying issuer, subject, scope, a budget in cents, a maximum delegation depth, and timestamps; and a chained Biscuit token whose Ed25519 append-only blocks carry narrowed scopes under Datalog evaluation, so that "each delegation block MUST be a subset of its parent's capabilities" and holders narrow "without contacting the issuer." Tokens are "verified offline without contacting an authorization server."
+- *Evidence:* optional completion blocks appended after the work carry a result hash, a verification status, resource consumption, and cost. They are "self-reported by default", with escalation to counter-signed or third-party attested.
+- *Bindings:* `X-AIP-Token` on every MCP tool call, and an `aip_token` field in A2A task metadata.
+- *Revocation:* not provided; "AIP v1 relies on short-lived tokens."
+- *So:* offline attenuation linked by hash, MCP and A2A bindings, and a form of completion evidence all exist here.
 
-**AgentROA** (draft-nivalto-agentroa-route-authorization-01, Joseph Michalak, Nivalto, 2026-04-16, Informational, https://datatracker.ietf.org/doc/draft-nivalto-agentroa-route-authorization/). Three objects: an ROA envelope, signed by a Policy Engine with Ed25519, binding an agent session to a capability set; Agent Route Attestations, signed by each delegating agent and each referencing its parent, forming a hash chain with monotonic scope narrowing; and Agent Execution Receipts, signed by a Border Gateway at enforcement time before and after an invocation, carrying policy digest, session, capability, and outcome. Verification runs against locally cached Agent Identity Registry data; revocation goes through that registry; replay is caught by a session-scoped cache of `(envelope_id, session_id)`. JSON with EdDSA signatures, optional SCITT countersignatures, positioned above MCP's OAuth and requiring an ARA in A2A delegation requests. So: per-hop hash-chained attestation and signed execution receipts exist here, with a policy engine and a registry as the roots.
+**AgentROA** (draft-nivalto-agentroa-route-authorization-01, Joseph Michalak, Nivalto, 2026-04-16, Informational, https://datatracker.ietf.org/doc/draft-nivalto-agentroa-route-authorization/).
+- *Three objects:* an ROA envelope, signed by a Policy Engine with Ed25519, binding an agent session to a capability set; Agent Route Attestations, signed by each delegating agent and each referencing its parent, forming a hash chain with scope that only narrows; and Agent Execution Receipts, signed by a Border Gateway at enforcement time, before and after an invocation, carrying the policy digest, session, capability, and outcome.
+- *Verification:* against locally cached Agent Identity Registry data. Revocation goes through that registry, and replay is caught by a cache of `(envelope_id, session_id)` scoped to the session.
+- *Encoding and position:* JSON with EdDSA signatures and optional SCITT countersignatures, positioned above MCP's OAuth, and requiring an ARA in A2A delegation requests.
+- *So:* attestation chained by hash at every hop, and signed execution receipts, exist here, with a policy engine and a registry as the roots.
 
-**Verifiable Attenuated Delegation for AI Agent Chains** (draft-asor-wimse-agent-delegation-chain-01, Rafael Asor, Attenu, 2026-09-03, intended Standards Track, https://datatracker.ietf.org/doc/draft-asor-wimse-agent-delegation-chain/). A profile of OAuth JWT access tokens in which each delegation token carries `authorization_details` (RFC 9396), a `cnf` holder key bound by DPoP, `del_depth` and `del_max_depth`, and for every non-root token `par_hash`, the SHA-256 of the parent's JWS Signing Input, so that "each DT_i (i > 0) is linked to DT_{i-1}" and re-parenting fails. Verification is "deterministic, requiring no server contact except optional status-list checks": signatures, hash linkage, depth, attenuation at each hop, expiry monotonicity, holder binding, and status. Constraints are typed (`max`, `min`, `one_of`, `not_one_of`, string prefix, rank) with a subsumption rule per type; scopes are dot-separated with a trailing wildcard. Ed25519 mandatory, JCS for protected headers. Revocation is expiry plus an optional Token Status List. No receipt. This is the closest neighbor: hash-linked, offline, typed attenuation in a JWT envelope.
+**Verifiable Attenuated Delegation for AI Agent Chains** (draft-asor-wimse-agent-delegation-chain-01, Rafael Asor, Attenu, 2026-09-03, intended Standards Track, https://datatracker.ietf.org/doc/draft-asor-wimse-agent-delegation-chain/).
+- *Shape:* a profile of OAuth JWT access tokens. Each delegation token carries `authorization_details` (RFC 9396), a `cnf` holder key bound by DPoP, `del_depth` and `del_max_depth`, and, for every token but the root, `par_hash`, the SHA-256 of the parent's JWS Signing Input, so that "each DT_i (i > 0) is linked to DT_{i-1}" and re-parenting fails.
+- *Verification:* "deterministic, requiring no server contact except optional status-list checks": signatures, hash linkage, depth, attenuation at each hop, expiry that only shrinks, holder binding, and status.
+- *Constraints:* typed (`max`, `min`, `one_of`, `not_one_of`, string prefix, rank), with a subsumption rule per type; scopes are dot-separated with a trailing wildcard. Ed25519 is mandatory, with JCS for protected headers.
+- *Revocation:* expiry plus an optional Token Status List. No receipt.
+- *So:* the closest neighbor. Hash-linked, offline, typed attenuation in a JWT envelope.
 
-**An Attenuated Delegation Profile for Automated Agents** (draft-hamr-oauth-agent-delegation-01, A. Hassan, 2026-09-02, intended Standards Track, https://www.ietf.org/archive/id/draft-hamr-oauth-agent-delegation-01.html). An `Agent-Delegation` HTTP header carries a Structured Field list of opaque links, root first, each signed by its delegator, with an RFC 9421 message signature over the request. Three rules per adjacent pair: scope containment by exact string equality (the draft forbids "wildcard or prefix matching; hierarchical or namespace containment"), floor non-relaxation over eight registered axes with `min`, `max`, `rank`, and `one_of` comparators where "an unknown or misspelled axis name MUST be treated as a hard rejection," and expiry non-extension. Verifiers must check every link, not only the leaf. Links are not hash-linked to each other. Receipts are explicitly out of scope ("layer (a)", who may act, with draft-schrock cited for layer (c)); "this profile defines no revocation mechanism"; a per-verifier write budget keyed by the root link's signature bounds writes per chain; failures MUST be indistinguishable to the presenter. So: a closed comparator registry over attenuation exists here too, with a deliberately narrower scope rule and a different stance on error reporting.
+**An Attenuated Delegation Profile for Automated Agents** (draft-hamr-oauth-agent-delegation-01, A. Hassan, 2026-09-02, intended Standards Track, https://www.ietf.org/archive/id/draft-hamr-oauth-agent-delegation-01.html).
+- *Shape:* an `Agent-Delegation` HTTP header carries a Structured Field list of opaque links, root first, each signed by its delegator, with an RFC 9421 message signature over the request.
+- *Three rules per adjacent pair:* scope containment by exact string equality (the draft forbids "wildcard or prefix matching; hierarchical or namespace containment"); floors that never relax, over eight registered axes, with `min`, `max`, `rank`, and `one_of` comparators, where "an unknown or misspelled axis name MUST be treated as a hard rejection"; and expiry that never extends. Verifiers must check every link, not only the last. Links are not linked to each other by hash.
+- *Out of scope:* receipts ("layer (a)", who may act, with draft-schrock cited for layer (c)); and "this profile defines no revocation mechanism".
+- *Other rules:* a write budget per verifier, keyed by the root link's signature, bounds writes per chain, and failures MUST be indistinguishable to the presenter.
+- *So:* a closed comparator registry over attenuation exists here too, with a deliberately narrower scope rule and a different stance on reporting errors.
 
-**Authorization Receipts for High-Risk Agent Actions** (draft-schrock-ep-authorization-receipts-12, Iman Schrock, EMILIA Protocol Inc., 2026-08-16, https://datatracker.ietf.org/doc/draft-schrock-ep-authorization-receipts/). An approver key, held apart from the orchestrating operator, signs an Authorization Context over the SHA-256 of the canonical (JCS) action, a policy reference, a nonce, an audience, and a validity window, before the action runs. An Authorization Bundle carries the action, the contexts, WebAuthn assertion data where used, and directory inclusion proofs; a later Trust Receipt adds one-time consumption state and a Merkle inclusion proof. The bundle "contains no consumption, log_proof, execution outcome, or success assertion": it is evidence that an action was approved, not that it happened. So: per-action, pre-execution, offline-verifiable approval receipts with formal models exist here.
+**Authorization Receipts for High-Risk Agent Actions** (draft-schrock-ep-authorization-receipts-12, Iman Schrock, EMILIA Protocol Inc., 2026-08-16, https://datatracker.ietf.org/doc/draft-schrock-ep-authorization-receipts/).
+- *Shape:* before the action runs, an approver key, held apart from the orchestrating operator, signs an Authorization Context over the SHA-256 of the canonical (JCS) action, a policy reference, a nonce, an audience, and a validity window. An Authorization Bundle carries the action, the contexts, WebAuthn assertion data where used, and directory inclusion proofs; a later Trust Receipt adds one-time consumption state and a Merkle inclusion proof.
+- *What it is not:* the bundle "contains no consumption, log_proof, execution outcome, or success assertion". It is evidence that an action was approved, not that it happened.
+- *So:* approval receipts per action, issued before execution, verifiable offline, and backed by formal models, exist here.
 
-**Agentic tool-call binding** (draft-das-agentic-tool-binding-02, Sangam Das, 2026-08-28, https://datatracker.ietf.org/doc/draft-das-agentic-tool-binding/). A model-generated tool call becomes a non-effective Candidate Act carrying an `arguments_digest` (SHA-256 of the JCS arguments), tool and function identifiers, a destination, and an `authority_id` that must be consumed by compare-and-swap before `invoke()` is reachable; a retry after consumption "is a new act or a fetch of the original tool_result, never a second invoke." Enforcement is host-local against an authority store; there is a `delegation_depth` field but no cross-boundary delegation token, no signed receipt, and no offline verification. So: argument-digest binding and single-use consumption at the MCP dispatcher exist here.
+**Agentic tool-call binding** (draft-das-agentic-tool-binding-02, Sangam Das, 2026-08-28, https://datatracker.ietf.org/doc/draft-das-agentic-tool-binding/).
+- *Shape:* a tool call generated by a model becomes a non-effective Candidate Act carrying an `arguments_digest` (SHA-256 of the JCS arguments), tool and function identifiers, a destination, and an `authority_id` that must be consumed by compare-and-swap before `invoke()` can be reached. A retry after consumption "is a new act or a fetch of the original tool_result, never a second invoke."
+- *Limits:* enforcement is local to the host, against an authority store. There is a `delegation_depth` field, but no delegation token that crosses a boundary, no signed receipt, and no offline verification.
+- *So:* binding to an argument digest, and single-use consumption at the MCP dispatcher, exist here.
 
 ### 7.1 Already present in neighboring work
 
 Writ can no longer claim any of these as its own, and the README and specification do not:
 
-- Hash-linked, holder-narrowed, offline-verifiable delegation chains: draft-asor (`par_hash`), AgentROA (ARA parent references), AIP (Biscuit blocks).
-- Typed, mechanically compared attenuation with a closed comparator set that rejects unknown types: draft-asor's constraint subsumption, draft-hamr's axis registry.
+- Delegation chains linked by hash, narrowed by their holders, and verifiable offline: draft-asor (`par_hash`), AgentROA (ARA parent references), AIP (Biscuit blocks).
+- Typed attenuation compared mechanically, with a closed comparator set that rejects unknown types: draft-asor's constraint subsumption, draft-hamr's axis registry.
 - Bindings to MCP and A2A: AIP (header and task metadata), AgentROA (above MCP OAuth, ARA in A2A delegation).
 - Completion or execution evidence: AIP's completion blocks, AgentROA's execution receipts.
-- Per-action binding and single-use consumption: draft-schrock, draft-das.
-- Signed refusals and mandatory whole-chain verification: draft-hamr.
+- Binding to a single action, and single-use consumption: draft-schrock, draft-das.
+- Signed refusals, and mandatory verification of the whole chain: draft-hamr.
 
 ### 7.2 What Writ combines differently
 
-- The same five comparisons serve both directions: a child narrows a parent, and a call argument satisfies a bound, under one table. The neighbors compare token to token; the executor's request-time check against arguments is left to the resource.
-- Bounds are signed by the delegator in a bare JSON object with no OAuth or JWT envelope, no algorithm member, and did:key as the only identity, so the whole envelope is four lines and a chain is readable in a log. draft-asor keeps the JWT and DPoP; draft-hamr keeps RFC 9421; AgentROA keeps a policy engine.
-- `count` is consumed against every writ in the chain at every executor, so a holder cannot reset it by re-delegating to itself. draft-hamr's write budget is per chain at one verifier; AIP's budget is a ceiling in the token.
-- The receipt names the exact link it was executed under and is signed by that link's holder, and the receipt embeds every child writ issued and every sub-receipt received, verbatim, so the root delegator verifies three hops with nothing but its own writ. AIP's completion block is appended to the token by the executor; AgentROA's receipt is signed by a gateway, not the executor, and names a session.
+- **One table, both directions.** The same five comparisons decide both whether a child narrows a parent and whether a call argument satisfies a bound. The neighbors compare token to token, and leave the check against a request's arguments to the resource.
+- **A bare envelope.** Bounds are signed by the delegator in a bare JSON object, with no OAuth or JWT envelope, no algorithm member, and did:key as the only identity, so the whole envelope is four lines and a chain is readable in a log. draft-asor keeps the JWT and DPoP, draft-hamr keeps RFC 9421, and AgentROA keeps a policy engine.
+- **`count` against every writ.** `count` is consumed against every writ in the chain at every executor, so a holder cannot reset it by re-delegating to itself. draft-hamr's write budget is per chain at one verifier, and AIP's budget is a ceiling in the token.
+- **Receipts from the executor, carrying the tree.** The receipt names the exact link it was executed under and is signed by that link's holder, and it carries every child writ issued and every sub-receipt received, verbatim, so the root delegator verifies three hops with nothing but its own writ. AIP's completion block is appended to the token by the executor, and AgentROA's receipt is signed by a gateway, not the executor, and names a session.
 
 ### 7.3 What remains distinctive, as of 2026-09-04
 
-Writ's specific contribution is a compact, executable protocol for offline attenuated delegation with a closed mechanically comparable bound algebra, signed post-execution tally trees, and explicit replay, failure, recovery, revocation, and reversal semantics. Concretely, none of the six sources defines:
+Writ's specific contribution is a compact protocol you can run for offline delegation that narrows at every hop, with a closed set of bound types that compare mechanically, signed receipt trees returned after the work, and explicit rules for replay, failure, recovery, revocation, and reversal. Concretely, none of the six sources defines:
 
-- A post-execution receipt tree: an executor's signed account that embeds sub-receipts and the child writs they ran under, with consumption accounting (`used`) checked against the leaf and summed across siblings, and a three-valued verdict (`valid`, `signed_unauthorized`, `unverifiable`) that turns a signer's own inconsistency into an admission.
-- Idempotency as a protocol rule: at most one execution per `(leaf writ identity, call.id)`, a byte-identical stored tally on replay, and named states for the cases where the executor cannot know (`pending`, `unknown_outcome`, `undeliverable`).
-- Recovery: `sys/tallies`, a standing call by any issuer on a chain that asks any executor what ran under a writ, honored after the writ has expired or been revoked.
-- Reversal as a standing operation: `sys/undo`, by any issuer on the chain, bounded by the executor's own `rev.until` rather than by the writ's expiry, idempotent per tally identity.
-- Revocation with in-flight semantics: a revoke names the chain, is honored by position, cancels work not yet started, is forwarded down, and never withdraws the issuer's standing to recover or reverse.
-- A normative first-failure order for every object and a corpus that two implementations pass with the same reason code per vector, including the executor's stateful behavior in scenario tests.
+- **A post-execution receipt tree:** an executor's signed account that carries sub-receipts and the child writs they ran under, with consumption accounting (`used`) checked against the last writ and summed across siblings, and a verdict with three values (`valid`, `signed_unauthorized`, `unverifiable`) that turns a signer's own inconsistency into an admission.
+- **Idempotency as a protocol rule:** at most one execution per `(leaf writ identity, call.id)`, a byte-identical stored tally on replay, and named states for the cases where the executor cannot know (`pending`, `unknown_outcome`, `undeliverable`).
+- **Recovery:** `sys/tallies`, a standing call by any issuer on a chain that asks any executor what ran under a writ, honored after the writ has expired or been revoked.
+- **Reversal as a standing operation:** `sys/undo`, by any issuer on the chain, bounded by the executor's own `rev.until` rather than by the writ's expiry, and safe to repeat per tally identity.
+- **Revocation with in-flight semantics:** a revoke names the chain, is honored by position, cancels work not yet started, is forwarded down, and never withdraws the issuer's standing to recover or reverse.
+- **A normative first-failure order** for every object, and a corpus that two implementations pass with the same reason code per vector, including the executor's stateful behavior in scenario tests.
 
 ### 7.4 Limitations that no design here removes
 
-- Hidden sub-delegation. A holder can delegate to a key it controls and produce a perfect tally tree, or omit a sub-delegation it made. `wrt` and `sub` make the omission a signed false statement, and `sys/tallies` lets a delegator ask any executor it learns of, but a delegator learns of an executor only if the evidence surfaces. The `hld` bound closes this when the delegator names its executors in advance. AIP, AgentROA, and the drafts have the same hole; AgentROA's registry and draft-schrock's approver directory narrow who can be a key, not what a key can hide.
-- Cross-executor fan-out. `max` and `count` are enforced per executor against that executor's store. A holder with `count` 1 can issue sibling writs to two executors and each will accept one call. Enforcing a total across executors needs coordination the protocol does not define; the delegator splits the total across writs or names one executor, and audits `used` afterwards. draft-hamr's write budget has the same shape (per verifier).
-- Timestamps are claims. `acc` is the executor's word. An honest executor will not accept a forward call after `exp`; a dishonest one can backdate, and the tally is then evidence of a false statement, not a stopped action.
-- Key rotation. A did:key cannot rotate; the answer is short `exp` and a key-wide revoke. draft-asor's status list and AgentROA's registry are the online alternatives.
-- Root acceptance is policy. A chain proves attenuation from its root; whether the root matters is a decision each executor holds from outside the protocol.
+- **Hidden sub-delegation.** A holder can delegate to a key it controls and produce a perfect tally tree, or leave out a sub-delegation it made. `wrt` and `sub` make the omission a signed false statement, and `sys/tallies` lets a delegator ask any executor it learns of, but a delegator learns of an executor only if the evidence surfaces. The `hld` bound closes this when the delegator names its executors in advance. AIP, AgentROA, and the drafts have the same hole; AgentROA's registry and draft-schrock's approver directory narrow who can be a key, not what a key can hide.
+- **Fan-out across executors.** `max` and `count` are enforced per executor, against that executor's store. A holder with `count` 1 can issue sibling writs to two executors, and each will accept one call. Enforcing a total across executors needs coordination the protocol does not define; the delegator splits the total across writs or names one executor, and audits `used` afterwards. draft-hamr's write budget has the same shape (per verifier).
+- **Timestamps are claims.** `acc` is the executor's word. An honest executor will not accept a forward call after `exp`; a dishonest one can backdate, and the tally is then evidence of a false statement, not a stopped action.
+- **Key rotation.** A did:key cannot rotate; the answer is a short `exp` and a key-wide revoke. draft-asor's status list and AgentROA's registry are the online alternatives.
+- **Root acceptance is policy.** A chain proves attenuation from its root; whether the root matters is a decision each executor makes outside the protocol.
 
 ## 8. Re-check, 2026-09-28
 
-Every source below was read from its primary page on 2026-09-28; quotes are verbatim, with line breaks collapsed. The comparison is against the specification as revised that day.
+Every source below was read from its primary page on 2026-09-28. Quotes are verbatim, with line breaks collapsed. The comparison is against the specification as revised that day.
 
-**Agent Passport System** (draft-pidlisnyi-aps-03, 2026-07-18, https://www.ietf.org/archive/id/draft-pidlisnyi-aps-03.txt). Missed by section 7 although it predates it. A post-execution record: "An action-result record has receipt_type "aps:action-result:v1". issuer is the enforcement boundary" (5.3.3), naming the delegation leaf, since "delegation_ref identifies the selected AuthorityDelegationV1 leaf" (5.1), with "status is succeeded, failed, or unknown" (5.3.3). Revocation "MUST initiate a cascade to all transitive descendants; a cascade is complete only when the cascade-completion record of Section 3.5.1 has been emitted" (3.5). Spend: "the boundary MUST atomically reserve the proposed amount against every bounded ancestor in the selected root-to-leaf chain" (4). Approvals are single-use and "An identical retry is idempotent; conflicting reuse is rejected" (3.4). No text cancels work already dispatched, and no replay returns a stored result.
+**Agent Passport System** (draft-pidlisnyi-aps-03, 2026-07-18, https://www.ietf.org/archive/id/draft-pidlisnyi-aps-03.txt). Section 7 missed it, although it predates section 7.
+- *A post-execution record:* "An action-result record has receipt_type "aps:action-result:v1". issuer is the enforcement boundary" (5.3.3). It names the delegation leaf, since "delegation_ref identifies the selected AuthorityDelegationV1 leaf" (5.1), and "status is succeeded, failed, or unknown" (5.3.3).
+- *Revocation:* it "MUST initiate a cascade to all transitive descendants; a cascade is complete only when the cascade-completion record of Section 3.5.1 has been emitted" (3.5).
+- *Spend:* "the boundary MUST atomically reserve the proposed amount against every bounded ancestor in the selected root-to-leaf chain" (4).
+- *Retries:* approvals are single-use, and "An identical retry is idempotent; conflicting reuse is rejected" (3.4).
+- *Not there:* no text cancels work already dispatched, and no replay returns a stored result.
 
-**Action Evidence Boundary** (draft-schrock-action-evidence-boundary-07, 2026-09-25, https://www.ietf.org/archive/id/draft-schrock-action-evidence-boundary-07.txt), "an executor-side processing model". After invocation "the boundary MUST classify the result as EXECUTED, FAILED, or INDETERMINATE" (5.13); a repeat is refused, not answered from storage: "the boundary MUST refuse a new attempt whose action key is occupied or closed" (5.10). Reconciliation runs from the executor to the provider (5.14), not from an issuer to the executor. It "defines no receipt or token format".
+**Action Evidence Boundary** (draft-schrock-action-evidence-boundary-07, 2026-09-25, https://www.ietf.org/archive/id/draft-schrock-action-evidence-boundary-07.txt), "an executor-side processing model".
+- *Outcomes:* after invocation, "the boundary MUST classify the result as EXECUTED, FAILED, or INDETERMINATE" (5.13).
+- *Repeats:* refused, not answered from storage: "the boundary MUST refuse a new attempt whose action key is occupied or closed" (5.10).
+- *Reconciliation:* runs from the executor to the provider (5.14), not from an issuer to the executor.
+- *No format:* it "defines no receipt or token format".
 
-**draft-hamr-oauth-agent-delegation-02** (2026-09-19). Budgets now come in classes, "rBudget, wBudget, and xBudget" (10.1), keyed to "the signature value of L(0), the root link" (10.3) and held "per verifier, not shared across verifiers" (10.4). Still "does not produce a receipt" (3) and "defines no revocation" (17). Its verification steps run "in the order given", but a failure at any step "MUST produce one uniform rejection outcome" (13), so the order is not observable.
+**draft-hamr-oauth-agent-delegation-02** (2026-09-19).
+- *Budgets:* now come in classes, "rBudget, wBudget, and xBudget" (10.1), keyed to "the signature value of L(0), the root link" (10.3), and held "per verifier, not shared across verifiers" (10.4).
+- *Still missing:* it "does not produce a receipt" (3) and "defines no revocation" (17).
+- *Order:* its verification steps run "in the order given", but a failure at any step "MUST produce one uniform rejection outcome" (13), so the order cannot be observed.
 
-**draft-asor-wimse-agent-delegation-chain** is still -01. Its verifier denies "on the first failure" (6) without reason codes.
+**draft-asor-wimse-agent-delegation-chain** is still at -01. Its verifier denies "on the first failure" (6), without reason codes.
 
-**attenu-guard** (https://github.com/attenu-io/attenu-guard). Ships 20 Delegation Token vectors that "pin the required bytes and rejection reasons", one fault each, run by outside implementers (Node.js 20 of 20; Kieran Sweeney's Cred 17 of 20 with 3 declared gaps; Xuebin Ma's Rust verifier 19 of 19 on the observer-envelope vectors). Its bundle vectors score "the minimal set" of failures a verifier must report, and one envelope row pins a precedence between two faults on one input. Revocation is in-process: "revoke any node, every descendant denies immediately". The APS roadmap records that "attenu-guard (draft-asor-wimse-agent-delegation-chain-00) offered to run APS vectors through its verifier" (https://agent-passport.org/roadmap.html).
+**attenu-guard** (https://github.com/attenu-io/attenu-guard).
+- *Vectors:* 20 Delegation Token vectors that "pin the required bytes and rejection reasons", one fault each, run by outside implementers: Node.js 20 of 20; Kieran Sweeney's Cred 17 of 20, with 3 declared gaps; and Xuebin Ma's Rust verifier 19 of 19 on the observer-envelope vectors.
+- *Several faults:* its bundle vectors score "the minimal set" of failures a verifier must report, and one envelope row pins which of two faults on one input takes precedence.
+- *Revocation:* in-process: "revoke any node, every descendant denies immediately".
+- *Interop:* the APS roadmap records that "attenu-guard (draft-asor-wimse-agent-delegation-chain-00) offered to run APS vectors through its verifier" (https://agent-passport.org/roadmap.html).
 
-**decionis agent-safe.verifying-provider/1** (version 0.2, draft, https://github.com/decionis/agent-safe-pipeline/blob/master/docs/authority/verifying-provider.md). A provider verification procedure: "Normative, in this order. The first failing step names the refusal, and a refusal effects nothing." Its vectors are run by "five implementations that must agree", all in the author's repository. The provider signs "what it effected, or refused", with `effect.status` `EFFECTED`, `REFUSED`, or `INDETERMINATE`, and "A signed refusal is evidence too."
+**decionis agent-safe.verifying-provider/1** (version 0.2, draft, https://github.com/decionis/agent-safe-pipeline/blob/master/docs/authority/verifying-provider.md).
+- *Order:* a verification procedure for providers: "Normative, in this order. The first failing step names the refusal, and a refusal effects nothing." Its vectors are run by "five implementations that must agree", all in the author's repository.
+- *Receipts:* the provider signs "what it effected, or refused", with `effect.status` `EFFECTED`, `REFUSED`, or `INDETERMINATE`, and "A signed refusal is evidence too."
 
-Also read: draft-mcgraw-httpapi-agent-budget-04 makes credential acceptance at most once but says it "does not guarantee exactly-once completion"; draft-noa-scitt-ai-agent-receipt-01 has seven lifecycle verdicts including ROLLED_BACK, and requires a verifier to report every failing condition, not the first; draft-abak-agent-control-delivery-evidence-01 models evidence that a revoke or cancel was delivered and applied, without defining the verbs; draft-watts-oauth-agent-revocation-closure-00 models cancelling a queued operation before its effect commits, and notes "Credential invalidation is not consequence reversal"; draft-schrock-ep-authorization-receipts-13 and draft-das-agentic-tool-binding-03 add nothing on these points (das -03 adds a signed receipt of each enforcement decision, before any effect).
+**Also read:**
+- draft-mcgraw-httpapi-agent-budget-04 makes credential acceptance at most once, but says it "does not guarantee exactly-once completion".
+- draft-noa-scitt-ai-agent-receipt-01 has seven lifecycle verdicts, including ROLLED_BACK, and requires a verifier to report every failing condition, not the first.
+- draft-abak-agent-control-delivery-evidence-01 models evidence that a revoke or cancel was delivered and applied, without defining the verbs.
+- draft-watts-oauth-agent-revocation-closure-00 models cancelling a queued operation before its effect commits, and notes "Credential invalidation is not consequence reversal".
+- draft-schrock-ep-authorization-receipts-13 and draft-das-agentic-tool-binding-03 add nothing on these points (das -03 adds a signed receipt of each enforcement decision, before any effect).
 
 ### 8.1 Where Writ stands now
 
@@ -256,4 +407,3 @@ Also read: draft-mcgraw-httpapi-agent-budget-04 makes credential acceptance at m
 | recovery and reversal by any upstream issuer after expiry or revocation, bounded by the executor's `rev.until` | distinctive | still distinctive; elsewhere reversal is a newly authorized compensating action or a recorded verdict |
 | revoke that cancels in-flight work and is forwarded down | distinctive | partly shared and narrower: APS-03 cascades revocation, attenu denies later checks, watts-00 and abak-01 model cancelling before the effect without a wire mechanism |
 | a normative first-failure order pinned by a cross-implementation corpus | distinctive | partly shared: decionis pins a normative order with named codes across five implementations by one author; attenu pins one two-fault precedence across three. Writ's remaining difference is a full order exercised by two-fault vectors and a differential fuzzer; its two implementations are also by one author |
-
