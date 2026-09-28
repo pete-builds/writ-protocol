@@ -272,7 +272,7 @@ class Executor:
         if not self._write_admission(rec, counted):
             return self._refusal(call_id, leaf_id, call["op"], now, STORE_WRITE_FAILED), None
 
-        call["chain"] = writs
+        call = dict(call, chain=writs)  # never mutate the caller's object
         kind = "forward" if not standing else call["op"][len("sys/"):]
         op = Operation(kind, call, call_id, leaf_id, now, target=target, target_id=target_id, executor=self)
         return None, op
@@ -365,6 +365,7 @@ class Executor:
 
     def _invoke(self, op):
         """Call the application for op and complete it if it returned."""
+        unknown = False
         try:
             outcome = self.app(op) if self.app is not None else None
             if outcome is None:
@@ -372,13 +373,18 @@ class Executor:
             if outcome is not HELD and not isinstance(outcome, Outcome):
                 raise TypeError(f"application returned {type(outcome).__name__}, not an Outcome")
         except Exception:  # noqa: BLE001, an application failure has an unknown outcome
-            outcome = Outcome("failed", "unknown_outcome")
-            with self._lock:
-                answer = self._complete_locked(op, outcome, unknown=True)
-            return answer
-        if outcome is HELD:
-            return {"inflight": True}
-        return self.complete(op.call_id, outcome)
+            outcome, unknown = Outcome("failed", "unknown_outcome"), True
+        with self._lock:
+            if op.call_id not in self._running:
+                # Already completed through complete(), or lost to a restart
+                # that resolved its record: answer from the call store.
+                rec = self._record_of(op)
+                if rec["state"] == FINAL:
+                    return self._stored_answer(rec)
+                return {"tally": self._pending_tally(rec)}
+            if outcome is HELD:
+                return {"inflight": True}
+            return self._complete_locked(op, outcome, unknown=unknown)
 
     def complete(self, call_id, outcome):
         """The operation of call ``call_id`` returned ``outcome``.
@@ -670,8 +676,16 @@ class Executor:
             outcome = self.resolver(rec) if self.resolver is not None else None
             if outcome is None:
                 outcome = Outcome("failed", "unknown_outcome")
-            if rec.get("target") is not None and outcome.st == "ok":
-                self.stores.reversals.done(rec["target"], rec["call"], outcome.res)
+            target = rec.get("target")
+            if target is not None:
+                # Only the call that began the reversal speaks for it; a call
+                # queued behind it performed nothing and stays unknown.
+                state = self.stores.reversals.state(target)
+                if state is not None and state.get("call") == rec["call"]:
+                    if outcome.st == "ok":
+                        self.stores.reversals.done(target, rec["call"], outcome.res)
+                    elif outcome.code != "unknown_outcome":
+                        self.stores.reversals.clear(target)
             rev = None
             if not rec["standing"] and outcome.rev is not None:
                 rev = {"until": outcome.rev}
