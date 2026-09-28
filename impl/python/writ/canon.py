@@ -21,10 +21,60 @@ from .errors import WritError
 
 MAX_SAFE_INT = (1 << 53) - 1
 MIN_SAFE_INT = -MAX_SAFE_INT
+MAX_DEPTH = 64  # section 1.1 rule 7
 
 
 def _nc(msg):
     return WritError("noncanonical", msg)
+
+
+def _too_deep():
+    return WritError("too_large", f"arrays and objects nest deeper than {MAX_DEPTH} levels")
+
+
+def check_depth_text(data):
+    """Section 1.1 rule 7 on received bytes or text, before anything is
+    parsed: brackets outside strings may nest at most MAX_DEPTH levels."""
+    if isinstance(data, bytes):
+        opens, closes, quote, escape = b"[{", b"]}", ord('"'), ord("\\")
+    else:
+        opens, closes, quote, escape = "[{", "]}", '"', "\\"
+    depth = 0
+    in_str = False
+    skip = False
+    for ch in data:
+        if skip:
+            skip = False
+        elif in_str:
+            if ch == escape:
+                skip = True
+            elif ch == quote:
+                in_str = False
+        elif ch == quote:
+            in_str = True
+        elif ch in opens:
+            depth += 1
+            if depth > MAX_DEPTH:
+                raise _too_deep()
+        elif ch in closes:
+            depth -= 1
+
+
+def check_depth(value):
+    """Section 1.1 rule 7 on an already parsed value, without recursion, so
+    a deep value is refused before any recursive rule touches it."""
+    stack = [(value, 1)]
+    while stack:
+        v, level = stack.pop()
+        if isinstance(v, dict):
+            children = v.values()
+        elif isinstance(v, list):
+            children = v
+        else:
+            continue
+        if level > MAX_DEPTH:
+            raise _too_deep()
+        stack.extend((c, level + 1) for c in children)
 
 
 def is_int(value):
@@ -99,8 +149,11 @@ def parse(data):
     """Strictly parse received JSON bytes or text into Python values.
 
     Raises WritError('noncanonical') for any section 1.1 rule 2 to 4
-    violation or for text that is not JSON at all.
+    violation or for text that is not JSON at all, and WritError('too_large')
+    for nesting deeper than MAX_DEPTH, which is found before anything else.
     """
+    if isinstance(data, (bytes, str)):
+        check_depth_text(data)
     text = _to_text(data)
     try:
         value = json.loads(

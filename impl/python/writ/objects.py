@@ -6,7 +6,7 @@ parsed object. signing_input() and identity() implement sections 1.4 and
 """
 
 from . import bounds as B
-from .canon import canonicalize, is_int, parse, validate_value
+from .canon import canonicalize, check_depth, is_int, parse, validate_value
 from .errors import WritError
 from .keys import is_b64u, is_did, sha256_b64u, verify as verify_sig
 
@@ -95,19 +95,14 @@ def _check_binary_members(obj, typ):
         _require_b64u(obj, "writ", allow_star=True)
 
 
-def _check_chain_length(obj):
-    chain = obj.get("chain")
-    if isinstance(chain, list) and len(chain) > MAX_CHAIN:
-        raise WritError("too_large", f"chain has {len(chain)} writs, limit {MAX_CHAIN}")
-
-
 def load(data, typ):
     """Steps 1 and 2 of section 6.1. Returns (object, canonical bytes).
 
     ``data`` is received bytes or text, or an already parsed value. For raw
     input the received length is checked against the limit before parsing,
-    then the canonical length after. Chain length is checked here too, so
-    that both limits precede any signature work.
+    then the canonical length after. Nesting depth (section 1.1 rule 7) is
+    checked before rules 2 to 4 and the canonical form. Chain length is a
+    step 5 rule (_check_chain_member), still before any signature.
     """
     if typ not in TYPES:
         raise ValueError(f"unknown object type {typ}")
@@ -119,6 +114,7 @@ def load(data, typ):
         obj = parse(data)
     else:
         obj = data
+        check_depth(obj)
         validate_value(obj)
     canon = canonicalize(obj)
     if len(canon) > limit:
@@ -126,7 +122,6 @@ def load(data, typ):
     if not isinstance(obj, dict):
         raise _mal(f"{typ} is not a JSON object")
     _check_binary_members(obj, typ)
-    _check_chain_length(obj)
     return obj, canon
 
 
@@ -228,11 +223,23 @@ def _check_writ_array(obj, name):
     return arr
 
 
+def _check_chain_member(obj):
+    """Step 5 on a call's or revoke's chain: an array of at most MAX_CHAIN
+    elements (too_large), each an object. Its writs are verified later."""
+    chain = _require(obj, "chain", lambda x: isinstance(x, list), "an array")
+    if len(chain) > MAX_CHAIN:
+        raise WritError("too_large", f"chain has {len(chain)} writs, limit {MAX_CHAIN}")
+    for i, w in enumerate(chain):
+        if not isinstance(w, dict):
+            raise _mal(f"chain[{i}] is not an object")
+    return chain
+
+
 def _check_call_members(obj):
     ident = _require(obj, "id", lambda x: isinstance(x, str), "a string")
     if not is_b64u(ident, min_bytes=MIN_NONCE_BYTES):
         raise _mal("id is shorter than 16 bytes")
-    chain = _check_writ_array(obj, "chain")
+    chain = _check_chain_member(obj)
     if not chain:
         raise _mal("chain is empty")
     _require_key(obj, "from")
@@ -273,9 +280,10 @@ def _check_tally_members(obj):
     for i, s in enumerate(sub):
         if not isinstance(s, dict):
             raise _mal(f"sub[{i}] is not an object")
-    _check_writ_array(obj, "wrt")
-    if st == "pending" and (used != {} or rev is not None or obj["out"] is not None):
-        raise _mal("a pending tally must have used {}, rev null and out null")
+    wrt = _check_writ_array(obj, "wrt")
+    if st == "pending" and (err["code"] != "pending" or used != {} or rev is not None
+                            or obj["out"] is not None or sub != [] or wrt != []):
+        raise _mal("a pending tally must have err.code pending, used {}, rev and out null, sub and wrt empty")
     _require_sig(obj)
 
 
@@ -286,7 +294,7 @@ def _check_revoke_members(obj):
     if w != "*" and not _is_hash(w):
         raise _mal("writ is neither a hash nor \"*\"")
     _require_key(obj, "iss")
-    chain = _check_writ_array(obj, "chain")
+    chain = _check_chain_member(obj)
     if w == "*" and chain:
         raise _mal("chain must be empty when writ is \"*\"")
     if w != "*" and not chain:

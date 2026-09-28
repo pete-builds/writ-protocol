@@ -159,6 +159,22 @@ class CanonTest(Base):
         d = canon.loads_lenient('{"a": 1, "a": 2}')
         self.assertReason("noncanonical", canon.canonicalize, d)
 
+    def test_nesting_limit(self):
+        # Section 1.1 rule 7: 64 levels pass, 65 are too_large, found before
+        # any other rule. The 2026-09-23 review crashed this implementation
+        # with RecursionError on deep input, so the deep cases go far past
+        # Python's recursion limit.
+        self.assertEqual(canon.canonical_text("[" * 64 + "]" * 64), "[" * 64 + "]" * 64)
+        self.assertReason("too_large", canon.parse, "[" * 65 + "]" * 65)
+        self.assertReason("too_large", canon.parse, "[" * 65 + "1.5" + "]" * 65)
+        self.assertReason("too_large", canon.parse, b"[" * 100000 + b"]" * 100000)
+        self.assertEqual(canon.parse('["' + "[{" * 200 + '"]'), ["[{" * 200])
+        deep = 1
+        for _ in range(100000):
+            deep = [deep]
+        w = dict(FX.w1, x=deep)
+        self.assertReason("too_large", O.verify_object, w, "writ")
+
 
 # ---------------------------------------------------------------- bounds
 
@@ -555,6 +571,10 @@ class TallyTest(Base):
         p = issue.make_tally(BK, FX.callA, FX.w1, st="pending", acc=NOW)
         self.assertTrue(V.verify_tally(FX.w1, FX.callA, p).ok)
         self.assertReason("malformed", O.verify_object, resign(p, BK, used={"amount": 1}), "tally", signer=BK.did)
+        # Section 6.1 step 5 as pinned 2026-09-28: the whole pending shape.
+        self.assertReason("malformed", O.verify_object, resign(p, BK, err={"code": "busy"}), "tally", signer=BK.did)
+        self.assertReason("malformed", O.verify_object, resign(p, BK, wrt=[FX.w2]), "tally", signer=BK.did)
+        self.assertReason("malformed", O.verify_object, resign(p, BK, sub=[FX.tC]), "tally", signer=BK.did)
         self.assertReason("malformed", O.verify_object, resign(FX.tB, BK, st="failed"), "tally", signer=BK.did)
         f = issue.make_tally(BK, FX.callA, FX.w1, st="failed", err={"code": "undeliverable"}, acc=NOW)
         self.assertTrue(V.verify_tally(FX.w1, FX.callA, f).ok)

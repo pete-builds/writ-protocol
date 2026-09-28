@@ -84,15 +84,16 @@ def make_tally(key, call, writ, st="ok", out=None, used=None, rev=None,
     """Sign the executor's tally for ``call`` under leaf ``writ``.
 
     ``out`` may be a hash string or a result body (any JSON value), in which
-    case its canonical hash is committed. ``err`` defaults to null for ok
-    and to {"code": "unknown_outcome"} otherwise.
+    case its canonical hash is committed. ``err`` defaults to null for ok,
+    to {"code": "pending"} for pending (section 6), and to
+    {"code": "unknown_outcome"} otherwise.
     """
     call = O.check_structure(call, "call")
     writ = O.check_structure(writ, "writ")
     if out is not None and not isinstance(out, str):
         out = O.hash_body(out)
     if err is None and st != "ok":
-        err = {"code": "unknown_outcome"}
+        err = {"code": "pending" if st == "pending" else "unknown_outcome"}
     tally = _sign({
         "v": 1, "typ": "tally", "call": O.identity(call), "writ": O.identity(writ),
         "op": call["op"], "acc": int(time.time()) if acc is None else acc,

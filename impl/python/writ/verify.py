@@ -69,7 +69,8 @@ def verify_writ(data):
 def verify_chain(chain, now=None):
     """Section 2.1 plus expiry. Returns the parsed chain or raises.
 
-    Order: chain length (too_large), every writ passes 6.1 in order, root
+    Order: an array, chain length (too_large), every element an object,
+    not empty, every writ passes 6.1 in order, root
     prv is null, each adjacent pair attenuates (section 4), depth over the
     whole chain, then now < exp for every writ (expired). ``now`` None
     means the real clock; verify.NO_CLOCK skips the expiry step.
@@ -78,6 +79,9 @@ def verify_chain(chain, now=None):
         raise WritError("malformed", "chain is not an array")
     if len(chain) > O.MAX_CHAIN:
         raise WritError("too_large", f"chain has {len(chain)} writs, limit {O.MAX_CHAIN}")
+    for i, w in enumerate(chain):
+        if not isinstance(w, dict):
+            raise WritError("malformed", f"chain[{i}] is not an object")
     if not chain:
         raise WritError("malformed", "chain is empty")
     writs = [O.verify_object(w, "writ") for w in chain]
@@ -143,8 +147,9 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
     iterable of root issuer dids (step 5), ``revoked`` a set of revoked writ
     identities (step 7, forward calls only, as is expiry at step 4). Each of
     the three is skipped when None. With
-    ``standing_ops`` false a standing call gets only the no_standing check,
-    which is the conformance scope of the verify_call op. Returns the
+    ``standing_ops`` false a standing call gets only the no_standing and
+    forbidden_op checks, which is the conformance scope of the verify_call
+    op. Returns the
     parsed call.
     """
     call = O.check_structure(data, "call")                      # step 1
@@ -175,6 +180,8 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
             raise WritError("no_standing", "from is not the iss of any writ in the chain")
         if standing_ops:
             check_standing_args(op, call["args"], writs, ids, t)
+        elif op not in STANDING_OPS:
+            raise WritError("forbidden_op", f"{op!r} is not a standing operation")
     else:
         if call["from"] != leaf["iss"]:
             raise WritError("no_standing", "from is not the leaf iss")
@@ -252,7 +259,7 @@ def _tree(writ, writ_id, chain, tally, call=None, call_id=None, res=None):
         wrt_ids = {i: x for i, x in wrt}
         for S in T["sub"]:                                                    # step 9
             named = S.get("writ") if isinstance(S, dict) else None
-            if named not in wrt_ids:
+            if not isinstance(named, str) or named not in wrt_ids:
                 raise WritError("sub_unmatched", "sub-tally names a writ absent from wrt")
             X = wrt_ids[named]
             sub = _tree(X, named, chain + [X], S)

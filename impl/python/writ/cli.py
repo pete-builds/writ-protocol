@@ -161,12 +161,17 @@ def cmd_conformance(args):
         path = os.path.join(args.dir, name)
         try:
             vec = canon.loads_lenient(_read(path))
-        except (ValueError, WritError) as e:
-            print(f"FAIL {name}: cannot load vector: {e}")
+        except Exception as e:  # noqa: BLE001, a broken vector must not stop the run
+            print(f"FAIL {name}: cannot load vector: {type(e).__name__}: {e}")
             failed += 1
             continue
-        label = vec.get("name", name)
-        accepted, reason, message = run_vector(vec)
+        label = vec.get("name", name) if isinstance(vec, dict) else name
+        try:
+            accepted, reason, message = run_vector(vec)
+        except Exception as e:  # noqa: BLE001, a crash is a finding, not an abort
+            print(f"FAIL {label}: CRASH {type(e).__name__}: {e}")
+            failed += 1
+            continue
         ok, note = judge(vec, accepted, reason, message)
         if ok:
             passed += 1
