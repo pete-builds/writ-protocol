@@ -27,6 +27,25 @@ operation to stop (section 9.1). sys/tallies never calls the application.
 An application that raises has an unknown outcome: the call's tally is
 ``failed`` with ``unknown_outcome``.
 
+Delegating onward (sections 7.5 and 9.2)
+----------------------------------------
+
+A forward operation may delegate part of its work. ``op.issue(holder,
+bnd=..., exp=...)`` narrows the leaf writ this executor holds into a child
+(issue.narrow, never a writ received as data) and durably adds it to the
+call's ``wrt`` before returning it. ``op.make_call(child, op, args)`` signs
+a forward call under the extended chain. ``op.receive_tally(call, tally,
+res)`` verifies a sub-tally under section 6.2 and durably adds it to the
+call's ``sub`` before returning the verdict, so the application acts on it
+only after it is persisted. The final tally carries every issued writ and
+every received sub-tally, whatever its own ``st``, including a ``failed``
+tally with ``undeliverable`` for a sub-call that never answered, and so
+does the tally a pending record resolves to after a restart.
+
+``forward_revoke(revoke, holder)``, when given, is called after a valid
+revoke for the holder of every writ this executor issued under the revoked
+writ (section 9.1, SHOULD).
+
 Concurrency
 -----------
 
@@ -41,6 +60,7 @@ import time
 
 from . import bounds as B
 from . import chain as C
+from . import issue as I
 from . import objects as O
 from . import verify as V
 from .errors import WritError
@@ -88,8 +108,8 @@ class Outcome:
 class Operation:
     """One operation the executor asks its application to perform."""
 
-    def __init__(self, kind, call, call_id, leaf_id, acc, target=None, target_id=None):
-        self.kind = kind            # "forward" or "undo"
+    def __init__(self, kind, call, call_id, leaf_id, acc, target=None, target_id=None, executor=None):
+        self.kind = kind            # "forward", "undo", or "tallies"
         self.call = call            # the parsed call; its chain is parsed writs
         self.call_id = call_id      # identity of the call
         self.leaf_id = leaf_id
@@ -97,6 +117,24 @@ class Operation:
         self.target = target        # sys/undo: the tally being reversed
         self.target_id = target_id
         self._stop = threading.Event()
+        self._ex = executor
+        self._subcalls = {}         # identity of a sub-call -> the sub-call
+
+    def issue(self, holder, bnd=None, exp=None, nnc=None):
+        """Section 7.5: issue a child of the leaf writ to ``holder``,
+        narrowed by ``bnd`` and ``exp``, recorded in this call's wrt before
+        it is returned."""
+        return self._ex._issue_child(self, holder, bnd, exp, nnc)
+
+    def make_call(self, child, op, args, call_id=None):
+        """Sign a forward call under this call's chain extended by
+        ``child``, which must be a writ this operation issued."""
+        return self._ex._make_subcall(self, child, op, args, call_id)
+
+    def receive_tally(self, call, tally, res=None):
+        """Verify a sub-tally for ``call`` (section 6.2), persist it in this
+        call's sub, then return the verify.Verdict."""
+        return self._ex._receive_subtally(self, call, tally, res)
 
     @property
     def op(self):
@@ -129,13 +167,15 @@ class Executor:
     many were.
     """
 
-    def __init__(self, key, accept, store_dir, app=None, clock=None, resolver=None):
+    def __init__(self, key, accept, store_dir, app=None, clock=None, resolver=None,
+                 forward_revoke=None):
         self.key = key if isinstance(key, Key) else Key.from_seed(key)
         self.did = self.key.did
         self.accept = frozenset(accept)
         self.store_dir = store_dir
         self.app = app
         self.resolver = resolver
+        self.forward_revoke = forward_revoke
         self._clock = clock or (lambda: int(time.time()))
         self._fixed = None
         self._lock = threading.RLock()
@@ -234,7 +274,7 @@ class Executor:
 
         call["chain"] = writs
         kind = "forward" if not standing else call["op"][len("sys/"):]
-        op = Operation(kind, call, call_id, leaf_id, now, target=target, target_id=target_id)
+        op = Operation(kind, call, call_id, leaf_id, now, target=target, target_id=target_id, executor=self)
         return None, op
 
     def _check_forward(self, call, leaf):
@@ -414,13 +454,14 @@ class Executor:
         rev = None
         if op.kind == "forward" and outcome.rev is not None:
             rev = {"until": outcome.rev}
+        rec = self._record_of(op)
         tally = self._sign_tally(
             op.call_id, op.leaf_id, op.op, op.acc, outcome.st,
             None if outcome.st == "ok" else {"code": outcome.code},
             None if outcome.res is None else O.hash_body(outcome.res),
-            outcome.used, rev,
+            outcome.used, rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
         )
-        return self._persist_final(self._record_of(op), tally, outcome.res)
+        return self._persist_final(rec, tally, outcome.res)
 
     def _finish_tallies(self, op):
         """Section 8.2: the list is computed before this call's own tally
@@ -462,11 +503,11 @@ class Executor:
 
     # ----------------------------------------------------------- tallies
 
-    def _sign_tally(self, call_id, leaf_id, op, acc, st, err, out, used, rev):
+    def _sign_tally(self, call_id, leaf_id, op, acc, st, err, out, used, rev, sub=(), wrt=()):
         body = {
             "v": 1, "typ": "tally", "call": call_id, "writ": leaf_id, "op": op,
             "acc": acc, "st": st, "err": err, "out": out, "used": dict(used),
-            "rev": rev, "sub": [], "wrt": [],
+            "rev": rev, "sub": [t for t in sub], "wrt": [w for w in wrt],
         }
         body["sig"] = self.key.sign(O.signing_input(body))
         return body
@@ -487,6 +528,58 @@ class Executor:
         if "res" in rec:
             answer["res"] = rec["res"]
         return answer
+
+    # --------------------------------------------------- delegating onward
+
+    def _issue_child(self, op, holder, bnd, exp, nnc):
+        """Section 7.5: narrow the leaf this executor holds. The child is
+        persisted in the call's wrt before anyone can see it."""
+        if op.kind != "forward":
+            raise ValueError("only a forward operation delegates under its chain")
+        chain = op.call["chain"]
+        child = I.narrow(chain[-1], self.key, holder, exp=exp, bnd=bnd, nnc=nnc)
+        C.check_depth(chain + [child])
+        with self._lock:
+            rec = self._record_of(op)
+            if rec["state"] != PENDING:
+                raise ValueError("the call is already final")
+            self.stores.calls.record(dict(rec, wrt=rec.get("wrt", []) + [child]))
+        return child
+
+    def _make_subcall(self, op, child, name, args, call_id):
+        child_id = O.identity(child)
+        rec = self._record_of(op)
+        if child_id not in [O.identity(w) for w in rec.get("wrt", [])]:
+            raise ValueError("a sub-call must run under a writ this operation issued")
+        call = I.make_call(self.key, op.call["chain"] + [child], name, args, call_id=call_id)
+        op._subcalls[O.identity(call)] = call
+        return call
+
+    def _receive_subtally(self, op, call, tally, res):
+        """Section 7.5: verify, then persist before the application acts.
+
+        A tally that fails section 6.1 (unverifiable) is not added to sub:
+        nothing proves who produced it. A later tally for the same sub-call
+        replaces an earlier one in place, as a final tally supersedes a
+        pending one (section 6). See DIVERGENCES.md."""
+        call_id = O.identity(call)
+        sub_call = op._subcalls.get(call_id)
+        if sub_call is None:
+            raise ValueError("not a sub-call this operation made")
+        verdict = V.verify_tally(sub_call["chain"][-1], sub_call, tally, res=res)
+        if verdict.status == V.UNVERIFIABLE:
+            return verdict
+        with self._lock:
+            rec = self._record_of(op)
+            if rec["state"] != PENDING:
+                raise ValueError("the call is already final")
+            old = rec.get("sub", [])
+            if any(t.get("call") == call_id for t in old):
+                sub = [tally if t.get("call") == call_id else t for t in old]
+            else:
+                sub = old + [tally]
+            self.stores.calls.record(dict(rec, sub=sub))
+        return verdict
 
     # ----------------------------------------------------------- revokes
 
@@ -522,7 +615,30 @@ class Executor:
                 if op is not None:
                     op._signal()
                 tallies.append(self._pending_tally(rec))
-            return {"tallies": tallies}
+            holders = self._issued_under(r) if self.forward_revoke is not None else []
+        for holder in holders:
+            try:
+                self.forward_revoke(data, holder)
+            except Exception:  # noqa: BLE001, forwarding is a SHOULD and never fails the revoke
+                pass
+        return {"tallies": tallies}
+
+    def _issued_under(self, r):
+        """Holders of every writ this executor issued under the revoked writ,
+        from forward call records, pending or final, in the order issued."""
+        holders = []
+        for _, rec in sorted(self.stores.calls.items()):
+            if rec["standing"] or not rec.get("wrt"):
+                continue
+            if r["writ"] == "*":
+                under = r["iss"] in rec["iss"]
+            else:
+                under = r["writ"] in rec["chain"]
+            if under:
+                for w in rec["wrt"]:
+                    if w["hld"] not in holders:
+                        holders.append(w["hld"])
+        return holders
 
     # ----------------------------------------------------------- restart
 
@@ -559,11 +675,12 @@ class Executor:
             rev = None
             if not rec["standing"] and outcome.rev is not None:
                 rev = {"until": outcome.rev}
+            # Section 9.2: wrt and sub complete for everything it did learn.
             tally = self._sign_tally(
                 rec["call"], rec["leaf"], rec["op"], rec["acc"], outcome.st,
                 None if outcome.st == "ok" else {"code": outcome.code},
                 None if outcome.res is None else O.hash_body(outcome.res),
-                outcome.used, rev,
+                outcome.used, rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
             )
             self._persist_final(rec, tally, outcome.res)
             n += 1
