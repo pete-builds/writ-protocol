@@ -145,3 +145,28 @@ against clear text: two in the pre-existing verifier (one caught by a
 corpus vector, one found while sharing its checks with the executor, which
 scenario 006 step 7 would have caught), and one in the new executor, caught
 in review.
+
+## Resolution, 2026-09-28
+
+The specification was revised the same day to answer every SPEC_* and
+CORPUS_* entry above; its Status line lists the changes. Per entry:
+
+| Entry | Resolved by |
+|---|---|
+| 2 | section 9 gains a reversal store row |
+| 3 | section 9's revoke store row keys a key-wide revoke by the revoking key and keeps it indefinitely; section 12 asks executors to bound revoke intake per peer (security review finding 7) |
+| 4 | sections 8.2 and 9.1 say "the ASCII bytes of the identity string" |
+| 5 | section 6's `acc` row names the receipt time for a refusal and for a `canceled` call not yet accepted |
+| 6 | section 7 and section 10 make an unsigned answer at steps 1 and 2 a MUST |
+| 7 | section 8.1: a second undo waits; this implementation already did |
+| 8 | section 14.1: a held operation's `app` has `st` "" and no `code` |
+| 10 | section 7.5 says which sub-tallies go into `sub`; this implementation already did so |
+| 11 | section 7 step 3 is the rest of section 4's chain verification, `depth` included |
+| 12 | This was a real disagreement: the Go executor ran the section 8.1 checks after replay, this one before it, and no scenario told them apart. Sections 7, 8.1, 8.2 and 9 now put a standing operation's own checks at step 11, after replay, with failures stored as outcomes; this implementation was changed to match, and scenario 019 pins it. |
+| 13 | section 8.2 now restricts `writ` to one `from` issued or one below it; both executors changed, scenario 020 pins it |
+
+Ten spec passages changed as a direct result of this implementation,
+inside the range `docs/adoption.md` gives for a spec that was tested and
+ready (more than zero, at most twenty). The caveat that applies to every
+count here: this executor was written by an agent of the same author's
+tooling, not by an unaffiliated implementer.

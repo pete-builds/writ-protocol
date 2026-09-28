@@ -406,9 +406,13 @@ class CallTest(Base):
         self.assertReason("not_reversible", V.verify_call, resign(undo, A, args={"tally": forged}), now=NOW)
         other = resign(FX.tC, CK, writ=O.identity(FX.w1))
         self.assertReason("tally_mismatch", V.verify_call, resign(undo, A, args={"tally": other}), now=NOW)
-        t = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)})
+        t = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w2)})
         V.verify_call(t, now=NOW)
         self.assertReason("tally_mismatch", V.verify_call, resign(t, BK, args={"writ": O.identity(FX.callA)}), now=NOW)
+        # Section 8.2 as revised 2026-09-28: B issued w2, not w1, and w1's
+        # index covers A's other delegations, so B may not name it. A may.
+        self.assertReason("tally_mismatch", V.verify_call, resign(t, BK, args={"writ": O.identity(FX.w1)}), now=NOW)
+        V.verify_call(issue.make_call(A, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)}), now=NOW)
 
     def test_forbidden_op(self):
         bad = resign(FX.callB, BK, op="travel/chargeback")
@@ -451,7 +455,7 @@ class CallTest(Base):
         # Section 7 step 6: a forward call is expired at exp, and stays so
         # however the chain is presented; a standing call is not.
         undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": FX.tC})
-        tallies = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)})
+        tallies = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w2)})
         after_leaf = EXP2
         after_root = EXP1 + 60
         self.assertReason("expired", V.verify_call, FX.callB, now=after_leaf)

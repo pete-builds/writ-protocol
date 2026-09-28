@@ -111,8 +111,11 @@ def check_forward_args(leaf, args):
 STANDING_OPS = ("sys/undo", "sys/tallies")
 
 
-def check_standing_args(op, args, writs, ids, now):
+def check_standing_args(op, args, writs, ids, now, from_):
     """Section 8: the checks on a standing call's args that need no store.
+
+    An executor runs them when it performs the operation (section 7 step
+    11), after replay, so a failure is a stored outcome, not a refusal.
 
     An op under sys/ that is not a defined standing operation is
     forbidden_op. sys/undo (section 8.1, in its order): args.tally is an
@@ -121,7 +124,8 @@ def check_standing_args(op, args, writs, ids, now):
     the leaf writ (tally_mismatch); it has a rev, now < rev.until, and st
     is ok (not_reversible). The last 8.1 check, that the tally is held in
     the executor's tally store, is the executor's. sys/tallies: args.writ
-    is the identity of a writ in the chain (tally_mismatch).
+    is the identity of a writ in the chain that ``from_`` issued, or of one
+    below it (tally_mismatch).
 
     Returns the parsed target tally for sys/undo, else None.
     """
@@ -142,8 +146,9 @@ def check_standing_args(op, args, writs, ids, now):
             raise WritError("not_reversible", "target tally has no rev, is past rev.until, or is not ok")
         return target
     w = args.get("writ")
-    if not isinstance(w, str) or w not in ids:
-        raise WritError("tally_mismatch", "args.writ is not the identity of a writ in the chain")
+    first = next((i for i, x in enumerate(writs) if x["iss"] == from_), len(writs))
+    if not isinstance(w, str) or w not in ids[first:]:
+        raise WritError("tally_mismatch", "args.writ is not a writ in the chain that from issued, or one below it")
     return None
 
 
@@ -186,7 +191,7 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
         if call["from"] not in {w["iss"] for w in writs}:
             raise WritError("no_standing", "from is not the iss of any writ in the chain")
         if standing_ops:
-            check_standing_args(op, call["args"], writs, ids, t)
+            check_standing_args(op, call["args"], writs, ids, t, call["from"])
         elif op not in STANDING_OPS:
             raise WritError("forbidden_op", f"{op!r} is not a standing operation")
     else:

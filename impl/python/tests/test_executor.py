@@ -702,7 +702,7 @@ class ScenarioRunnerTest(unittest.TestCase):
 
     def test_corpus_scenarios_pass(self):
         names = sorted(n for n in os.listdir(SCENARIOS) if n.endswith(".json"))
-        self.assertEqual(len(names), 18)
+        self.assertEqual(len(names), 20)
         for name in names:
             with self.subTest(name=name):
                 self.run_one(self.load(name))

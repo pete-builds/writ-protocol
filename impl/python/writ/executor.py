@@ -223,7 +223,6 @@ class Executor:
         leaf_id = O.identity(writs[-1])
         now = self.now()
         standing = call["op"].startswith("sys/")
-        target = target_id = None
         try:
             ids = C.check_chain(writs)                              # step 3
             if not standing:                                        # step 4
@@ -239,7 +238,7 @@ class Executor:
                     if self._is_revoked(i, w["iss"]):
                         raise WritError("revoked", f"writ {i} is revoked")
             if standing:                                            # step 8
-                target, target_id = self._check_standing(call, writs, ids, now)
+                self._check_standing(call, writs)
             else:
                 self._check_forward(call, writs[-1])
         except WritError as e:
@@ -267,14 +266,12 @@ class Executor:
             "op": call["op"], "acc": now, "chain": ids, "iss": [w["iss"] for w in writs],
             "exp": writs[-1]["exp"], "standing": standing,
         }
-        if target_id is not None:
-            rec["target"] = target_id
         if not self._write_admission(rec, counted):
             return self._refusal(call_id, leaf_id, call["op"], now, STORE_WRITE_FAILED), None
 
         call = dict(call, chain=writs)  # never mutate the caller's object
         kind = "forward" if not standing else call["op"][len("sys/"):]
-        op = Operation(kind, call, call_id, leaf_id, now, target=target, target_id=target_id, executor=self)
+        op = Operation(kind, call, call_id, leaf_id, now, executor=self)
         return None, op
 
     def _check_forward(self, call, leaf):
@@ -285,21 +282,31 @@ class Executor:
             raise WritError("forbidden_op", "op is not matched by the leaf act")
         V.check_forward_args(leaf, call["args"])
 
-    def _check_standing(self, call, writs, ids, now):
-        """Step 8 for a standing call: standing, a defined operation, then
-        that operation's argument checks (sections 8.1 and 8.2).
-
-        Returns (target tally, its identity) for sys/undo, else (None, None).
-        """
+    def _check_standing(self, call, writs):
+        """Step 8 for a standing call: standing, then a defined operation.
+        The operation's own checks (sections 8.1 and 8.2) run when it is
+        performed, after replay (see _operation_checks)."""
         if call["from"] not in {w["iss"] for w in writs}:
             raise WritError("no_standing", "from is not the iss of any writ in the chain")
-        target = V.check_standing_args(call["op"], call["args"], writs, ids, now)
+        if call["op"] not in V.STANDING_OPS:
+            raise WritError("forbidden_op", f"{call['op']!r} is not a standing operation")
+
+    def _operation_checks(self, op):
+        """Sections 8.1 and 8.2, at step 11: a standing operation's own
+        checks. A failure is the operation's outcome, a final tally stored
+        like any other, so a retry of the call is answered from the call
+        store. For sys/undo, sets op.target and records its identity on the
+        call record before any reversal begins."""
+        writs = op.call["chain"]
+        ids = [O.identity(w) for w in writs]
+        target = V.check_standing_args(op.op, op.args, writs, ids, self.now(), op.call["from"])
         if target is None:
-            return None, None
+            return
         target_id = O.identity(target)
         if not self.stores.tallies.holds(target_id):                # section 8.1, last check
             raise WritError("not_reversible", "the target tally is not in this executor's tally store")
-        return target, target_id
+        op.target, op.target_id = target, target_id
+        self.stores.calls.record(dict(self._record_of(op), target=target_id))
 
     def _is_revoked(self, writ_id, writ_iss):
         if self.stores.revokes.revokes_writ(writ_id, writ_iss):
@@ -337,6 +344,15 @@ class Executor:
 
     def _perform(self, op):
         """Step 11 outside the lock: run the operation, or answer at once."""
+        if op.kind in ("tallies", "undo"):
+            with self._lock:
+                try:
+                    self._operation_checks(op)
+                except WritError as e:
+                    return self._finish(op, Outcome("failed", e.reason), reversal=False)
+                except OSError:
+                    # Nothing was performed; the pending record resolves.
+                    return {"tally": self._pending_tally(self._record_of(op))}
         if op.kind == "tallies":
             with self._lock:
                 return self._finish_tallies(op)
