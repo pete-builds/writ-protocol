@@ -1,0 +1,17 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "glob",
+   "v": 1,
+   "x": 1
+  },
+  "parent": {
+   "t": "max",
+   "v": 1
+  }
+ },
+ "name": "members before type",
+ "op": "narrows",
+ "reason": "malformed"
+}

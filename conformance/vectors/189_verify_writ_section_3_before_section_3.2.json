@@ -1,0 +1,57 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "set",
+     "v": [
+      "travel"
+     ]
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    },
+    "zzz": {
+     "t": "glob",
+     "v": "*"
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "21B8Tf_uT50kBdsVhfA2vP22BzHY4O5OPr1jW9w0gd7W0Hbt26TDjRl5d_FqxuHO5MsrVkQWC0eFvVDycI_zAQ",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "section 3 before section 3.2",
+ "op": "verify_writ",
+ "reason": "unknown_bound"
+}

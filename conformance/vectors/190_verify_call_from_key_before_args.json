@@ -1,0 +1,105 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": "none",
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    },
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel/charge"
+      },
+      "amount": {
+       "t": "max",
+       "v": 58900
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261015
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+     "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+     "sig": "yVka3FzI2TbD42_qnZgVOit6pshRr4xfpnsn83jpNOFLAxX9u89KDUcluGExTD2UUXrS2Ugnm6tGRzsAxQSqDQ",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:web:b.example",
+   "id": "bm9uY2UtMDAwMDAwMDA1NA",
+   "op": "travel/charge",
+   "sig": "yzeQkg35sb1-1tpEH9C8Y7_ZAclKmdiEtZFoi_LQuBSaRh1CG5m82Rm13aFp--zUZW9iCxM2O8vVmeiCLUIwCA",
+   "typ": "call",
+   "v": 1
+  }
+ },
+ "name": "from key before args",
+ "op": "verify_call",
+ "reason": "bad_key"
+}

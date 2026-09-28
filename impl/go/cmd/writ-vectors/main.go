@@ -472,5 +472,142 @@ func main() {
 	write("standing call undefined operation", "verify_call", map[string]any{"call": must(writ.NewCall(A, []*writ.Writ{w1, w2}, "sys/other", map[string]any{})).Raw}, "reject", writ.ForbiddenOp, nil)
 	write("standing call by a stranger to an undefined operation", "verify_call", map[string]any{"call": must(writ.NewCall(S, []*writ.Writ{w1, w2}, "sys/other", map[string]any{})).Raw}, "reject", writ.NoStanding, nil)
 
+	// First-failure order, as pinned on 2026-09-28 (spec sections 1.1, 3,
+	// 6.1, 6.2, 7, 9.1, and 14). Each vector carries two faults and the
+	// pinned order decides which one is reported, so a verifier checking in
+	// any other order fails it. The differential fuzzer found each question.
+	re := func(o wire.Object, signer *keys.Identity) wire.Object {
+		bb, _ := json.Marshal(o)
+		o = must(wire.Decode(bb))
+		if signer != nil {
+			_ = wire.Sign(o, signer)
+		}
+		return o
+	}
+	expectOf := func(r writ.Reason) string {
+		if r == "" {
+			return "accept"
+		}
+		return "reject"
+	}
+
+	// Section 3: one bound, and the narrows vector's operands.
+	nar("child before parent", b("max", "5"), b("max", -1), writ.Malformed)
+	nar("members before type", map[string]any{"t": "glob", "v": 1, "x": 1}, b("max", 1), writ.Malformed)
+	nar("type before value type", b("glob", "5"), b("max", 1), writ.UnknownBound)
+	nar("set elements in array order", b("set", []any{"a", "a", map[string]any{}}), b("set", []any{"a"}), writ.Noncanonical)
+	nar("window shape before order", b("window", []any{10, 1, 5}), b("window", []any{1, 10}), writ.Malformed)
+
+	// Section 1.1 rule 7: nesting is found before every other rule.
+	accept("nesting at the limit", "canonicalize", map[string]any{"raw": strings.Repeat("[", 64) + strings.Repeat("]", 64), "canonical": strings.Repeat("[", 64) + strings.Repeat("]", 64)})
+	reject("nesting over the limit", "canonicalize", map[string]any{"raw": strings.Repeat("[", 65) + strings.Repeat("]", 65)}, writ.TooLarge)
+	reject("nesting before number rules", "canonicalize", map[string]any{"raw": strings.Repeat("[", 65) + "1.5" + strings.Repeat("]", 65)}, writ.TooLarge)
+	nested := func(levels int, leaf any) any {
+		v := leaf
+		for i := 0; i < levels; i++ {
+			v = []any{v}
+		}
+		return v
+	}
+	// The writ is level 1 and its member x level 2, so 63 arrays reach 64.
+	accept("writ nesting at the limit", "verify_writ", map[string]any{"writ": resign(w1, A, func(o wire.Object) { o["x"] = nested(63, json.Number("1")) })})
+	rw("writ nesting over the limit", resign(w1, A, func(o wire.Object) { o["x"] = nested(64, json.Number("1")) }), writ.TooLarge)
+	rw("writ nesting before number rules", resign(w1, nil, func(o wire.Object) { o["x"] = nested(70, json.Number("1.5")) }), writ.TooLarge)
+
+	// Section 6.1 steps 2 to 4.
+	rw("binary encoding before version", resign(w1, A, func(o wire.Object) { o["v"] = json.Number("2"); o["nnc"] = "nonce00000000000000001" }), writ.Noncanonical)
+	rw("non string binary member waits for step 5", resign(w1, A, func(o wire.Object) { o["v"] = json.Number("2"); o["nnc"] = json.Number("7") }), writ.UnsupportedVersion)
+	rw("empty binary member", resign(w1, A, func(o wire.Object) { o["nnc"] = "" }), writ.Noncanonical)
+	rw("crit array type before names", resign(w1, A, func(o wire.Object) { o["crit"] = []any{"zap", json.Number("5")} }), writ.Malformed)
+	rw("crit names in array order", resign(w1, A, func(o wire.Object) { o["crit"] = []any{"zap", "prv"}; delete(o, "prv") }), writ.UnsupportedCritical)
+
+	// Section 6.1 step 5 on a writ: member-table order, each member whole.
+	rw("iss key before bnd", resign(w1, A, func(o wire.Object) {
+		o["iss"] = "did:web:a.example"
+		delete(o["bnd"].(map[string]any), "act")
+	}), writ.BadKey)
+	rw("hld key before exp", resign(w1, A, func(o wire.Object) { o["hld"] = "did:web:b.example"; o["exp"] = "soon" }), writ.BadKey)
+	rw("act presence before bounds", resign(w1, A, func(o wire.Object) {
+		m := o["bnd"].(map[string]any)
+		delete(m, "act")
+		m["x"] = b("glob", "*")
+	}), writ.Malformed)
+	rw("bounds in canonical name order", resign(w1, A, func(o wire.Object) {
+		m := o["bnd"].(map[string]any)
+		m["a"] = b("glob", "*")
+		for _, n := range []string{"b", "c", "d", "e"} {
+			m[n] = b("max", -1)
+		}
+	}), writ.UnknownBound)
+	rw("bound order is utf16 order", resign(w1, A, func(o wire.Object) {
+		m := o["bnd"].(map[string]any)
+		m["\U0001F600"] = b("glob", "*")
+		m["\uFF61"] = b("max", -1)
+	}), writ.UnknownBound)
+	rw("section 3 before section 3.2", resign(w1, A, func(o wire.Object) {
+		m := o["bnd"].(map[string]any)
+		m["act"] = b("set", []any{"travel"})
+		m["zzz"] = b("glob", "*")
+	}), writ.UnknownBound)
+
+	// Section 7 steps 1 and 2 on a call: its own members, then its chain's
+	// writs, then its signature.
+	kOrd := must(writ.NewCall(B, []*writ.Writ{w1, w2}, "travel/charge", good))
+	rc := func(f func(o wire.Object), signer *keys.Identity) wire.Object {
+		o := must(wire.Clone(kOrd.Raw))
+		f(o)
+		return re(o, signer)
+	}
+	cv := func(name string, o wire.Object, r writ.Reason) {
+		write(name, "verify_call", map[string]any{"call": o}, expectOf(r), r, nil)
+	}
+	tamperedW2 := resign(w2, nil, func(o wire.Object) { o["exp"] = json.Number("1788401799") })
+	malformedW2 := resign(w2, B, func(o wire.Object) { o["exp"] = "soon" })
+	cv("from key before args", rc(func(o wire.Object) { o["from"] = "did:web:b.example"; o["args"] = "none" }, B), writ.BadKey)
+	cv("own members before chain writs", rc(func(o wire.Object) { o["chain"] = []any{w1.Raw, tamperedW2}; o["op"] = json.Number("7") }, B), writ.Malformed)
+	cv("sig member before chain writs", rc(func(o wire.Object) { o["chain"] = []any{w1.Raw, tamperedW2}; o["sig"] = strings.Repeat("A", 84) }, nil), writ.Malformed)
+	cv("chain writs before call signature", rc(func(o wire.Object) { o["chain"] = []any{w1.Raw, malformedW2} }, S), writ.Malformed)
+	cv("id before chain length", rc(func(o wire.Object) { o["id"] = "c2hvcnQ"; o["chain"] = raws(nine...) }, B), writ.Malformed)
+	cv("version before chain length", rc(func(o wire.Object) { o["v"] = json.Number("2"); o["chain"] = raws(nine...) }, B), writ.UnsupportedVersion)
+	cv("chain length before element type", rc(func(o wire.Object) {
+		c := raws(nine...)
+		c[3] = "x"
+		o["chain"] = c
+	}, B), writ.TooLarge)
+
+	// Section 6.2: a tally's own 6.1, then steps 2 to 6, then wrt, then sub.
+	tv("tally signature before wrt contents", w1, kAB, rt(func(o wire.Object) { o["wrt"] = []any{malformedW2} }, C), nil, writ.BadSignature)
+	tv("tally signature before sub_unmatched", w1, kAB, rt(func(o wire.Object) { o["wrt"] = []any{} }, C), nil, writ.BadSignature)
+	tv("op before wrt contents", w1, kAB, rt(func(o wire.Object) { o["wrt"] = []any{malformedW2}; o["op"] = "travel/other" }, B), nil, writ.TallyMismatch)
+	tv("acc before body", w1, kAB, rt(func(o wire.Object) { o["acc"] = json.Number("1788403600") }, B), map[string]any{"pnr": "OTHER"}, writ.Expired)
+	tv("wrt before sub", w1, kAB, rt(func(o wire.Object) { o["wrt"] = []any{malformedW2} }, B), nil, writ.Malformed)
+	tv("sub_unmatched before the sub tally", w1, kAB, rt(func(o wire.Object) { o["sub"] = []any{map[string]any{"writ": "zzz"}} }, B), nil, writ.SubUnmatched)
+	dz := must(writ.Issue(A, B.DID(), bnd("act", "prefix", "travel", "depth", "max", 0), now+3600, nil))
+	dzc := must(writ.Issue(B, C.DID(), bnd("act", "prefix", "travel", "depth", "max", 0), now+1800, dz))
+	kDz := must(writ.NewCall(A, []*writ.Writ{dz}, "travel/book", map[string]any{}))
+	tDz, _, _ := writ.NewTally(B, writ.TallyInput{Call: kDz, Acc: now + 5, St: "ok", Wrt: []*writ.Writ{dzc}})
+	tv("depth applies to wrt", dz, kDz, tDz.Raw, nil, writ.NotNarrowed)
+	d1w := must(writ.Issue(A, B.DID(), bnd("act", "prefix", "travel", "depth", "max", 1), now+3600, nil))
+	d1c := must(writ.Issue(B, C.DID(), bnd("act", "prefix", "travel", "depth", "max", 0), now+1800, d1w))
+	kD1 := must(writ.NewCall(A, []*writ.Writ{d1w}, "travel/book", map[string]any{}))
+	tD1, _, _ := writ.NewTally(B, writ.TallyInput{Call: kD1, Acc: now + 5, St: "ok", Wrt: []*writ.Writ{d1c}})
+	tv("depth honored in wrt", d1w, kD1, tD1.Raw, nil, "")
+	rtp := func(f func(o wire.Object)) wire.Object {
+		o := must(wire.Clone(tPend.Raw))
+		f(o)
+		return re(o, C)
+	}
+	tv("pending tally with another err code", w2, kBC, rtp(func(o wire.Object) { o["err"] = map[string]any{"code": "busy"} }), nil, writ.Malformed)
+	tv("pending tally with wrt", w2, kBC, rtp(func(o wire.Object) { o["wrt"] = []any{w3.Raw} }), nil, writ.Malformed)
+
+	// Section 4 as an operation: every element is an object before any writ
+	// is verified; a sub-tally whose writ member is not a string names no
+	// writ in wrt.
+	ch("elements before writs", []any{resign(w1, nil, func(o wire.Object) { o["exp"] = json.Number("1788403601") }), "x"}, writ.Malformed, nil)
+	tv("sub writ member not a string", w1, kAB, rt(func(o wire.Object) { o["sub"] = []any{map[string]any{"writ": map[string]any{}}} }, B), nil, writ.SubUnmatched)
+
+	// Section 9.1 step 1: members in table order, iss before chain.
+	rvv("iss before chain length", rv(nine[8].ID, raws(nine...), "did:web:a.example", A), writ.BadKey)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }
