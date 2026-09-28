@@ -104,6 +104,12 @@ func VerifyChain(chain []*Writ) error {
 			return err
 		}
 	}
+	return checkDepth(chain)
+}
+
+// checkDepth is the depth rule of section 4 over a whole chain: the writ at
+// index i of n, if it carries depth, has at most depth.v writs below it.
+func checkDepth(chain []*Writ) error {
 	n := int64(len(chain))
 	for i, w := range chain {
 		if d, ok := w.Bnd["depth"]; ok && n-1-int64(i) > d.Int {

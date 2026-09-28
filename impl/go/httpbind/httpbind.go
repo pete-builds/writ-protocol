@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"writproto/exec"
+	"writproto/jcs"
 	"writproto/wire"
 	"writproto/writ"
 )
@@ -28,6 +29,9 @@ type WellKnown struct {
 	Act      []string `json:"act"`
 }
 
+// maxRequestBytes is the larger of the call and revoke limits of spec 1.6.
+const maxRequestBytes = max(writ.MaxCallBytes, writ.MaxRevokeBytes)
+
 // Handler serves an executor.
 func Handler(e *exec.Executor, wk WellKnown) http.Handler {
 	mux := http.NewServeMux()
@@ -36,8 +40,14 @@ func Handler(e *exec.Executor, wk WellKnown) http.Handler {
 		_ = json.NewEncoder(w).Encode(wk)
 	})
 	mux.HandleFunc("POST /writ", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, writ.MaxTallyBytes+1))
-		if err != nil || len(body) > writ.MaxTallyBytes {
+		// A request body is one call or one revoke (spec section 10), and
+		// both are limited to 65536 bytes, so no request may be larger.
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
+		if err != nil || len(body) > maxRequestBytes {
+			reject(w, writ.TooLarge)
+			return
+		}
+		if jcs.CheckDepth(body) != nil {
 			reject(w, writ.TooLarge)
 			return
 		}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
 	"strings"
 
 	"writproto/bound"
@@ -94,8 +95,13 @@ type Tally struct {
 	Out  string // "" when null
 	Used map[string]int64
 	Rev  *int64 // until, nil when null
-	Sub  []*Tally
-	Wrt  []*Writ
+	// Sub and Wrt are filled by VerifyTally (spec 6.2 steps 8 and 9) and by
+	// NewTally. ParseTally, which is spec 6.1 alone, leaves them empty and
+	// keeps the unverified elements in subRaw and wrtRaw.
+	Sub    []*Tally
+	Wrt    []*Writ
+	subRaw []wire.Object
+	wrtRaw []wire.Object
 }
 
 // Revoke is a parsed revoke.
@@ -107,15 +113,22 @@ type Revoke struct {
 	Chain []*Writ
 }
 
-// checkHeader runs spec 6.1 steps 1 to 4 on an object: size, canonical form,
+// checkHeader runs spec 6.1 steps 1 to 4 on an object: nesting depth and
+// size, canonical form and the encoding of the object's own binary members,
 // version, type, crit. Returns the canonical bytes.
 func checkHeader(obj wire.Object, typ string, maxBytes int) ([]byte, error) {
+	if jcs.TooDeep(obj) {
+		return nil, fail(TooLarge, "%s nests deeper than %d levels", typ, jcs.MaxDepth)
+	}
 	c, err := jcs.Marshal(obj)
 	if err != nil {
 		return nil, fail(Noncanonical, "%v", err)
 	}
 	if len(c) > maxBytes {
 		return nil, fail(TooLarge, "%s is %d bytes, limit %d", typ, len(c), maxBytes)
+	}
+	if err := checkBinary(obj, typ); err != nil {
+		return nil, err
 	}
 	v, ok := obj["v"].(json.Number)
 	if !ok || v.String() != "1" {
@@ -134,10 +147,12 @@ func checkHeader(obj wire.Object, typ string, maxBytes int) ([]byte, error) {
 			return nil, fail(Malformed, "crit must be an array")
 		}
 		for _, e := range arr {
-			name, ok := e.(string)
-			if !ok {
+			if _, ok := e.(string); !ok {
 				return nil, fail(Malformed, "crit entries must be strings")
 			}
+		}
+		for _, e := range arr {
+			name := e.(string)
 			if !known[typ][name] {
 				return nil, fail(UnsupportedCritical, "crit names %q", name)
 			}
@@ -147,6 +162,46 @@ func checkHeader(obj wire.Object, typ string, maxBytes int) ([]byte, error) {
 		}
 	}
 	return c, nil
+}
+
+// binaryMembers are, per type, the members spec 6.1 step 2 holds to section
+// 1.1 rule 5. A tally's err.ref is checked beside them.
+var binaryMembers = map[string][]string{
+	"writ":   {"prv", "nnc", "sig"},
+	"call":   {"id", "sig"},
+	"tally":  {"call", "writ", "out", "sig"},
+	"revoke": {"writ", "sig"},
+}
+
+// checkBinary runs the rule 5 part of spec 6.1 step 2: every binary member of
+// the object itself whose value is a string must be canonical base64url. A
+// member of another JSON type waits for step 5, and nested writs and tallies
+// are checked when they pass 6.1 themselves.
+func checkBinary(obj wire.Object, typ string) error {
+	for _, name := range binaryMembers[typ] {
+		s, ok := obj[name].(string)
+		if !ok || (typ == "revoke" && name == "writ" && s == "*") {
+			continue
+		}
+		if !canonicalB64(s) {
+			return fail(Noncanonical, "%s is not canonical base64url", name)
+		}
+	}
+	if typ == "tally" {
+		if m, ok := obj["err"].(map[string]any); ok {
+			if s, ok := m["ref"].(string); ok && !canonicalB64(s) {
+				return fail(Noncanonical, "err.ref is not canonical base64url")
+			}
+		}
+	}
+	return nil
+}
+
+// canonicalB64 reports whether s is the one base64url encoding, without
+// padding, of some non-empty byte string (spec 1.1 rule 5).
+func canonicalB64(s string) bool {
+	raw, err := wire.B64.DecodeString(s)
+	return err == nil && b64Re.MatchString(s) && wire.B64.EncodeToString(raw) == s
 }
 
 // BoundReason maps a bound.Parse error to its reason code.
@@ -164,12 +219,14 @@ func BoundReason(err error) Reason {
 // checkB64 enforces spec 1.1 rule 5 on a binary member: base64url alphabet,
 // no padding, and an encoding that re-encodes to itself (noncanonical
 // otherwise), then the expected decoded length (malformed otherwise). want 0
-// means "at least MinRandom characters".
+// means "at least MinRandom characters". Step 2 has already applied the first
+// half to every binary member that is a string, so at step 5 only the length
+// can fail.
 func checkB64(name, s string, want int) error {
-	raw, err := wire.B64.DecodeString(s)
-	if err != nil || !b64Re.MatchString(s) || wire.B64.EncodeToString(raw) != s {
+	if !canonicalB64(s) {
 		return fail(Noncanonical, "%s is not canonical base64url", name)
 	}
+	raw, _ := wire.B64.DecodeString(s)
 	if want == 0 {
 		if len(raw) < 16 {
 			return fail(Malformed, "%s must encode at least 16 bytes", name)
@@ -202,37 +259,48 @@ func checkKey(did string) error {
 	return nil
 }
 
-// ParseWrit validates structure (spec 6.1 steps 1 to 5) and signature (step 6).
-func ParseWrit(obj wire.Object) (*Writ, error) {
-	c, err := checkHeader(obj, "writ", MaxWritBytes)
-	if err != nil {
-		return nil, err
+// keyMember reads a member whose type is key: a string (malformed otherwise)
+// that is a valid did:key (bad_key otherwise), both checked before the next
+// member (spec 6.1 step 5).
+func keyMember(obj wire.Object, name string) (string, error) {
+	s, ok := obj[name].(string)
+	if !ok {
+		return "", fail(Malformed, "%s must be a string", name)
 	}
-	w := &Writ{Raw: obj, ID: wire.HashBytes(c)}
-	var ok bool
-	if w.Iss, ok = obj["iss"].(string); !ok {
-		return nil, fail(Malformed, "iss must be a string")
+	if err := checkKey(s); err != nil {
+		return "", err
 	}
-	if w.Hld, ok = obj["hld"].(string); !ok {
-		return nil, fail(Malformed, "hld must be a string")
-	}
-	bnd, ok := obj["bnd"].(map[string]any)
+	return s, nil
+}
+
+// parseBnd runs the spec 6.1 step 5 rules for a writ's bnd: an object, act
+// present, every bound in canonical member-name order under section 3, then
+// the section 3.2 rules for act, hld, and depth.
+func parseBnd(v any) (map[string]bound.Bound, error) {
+	bnd, ok := v.(map[string]any)
 	if !ok {
 		return nil, fail(Malformed, "bnd must be an object")
 	}
-	w.Bnd = map[string]bound.Bound{}
-	for name, v := range bnd {
-		b, err := bound.Parse(v)
+	if _, ok := bnd["act"]; !ok {
+		return nil, fail(Malformed, "bnd.act is required")
+	}
+	names := make([]string, 0, len(bnd))
+	for name := range bnd {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool { return lessUTF16(names[i], names[j]) })
+	out := map[string]bound.Bound{}
+	for _, name := range names {
+		b, err := bound.Parse(bnd[name])
 		if err != nil {
 			return nil, fail(BoundReason(err), "bound %q: %v", name, err)
 		}
-		w.Bnd[name] = b
+		out[name] = b
 	}
-	act, ok := w.Bnd["act"]
-	if !ok || act.T != "prefix" {
-		return nil, fail(Malformed, "bnd.act must be present with type prefix")
+	if out["act"].T != "prefix" {
+		return nil, fail(Malformed, "bnd.act must have type prefix")
 	}
-	if h, ok := w.Bnd["hld"]; ok {
+	if h, ok := out["hld"]; ok {
 		if h.T != "set" {
 			return nil, fail(Malformed, "bnd.hld must have type set")
 		}
@@ -245,8 +313,45 @@ func ParseWrit(obj wire.Object) (*Writ, error) {
 			}
 		}
 	}
-	if d, ok := w.Bnd["depth"]; ok && d.T != "max" {
+	if d, ok := out["depth"]; ok && d.T != "max" {
 		return nil, fail(Malformed, "bnd.depth must have type max")
+	}
+	return out, nil
+}
+
+// checkSigMember is the spec 6.1 step 5 check on sig: a string encoding 64
+// bytes. verifySig is step 6.
+func checkSigMember(obj wire.Object) error {
+	s, ok := obj["sig"].(string)
+	if !ok {
+		return fail(Malformed, "sig must be a string")
+	}
+	return checkB64("sig", s, 64)
+}
+
+func verifySig(obj wire.Object, signer string) error {
+	if err := wire.VerifySig(obj, signer); err != nil {
+		return fail(BadSignature, "%v", err)
+	}
+	return nil
+}
+
+// ParseWrit validates structure (spec 6.1 steps 1 to 5) and signature (step 6).
+// Step 5 takes the members in the order of the writ's member table.
+func ParseWrit(obj wire.Object) (*Writ, error) {
+	c, err := checkHeader(obj, "writ", MaxWritBytes)
+	if err != nil {
+		return nil, err
+	}
+	w := &Writ{Raw: obj, ID: wire.HashBytes(c)}
+	if w.Iss, err = keyMember(obj, "iss"); err != nil {
+		return nil, err
+	}
+	if w.Hld, err = keyMember(obj, "hld"); err != nil {
+		return nil, err
+	}
+	if w.Bnd, err = parseBnd(obj["bnd"]); err != nil {
+		return nil, err
 	}
 	prv, present := obj["prv"]
 	if !present {
@@ -262,6 +367,7 @@ func ParseWrit(obj wire.Object) (*Writ, error) {
 		}
 		w.Prv = s
 	}
+	var ok bool
 	if w.Exp, ok = getInt(obj, "exp"); !ok {
 		return nil, fail(Malformed, "exp must be an integer")
 	}
@@ -271,48 +377,26 @@ func ParseWrit(obj wire.Object) (*Writ, error) {
 	if err := checkB64("nnc", w.Nnc, 0); err != nil {
 		return nil, err
 	}
-	if err := checkKey(w.Iss); err != nil {
+	if err := checkSigMember(obj); err != nil {
 		return nil, err
 	}
-	if err := checkKey(w.Hld); err != nil {
-		return nil, err
-	}
-	if err := checkSig(obj, w.Iss); err != nil {
+	if err := verifySig(obj, w.Iss); err != nil {
 		return nil, err
 	}
 	return w, nil
 }
 
-func checkSig(obj wire.Object, signer string) error {
-	s, ok := obj["sig"].(string)
-	if !ok {
-		return fail(Malformed, "sig must be a string")
-	}
-	if err := checkB64("sig", s, 64); err != nil {
-		return err
-	}
-	if err := wire.VerifySig(obj, signer); err != nil {
-		return fail(BadSignature, "%v", err)
-	}
-	return nil
-}
-
-// ParseChain parses every writ in an array. It does not check attenuation.
+// ParseChain checks a chain's shape (chainShape), then parses every writ in
+// array order (spec section 4, chain verification as an operation). It does
+// not check attenuation or emptiness; VerifyChain does.
 func ParseChain(v any) ([]*Writ, error) {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil, fail(Malformed, "chain must be an array")
-	}
-	if len(arr) > MaxChain {
-		return nil, fail(TooLarge, "chain has %d writs, limit %d", len(arr), MaxChain)
+	arr, err := chainShape(v)
+	if err != nil {
+		return nil, err
 	}
 	var chain []*Writ
-	for i, e := range arr {
-		obj, ok := e.(map[string]any)
-		if !ok {
-			return nil, fail(Malformed, "chain[%d] is not an object", i)
-		}
-		w, err := ParseWrit(obj)
+	for _, e := range arr {
+		w, err := ParseWrit(e.(map[string]any))
 		if err != nil {
 			return nil, err
 		}
@@ -321,8 +405,47 @@ func ParseChain(v any) ([]*Writ, error) {
 	return chain, nil
 }
 
-// ParseCall validates a call's structure and signature and parses its chain
-// (each writ's structure and signature, not attenuation).
+// chainShape is the spec 6.1 step 5 check on a call's or revoke's chain
+// member: an array of at most MaxChain elements, each an object. The writs
+// are verified later, after every other member (section 7 step 2, section
+// 9.1 step 2).
+func chainShape(v any) ([]any, error) {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil, fail(Malformed, "chain must be an array")
+	}
+	if len(arr) > MaxChain {
+		return nil, fail(TooLarge, "chain has %d writs, limit %d", len(arr), MaxChain)
+	}
+	for i, e := range arr {
+		if _, ok := e.(map[string]any); !ok {
+			return nil, fail(Malformed, "chain[%d] is not an object", i)
+		}
+	}
+	return arr, nil
+}
+
+// objects is the spec 6.1 step 5 check on a tally's sub and wrt: an array of
+// objects. Their contents are checked in section 6.2 steps 8 and 9.
+func objects(obj wire.Object, name string) ([]wire.Object, error) {
+	arr, ok := obj[name].([]any)
+	if !ok {
+		return nil, fail(Malformed, "%s must be an array", name)
+	}
+	out := make([]wire.Object, 0, len(arr))
+	for i, e := range arr {
+		o, ok := e.(map[string]any)
+		if !ok {
+			return nil, fail(Malformed, "%s[%d] is not an object", name, i)
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// ParseCall runs spec section 7 steps 1 and 2 on a call: its own members
+// (6.1 steps 1 to 5), then every writ of its chain (6.1, in array order),
+// then its signature. Attenuation is VerifyChain's.
 func ParseCall(obj wire.Object) (*Call, error) {
 	c, err := checkHeader(obj, "call", MaxCallBytes)
 	if err != nil {
@@ -336,14 +459,15 @@ func ParseCall(obj wire.Object) (*Call, error) {
 	if err := checkB64("id", k.CID, 0); err != nil {
 		return nil, err
 	}
-	if k.Chain, err = ParseChain(obj["chain"]); err != nil {
+	arr, err := chainShape(obj["chain"])
+	if err != nil {
 		return nil, err
 	}
-	if len(k.Chain) == 0 {
+	if len(arr) == 0 {
 		return nil, fail(Malformed, "chain must not be empty")
 	}
-	if k.From, ok = obj["from"].(string); !ok {
-		return nil, fail(Malformed, "from must be a string")
+	if k.From, err = keyMember(obj, "from"); err != nil {
+		return nil, err
 	}
 	if k.Op, ok = obj["op"].(string); !ok {
 		return nil, fail(Malformed, "op must be a string")
@@ -351,19 +475,22 @@ func ParseCall(obj wire.Object) (*Call, error) {
 	if k.Args, ok = obj["args"].(map[string]any); !ok {
 		return nil, fail(Malformed, "args must be an object")
 	}
-	if err := checkKey(k.From); err != nil {
+	if err := checkSigMember(obj); err != nil {
 		return nil, err
 	}
-	if err := checkSig(obj, k.From); err != nil {
+	if k.Chain, err = ParseChain(arr); err != nil {
+		return nil, err
+	}
+	if err := verifySig(obj, k.From); err != nil {
 		return nil, err
 	}
 	return k, nil
 }
 
-// ParseTally validates a tally's structure and its signature under signer,
-// which the caller derives from the writ the tally names. Sub-tallies and
-// wrt entries are parsed structurally; sub-tally signatures are verified by
-// VerifyTally once their writs are known.
+// ParseTally runs spec section 6.1 on a tally with signer, which the caller
+// derives from the writ the tally names. sub and wrt are checked only to be
+// arrays of objects; VerifyTally checks their elements (6.2 steps 8 and 9)
+// after this signature.
 func ParseTally(obj wire.Object, signer string) (*Tally, error) {
 	c, err := checkHeader(obj, "tally", MaxTallyBytes)
 	if err != nil {
@@ -396,10 +523,14 @@ func ParseTally(obj wire.Object, signer string) (*Tally, error) {
 	if !present {
 		return nil, fail(Malformed, "err is required (null when ok)")
 	}
-	if errv != nil {
+	if t.St == "ok" {
+		if errv != nil {
+			return nil, fail(Malformed, "err must be null when st is ok")
+		}
+	} else {
 		m, ok := errv.(map[string]any)
 		if !ok {
-			return nil, fail(Malformed, "err must be null or an object")
+			return nil, fail(Malformed, "err must be an object when st is not ok")
 		}
 		code, ok := m["code"].(string)
 		if !ok {
@@ -416,12 +547,6 @@ func ParseTally(obj wire.Object, signer string) (*Tally, error) {
 			}
 			t.Err.Ref = s
 		}
-	}
-	if t.St == "ok" && t.Err != nil {
-		return nil, fail(Malformed, "err must be null when st is ok")
-	}
-	if t.St != "ok" && t.Err == nil {
-		return nil, fail(Malformed, "err must be present when st is not ok")
 	}
 	out, present := obj["out"]
 	if !present {
@@ -462,51 +587,20 @@ func ParseTally(obj wire.Object, signer string) (*Tally, error) {
 		}
 		t.Rev = &until
 	}
-	if t.St == "pending" && (len(t.Used) != 0 || t.Rev != nil || t.Out != "") {
-		return nil, fail(Malformed, "a pending tally has empty used, null rev, null out")
+	if t.subRaw, err = objects(obj, "sub"); err != nil {
+		return nil, err
 	}
-	wrt, ok := obj["wrt"].([]any)
-	if !ok {
-		return nil, fail(Malformed, "wrt must be an array")
+	if t.wrtRaw, err = objects(obj, "wrt"); err != nil {
+		return nil, err
 	}
-	for i, e := range wrt {
-		o, ok := e.(map[string]any)
-		if !ok {
-			return nil, fail(Malformed, "wrt[%d] is not an object", i)
-		}
-		w, err := ParseWrit(o)
-		if err != nil {
-			return nil, err
-		}
-		t.Wrt = append(t.Wrt, w)
+	if t.St == "pending" && (t.Err.Code != "pending" || len(t.Used) != 0 || t.Rev != nil || t.Out != "" ||
+		len(t.subRaw) != 0 || len(t.wrtRaw) != 0) {
+		return nil, fail(Malformed, "a pending tally has err.code pending, empty used, sub, and wrt, and null rev and out")
 	}
-	sub, ok := obj["sub"].([]any)
-	if !ok {
-		return nil, fail(Malformed, "sub must be an array")
+	if err := checkSigMember(obj); err != nil {
+		return nil, err
 	}
-	for i, e := range sub {
-		o, ok := e.(map[string]any)
-		if !ok {
-			return nil, fail(Malformed, "sub[%d] is not an object", i)
-		}
-		// Signer of a sub-tally is the hld of the writ it names, which must be in wrt.
-		wh, _ := o["writ"].(string)
-		var signerSub string
-		for _, w := range t.Wrt {
-			if w.ID == wh {
-				signerSub = w.Hld
-			}
-		}
-		if signerSub == "" {
-			return nil, fail(SubUnmatched, "sub[%d] names writ %s absent from wrt", i, wh)
-		}
-		st, err := ParseTally(o, signerSub)
-		if err != nil {
-			return nil, err
-		}
-		t.Sub = append(t.Sub, st)
-	}
-	if err := checkSig(obj, signer); err != nil {
+	if err := verifySig(obj, signer); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -531,23 +625,12 @@ func ParseRevoke(obj wire.Object) (*Revoke, error) {
 			return nil, err
 		}
 	}
-	if r.Iss, ok = obj["iss"].(string); !ok {
-		return nil, fail(Malformed, "iss must be a string")
-	}
-	if err := checkKey(r.Iss); err != nil {
+	if r.Iss, err = keyMember(obj, "iss"); err != nil {
 		return nil, err
 	}
-	arr, ok := obj["chain"].([]any)
-	if !ok {
-		return nil, fail(Malformed, "chain must be an array")
-	}
-	if len(arr) > MaxChain {
-		return nil, fail(TooLarge, "chain has %d writs, limit %d", len(arr), MaxChain)
-	}
-	for i, e := range arr {
-		if _, ok := e.(map[string]any); !ok {
-			return nil, fail(Malformed, "chain[%d] is not an object", i)
-		}
+	arr, err := chainShape(obj["chain"])
+	if err != nil {
+		return nil, err
 	}
 	if r.Writ == "*" && len(arr) != 0 {
 		return nil, fail(Malformed, "a key-wide revoke must have an empty chain")
@@ -555,17 +638,13 @@ func ParseRevoke(obj wire.Object) (*Revoke, error) {
 	if r.Writ != "*" && len(arr) == 0 {
 		return nil, fail(Malformed, "a revoke of one writ must carry its chain")
 	}
-	sig, present := obj["sig"].(string)
-	if !present {
-		return nil, fail(Malformed, "sig must be a string")
-	}
-	if err := checkB64("sig", sig, 64); err != nil {
+	if err := checkSigMember(obj); err != nil {
 		return nil, err
 	}
 	if r.Chain, err = ParseChain(arr); err != nil {
 		return nil, err
 	}
-	if err := checkSig(obj, r.Iss); err != nil {
+	if err := verifySig(obj, r.Iss); err != nil {
 		return nil, err
 	}
 	return r, nil

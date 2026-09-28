@@ -4,6 +4,7 @@ package conformance
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,7 +48,9 @@ func Judge(v Vector) (Verdict, error) {
 		var in struct{ Raw, Canonical string }
 		_ = json.Unmarshal(v.Input, &in)
 		c, cerr := jcs.Canonicalize([]byte(in.Raw))
-		if cerr != nil {
+		if errors.Is(cerr, jcs.ErrTooDeep) {
+			reason, err = writ.TooLarge, cerr
+		} else if cerr != nil {
 			reason, err = writ.Noncanonical, cerr
 		}
 		canonical = string(c)

@@ -152,6 +152,7 @@ func NewTally(exe *keys.Identity, in TallyInput) (*Tally, any, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	t.Sub, t.Wrt = in.Sub, in.Wrt
 	return t, in.Res, nil
 }
 
