@@ -174,6 +174,8 @@ Avoid these, or expect collisions in search and in conversation.
 
 ## 7. The 2026 agent-delegation drafts, and where Writ stands (added 2026-09-04)
 
+Section 8 re-checks this section on 2026-09-28 against newer revisions and five more sources, and supersedes 7.1 and 7.3 where they differ.
+
 Six pieces of work published between March and September 2026 address the same gap as section 4 from different directions. Each was fetched from its primary source on 2026-09-04; each is summarized as it describes itself, and the comparison is against the v0.1 specification as revised the same day.
 
 **AIP and Invocation-Bound Capability Tokens** (arXiv 2603.24775v1, Sunil Prakash, Indian School of Business, 2026-03-25, https://arxiv.org/html/2603.24775v1). IBCTs come in two formats: a compact EdDSA-signed JWT carrying issuer, subject, scope, a budget in cents, a maximum delegation depth, and timestamps; and a chained Biscuit token whose Ed25519 append-only blocks carry attenuated scopes under Datalog evaluation, so that "each delegation block MUST be a subset of its parent's capabilities" and holders narrow "without contacting the issuer." Tokens are "verified offline without contacting an authorization server." Optional completion blocks appended after the work carry a result hash, a verification status, resource consumption, and cost; they are "self-reported by default" with escalation to counter-signed or third-party attested. Bindings: `X-AIP-Token` on every MCP tool call, and an `aip_token` field in A2A task metadata. Revocation is not provided; "AIP v1 relies on short-lived tokens." So: hash-linked offline attenuation, MCP and A2A bindings, and a form of completion evidence all exist here.
@@ -224,3 +226,34 @@ Writ's specific contribution is a compact, executable protocol for offline atten
 - Timestamps are claims. `acc` is the executor's word. An honest executor will not accept a forward call after `exp`; a dishonest one can backdate, and the tally is then evidence of a false statement, not a stopped action.
 - Key rotation. A did:key cannot rotate; the answer is short `exp` and a key-wide revoke. draft-asor's status list and AgentROA's registry are the online alternatives.
 - Root acceptance is policy. A chain proves attenuation from its root; whether the root matters is a decision each executor holds from outside the protocol.
+
+## 8. Re-check, 2026-09-28
+
+Every source below was read from its primary page on 2026-09-28; quotes are verbatim, with line breaks collapsed. The comparison is against the specification as revised that day.
+
+**Agent Passport System** (draft-pidlisnyi-aps-03, 2026-07-18, https://www.ietf.org/archive/id/draft-pidlisnyi-aps-03.txt). Missed by section 7 although it predates it. A post-execution record: "An action-result record has receipt_type "aps:action-result:v1". issuer is the enforcement boundary" (5.3.3), naming the delegation leaf, since "delegation_ref identifies the selected AuthorityDelegationV1 leaf" (5.1), with "status is succeeded, failed, or unknown" (5.3.3). Revocation "MUST initiate a cascade to all transitive descendants; a cascade is complete only when the cascade-completion record of Section 3.5.1 has been emitted" (3.5). Spend: "the boundary MUST atomically reserve the proposed amount against every bounded ancestor in the selected root-to-leaf chain" (4). Approvals are single-use and "An identical retry is idempotent; conflicting reuse is rejected" (3.4). No text cancels work already dispatched, and no replay returns a stored result.
+
+**Action Evidence Boundary** (draft-schrock-action-evidence-boundary-07, 2026-09-25, https://www.ietf.org/archive/id/draft-schrock-action-evidence-boundary-07.txt), "an executor-side processing model". After invocation "the boundary MUST classify the result as EXECUTED, FAILED, or INDETERMINATE" (5.13); a repeat is refused, not answered from storage: "the boundary MUST refuse a new attempt whose action key is occupied or closed" (5.10). Reconciliation runs from the executor to the provider (5.14), not from an issuer to the executor. It "defines no receipt or token format".
+
+**draft-hamr-oauth-agent-delegation-02** (2026-09-19). Budgets now come in classes, "rBudget, wBudget, and xBudget" (10.1), keyed to "the signature value of L(0), the root link" (10.3) and held "per verifier, not shared across verifiers" (10.4). Still "does not produce a receipt" (3) and "defines no revocation" (17). Its verification steps run "in the order given", but a failure at any step "MUST produce one uniform rejection outcome" (13), so the order is not observable.
+
+**draft-asor-wimse-agent-delegation-chain** is still -01. Its verifier denies "on the first failure" (6) without reason codes.
+
+**attenu-guard** (https://github.com/attenu-io/attenu-guard). Ships 20 Delegation Token vectors that "pin the required bytes and rejection reasons", one fault each, run by outside implementers (Node.js 20 of 20; Kieran Sweeney's Cred 17 of 20 with 3 declared gaps; Xuebin Ma's Rust verifier 19 of 19 on the observer-envelope vectors). Its bundle vectors score "the minimal set" of failures a verifier must report, and one envelope row pins a precedence between two faults on one input. Revocation is in-process: "revoke any node, every descendant denies immediately". The APS roadmap records that "attenu-guard (draft-asor-wimse-agent-delegation-chain-00) offered to run APS vectors through its verifier" (https://agent-passport.org/roadmap.html).
+
+**decionis agent-safe.verifying-provider/1** (version 0.2, draft, https://github.com/decionis/agent-safe-pipeline/blob/master/docs/authority/verifying-provider.md). A provider verification procedure: "Normative, in this order. The first failing step names the refusal, and a refusal effects nothing." Its vectors are run by "five implementations that must agree", all in the author's repository. The provider signs "what it effected, or refused", with `effect.status` `EFFECTED`, `REFUSED`, or `INDETERMINATE`, and "A signed refusal is evidence too."
+
+Also read: draft-mcgraw-httpapi-agent-budget-04 makes credential acceptance at most once but says it "does not guarantee exactly-once completion"; draft-noa-scitt-ai-agent-receipt-01 has seven lifecycle verdicts including ROLLED_BACK, and requires a verifier to report every failing condition, not the first; draft-abak-agent-control-delivery-evidence-01 models evidence that a revoke or cancel was delivered and applied, without defining the verbs; draft-watts-oauth-agent-revocation-closure-00 models cancelling a queued operation before its effect commits, and notes "Credential invalidation is not consequence reversal"; draft-schrock-ep-authorization-receipts-13 and draft-das-agentic-tool-binding-03 add nothing on these points (das -03 adds a signed receipt of each enforcement decision, before any effect).
+
+### 8.1 Where Writ stands now
+
+| Claim | 2026-09-04 | 2026-09-28 |
+|---|---|---|
+| a receipt signed by the executor, naming the exact delegation link | distinctive | partly shared: APS-03 names the leaf, signed by the enforcement boundary rather than each hop's executor |
+| a receipt tree: downstream receipts embedded verbatim, consumption summed and checked | distinctive | still distinctive; APS-03 sums spend in the boundary's ledger, not in receipts |
+| named outcomes beyond ok and failed | distinctive | largely shared (APS-03, AEB-07, noa-01, decionis); a signed `undeliverable` for a sub-call that never answered is Writ's |
+| at most one execution, with the stored receipt returned byte for byte on replay | distinctive | narrowly: at most once is shared (AEB-07, APS-03); none returns the stored receipt, AEB refuses the repeat |
+| recovery and reversal by any upstream issuer after expiry or revocation, bounded by the executor's `rev.until` | distinctive | still distinctive; elsewhere reversal is a newly authorized compensating action or a recorded verdict |
+| revoke that cancels in-flight work and is forwarded down | distinctive | partly shared and narrower: APS-03 cascades revocation, attenu denies later checks, watts-00 and abak-01 model cancelling before the effect without a wire mechanism |
+| a normative first-failure order pinned by a cross-implementation corpus | distinctive | partly shared: decionis pins a normative order with named codes across five implementations by one author; attenu pins one two-fault precedence across three. Writ's remaining difference is a full order exercised by two-fault vectors and a differential fuzzer; its two implementations are also by one author |
+

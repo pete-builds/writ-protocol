@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -177,7 +178,9 @@ func TestRevokeCancelsInflightAndRestartRecovers(t *testing.T) {
 	w1c, _ := writ.Issue(A, B.DID(), bnd("act", "prefix", "travel"), now+3600, nil)
 	w2c, _ := writ.Issue(B, e.ID.DID(), bnd("act", "prefix", "travel"), now+3600, w1c)
 	k3, _ := writ.NewCall(B, []*writ.Writ{w1c, w2c}, "travel/y", map[string]any{})
-	e.Store.putCall(&Record{LeafID: w2c.ID, CID: k3.CID, Acc: now, Exp: w2c.Exp, Call: k3.Raw})
+	if _, _, err := e.Store.admit(&Record{LeafID: w2c.ID, CID: k3.CID, Acc: now, Exp: w2c.Exp, Call: k3.Raw}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	e2 := newC(t, path, A, nil)
 	if n := e2.Recover(); n != 1 {
 		t.Fatalf("recovered %d, want 1", n)
@@ -191,4 +194,72 @@ func TestRevokeCancelsInflightAndRestartRecovers(t *testing.T) {
 		t.Fatalf("want unknown_outcome after restart, got %+v", t3.Err)
 	}
 	_ = wire.Object{}
+}
+
+// TestConcurrentDuplicateExecutesOnce: spec section 7 makes steps 9 and 10
+// one atomic operation, so identical calls arriving together execute once.
+// The others are answered from the call store: pending while the first is
+// running, its final tally after.
+func TestConcurrentDuplicateExecutesOnce(t *testing.T) {
+	A, B := id(1), id(2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	runs := 0
+	// A file-backed store, as a real executor runs: each store write is a
+	// file write, which is the window a non-atomic check-then-record leaves.
+	e := newC(t, filepath.Join(t.TempDir(), "store.json"), A, func(ctx context.Context, k *writ.Call) Result {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		<-release
+		return Result{Res: map[string]any{"ok": true}}
+	})
+	w1, _ := writ.Issue(A, B.DID(), bnd("act", "prefix", "travel"), now+3600, nil)
+	w2, _ := writ.Issue(B, e.ID.DID(), bnd("act", "prefix", "travel"), now+3600, w1)
+	k, _ := writ.NewCall(B, []*writ.Writ{w1, w2}, "travel/book", map[string]any{})
+	const n = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	sts := make(chan string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rep, rej := e.Execute(context.Background(), k.Raw)
+			if rej != nil {
+				sts <- "unsigned:" + string(rej.Code)
+				return
+			}
+			tt, _ := writ.ParseTally(rep.Tally, e.ID.DID())
+			sts <- tt.St
+		}()
+	}
+	close(start)
+	// Let the duplicates arrive while the first call is running, then release it.
+	deadline := time.After(2 * time.Second)
+	answered := 0
+wait:
+	for answered < n-1 {
+		select {
+		case st := <-sts:
+			if st != "pending" {
+				t.Errorf("a duplicate answered %q while the first call was running", st)
+			}
+			answered++
+		case <-deadline:
+			break wait
+		}
+	}
+	close(release)
+	wg.Wait()
+	close(sts)
+	for st := range sts {
+		if st != "ok" && st != "pending" {
+			t.Errorf("answer %q, want ok or pending", st)
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("handler ran %d times for one call id, want 1", runs)
+	}
 }

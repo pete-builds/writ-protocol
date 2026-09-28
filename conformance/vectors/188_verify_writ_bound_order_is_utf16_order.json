@@ -1,0 +1,59 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    },
+    "｡": {
+     "t": "max",
+     "v": -1
+    },
+    "😀": {
+     "t": "glob",
+     "v": "*"
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "3b6IF9DqYJ-CkDRGJjmLNB4sVjko25CrAOlNRO9XLbQuMrtcdmklkNgTa7HHui5LgXPfuitF5QGu7B4SCUasCQ",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "bound order is utf16 order",
+ "op": "verify_writ",
+ "reason": "unknown_bound"
+}

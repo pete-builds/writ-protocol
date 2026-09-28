@@ -1,0 +1,47 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:web:a.example",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "JIeiOLJViGpfKEVmt7Gj5P-2MkDHkYC6BJmQKFpuxK9rpbInnfI19MFaCdaB1qtifKZewIL0TGVwtgO38MRdBA",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "iss key before bnd",
+ "op": "verify_writ",
+ "reason": "bad_key"
+}

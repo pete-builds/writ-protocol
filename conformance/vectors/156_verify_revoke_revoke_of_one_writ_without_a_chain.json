@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "revoke": {
+   "chain": [],
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "sig": "uw61MKofuEH3QyqZjgYdrsoMDrnW1WEhYIZaDOWERLdusGO2c7EqFLNzqZiaNLSpu4BppZplp8vwbZcHXeV3BQ",
+   "typ": "revoke",
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U"
+  }
+ },
+ "name": "revoke of one writ without a chain",
+ "op": "verify_revoke",
+ "reason": "malformed"
+}

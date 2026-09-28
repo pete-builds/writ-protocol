@@ -121,12 +121,13 @@ def satisfies(bound, arg):
 
 
 def check_narrows(child, parent):
-    """Vector-style check: validate both, then require narrowing.
+    """Vector-style check: validate the child, then the parent, then require
+    narrowing (section 14).
 
     Raises the validation reason, or ``not_narrowed``.
     """
-    validate(parent, "parent")
     validate(child, "child")
+    validate(parent, "parent")
     if child["t"] != parent["t"]:
         raise WritError("not_narrowed", "child retypes the bound")
     if not narrows(child, parent):

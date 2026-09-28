@@ -4,8 +4,10 @@
 # implementation is developed on 1.26) and Python 3.12 through 3.14 (the
 # second implementation is developed on 3.14). Every job fails on any
 # divergence: a Go test, a Python test, a vector either implementation
-# rejects differently from the other, a corpus that is not byte-for-byte
-# reproducible from the generators, or a demo expectation that does not hold.
+# rejects differently from the other, an executor scenario either
+# implementation answers differently, a fuzzed input the two judge
+# differently, a corpus that is not byte-for-byte reproducible from the
+# generators, or a demo expectation that does not hold.
 name: ci
 
 on:
@@ -81,6 +83,41 @@ jobs:
       - name: Python verifier on the Python vectors
         working-directory: impl/python
         run: python -m writ.cli conformance vectors
+      - name: Go executor on the scenarios
+        working-directory: impl/go
+        run: go run ./cmd/writ scenarios ../../conformance/scenarios
+      - name: Python executor on the scenarios
+        working-directory: impl/python
+        run: python -m writ.cli scenarios ../../conformance/scenarios
+
+  fuzz:
+    name: differential fuzz, fixed seed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "$PYTHON_CRYPTOGRAPHY"
+      # The Go verifier judges 20,000 mutated inputs and writes each as a
+      # vector; the Python verifier must reach the same verdict and reason on
+      # every one. A fixed seed makes a failure here reproducible locally.
+      - name: generate and judge with Go
+        working-directory: impl/go
+        run: go run ./cmd/writ-fuzz -seed 1 -n 20000 -out "$RUNNER_TEMP/fuzz"
+      - name: Python must agree on every input
+        working-directory: impl/python
+        run: |
+          if ! python -m writ.cli conformance "$RUNNER_TEMP/fuzz" > "$RUNNER_TEMP/fuzz.log"; then
+            grep '^FAIL' "$RUNNER_TEMP/fuzz.log" | head -100
+            tail -1 "$RUNNER_TEMP/fuzz.log"
+            exit 1
+          fi
+          tail -1 "$RUNNER_TEMP/fuzz.log"
 
   vectors:
     name: deterministic vector regeneration
@@ -101,10 +138,13 @@ jobs:
       - name: regenerate the Python vectors
         working-directory: impl/python
         run: python tools/gen_vectors.py
-      - name: every vector must be reproducible byte for byte
+      - name: regenerate the scenarios
+        working-directory: impl/go
+        run: go run ./cmd/writ-scenarios
+      - name: every vector and scenario must be reproducible byte for byte
         run: |
-          git add -A conformance/vectors impl/python/vectors
-          git diff --cached --stat --exit-code conformance/vectors impl/python/vectors
+          git add -A conformance/vectors conformance/scenarios impl/python/vectors
+          git diff --cached --stat --exit-code conformance/vectors conformance/scenarios impl/python/vectors
 
   demo:
     name: three-process demo

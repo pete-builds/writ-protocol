@@ -152,6 +152,7 @@ func NewTally(exe *keys.Identity, in TallyInput) (*Tally, any, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	t.Sub, t.Wrt = in.Sub, in.Wrt
 	return t, in.Res, nil
 }
 
@@ -176,19 +177,16 @@ func NewRevoke(iss *keys.Identity, chain []*Writ) (*Revoke, error) {
 	return ParseRevoke(obj)
 }
 
-// CheckRevoke validates a parsed revoke per section 9.1.
+// CheckRevoke runs section 9.1 step 4 on a revoke ParseRevoke accepted.
 func CheckRevoke(r *Revoke) error {
 	if r.Writ == "*" {
-		if len(r.Chain) != 0 {
-			return fail(Malformed, "key-wide revoke must have an empty chain")
-		}
 		return nil
 	}
 	if err := VerifyChain(r.Chain); err != nil {
 		return err
 	}
 	if r.Chain[len(r.Chain)-1].ID != r.Writ {
-		return fail(TallyMismatch, "revoke names %s but chain leaf is %s", r.Writ, r.Chain[len(r.Chain)-1].ID)
+		return fail(ChainBroken, "revoke names %s but chain leaf is %s", r.Writ, r.Chain[len(r.Chain)-1].ID)
 	}
 	if !Issuers(r.Chain)[r.Iss] {
 		return fail(NoStanding, "revoker %s is not an issuer on the chain", r.Iss)

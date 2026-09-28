@@ -104,6 +104,12 @@ func VerifyChain(chain []*Writ) error {
 			return err
 		}
 	}
+	return checkDepth(chain)
+}
+
+// checkDepth is the depth rule of section 4 over a whole chain: the writ at
+// index i of n, if it carries depth, has at most depth.v writs below it.
+func checkDepth(chain []*Writ) error {
 	n := int64(len(chain))
 	for i, w := range chain {
 		if d, ok := w.Bnd["depth"]; ok && n-1-int64(i) > d.Int {
@@ -184,10 +190,18 @@ func CheckForward(k *Call) error {
 	return CheckArgs(leaf, k.Args)
 }
 
-// CheckStanding implements the standing-call rule: from is an issuer on the chain.
+// StandingOps are the standing operations spec section 8 defines.
+var StandingOps = map[string]bool{"sys/undo": true, "sys/tallies": true}
+
+// CheckStanding implements the standing-call rules of section 5 and section 7
+// step 8: from is an issuer on the chain, then op is a defined standing
+// operation.
 func CheckStanding(k *Call) error {
 	if !Issuers(k.Chain)[k.From] {
 		return fail(NoStanding, "from %s is not an issuer on the chain", k.From)
+	}
+	if !StandingOps[k.Op] {
+		return fail(ForbiddenOp, "%q is not a standing operation", k.Op)
 	}
 	return nil
 }

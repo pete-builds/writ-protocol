@@ -1,0 +1,71 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "a": {
+     "t": "glob",
+     "v": "*"
+    },
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "b": {
+     "t": "max",
+     "v": -1
+    },
+    "c": {
+     "t": "max",
+     "v": -1
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "d": {
+     "t": "max",
+     "v": -1
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "e": {
+     "t": "max",
+     "v": -1
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "LDNcf7n4tJ2HWySMlip3Cw_jOtP5rl_5-czbwa23HGqQ4qj-8vVRaUdcHYKXL1x7GA_YPiFMcsVrAyyZ9sedCA",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "bounds in canonical name order",
+ "op": "verify_writ",
+ "reason": "unknown_bound"
+}

@@ -1,0 +1,752 @@
+{
+ "name": "undo standing and idempotency",
+ "executor": {
+  "seed": "0303030303030303030303030303030303030303030303030303030303030303",
+  "accept": [
+   "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+  ]
+ },
+ "steps": [
+  {
+   "do": "call",
+   "note": "the charge",
+   "now": 1788400010,
+   "call": {
+    "args": {
+     "amount": 58900
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDAzNg",
+    "op": "travel/charge",
+    "sig": "23ZUzlHvzIfvagDUeTm2_7ICEU8xn6TkoduetCkYUDXOwCEuHMJhH3g8KTuu4upXsJm2T7gjxQcFzruDOechBg",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "ok",
+    "res": {
+     "charge": "ch_1"
+    },
+    "used": {
+     "amount": 58900
+    },
+    "rev": 1788486400
+   },
+   "expect": {
+    "res": {
+     "charge": "ch_1"
+    },
+    "tally": {
+     "acc": 1788400010,
+     "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+     "err": null,
+     "op": "travel/charge",
+     "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+     "rev": {
+      "until": 1788486400
+     },
+     "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {
+      "amount": 58900
+     },
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "a stranger",
+   "now": 1788400020,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+    "id": "c2NlbmUtMDAwMDAwMDAzNw",
+    "op": "sys/undo",
+    "sig": "PwP0_03wEAcuHIHDWpyMIYfsK8HWmbN4we_4oxAAt_FUCTExcRKZWGW-iAb6zrds5I7CuTITRYf5R26rdasrBA",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400020,
+     "call": "3iaJ60iKfYILKYBmlOwrJAYrNrJ8HbHuqn11Ma8NLjc",
+     "err": {
+      "code": "no_standing"
+     },
+     "op": "sys/undo",
+     "out": null,
+     "rev": null,
+     "sig": "ZWqcKnLqNli2oNbLhXz5libZpX0gP1xHVtBZWRVU0f5gEyIkIe6GkswW-Q3NMNn-QvIpiRJpvQ59KK3bGcepBQ",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "the executor itself is not an issuer on the chain",
+   "now": 1788400021,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "id": "c2NlbmUtMDAwMDAwMDAzOA",
+    "op": "sys/undo",
+    "sig": "zRl6qmjZi0fCAMw8CJKlprFoHNi3-gleNJ1gpfLFtajdhc0KbXeJoAx7cgceI7UvYO65pTksSYRf9T4PZZoNDQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400021,
+     "call": "9mywY2Nk3px4QztLKzkyTOqcels31uJ_pDjFETL53MM",
+     "err": {
+      "code": "no_standing"
+     },
+     "op": "sys/undo",
+     "out": null,
+     "rev": null,
+     "sig": "P0m-huxDjNEw8RtWtHA-xtjN6MIKLp0vcC8nGShnqD77CziUH1C7wD_uWHn2PLKEoCHmkdX1cVpLJ0HMf3hTAQ",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "the root issuer reverses the charge without B",
+   "now": 1788400030,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzOQ",
+    "op": "sys/undo",
+    "sig": "Lc_kJaISfNNUDB5EZY0QREq36GZP12_hfQ_EShiuApz3Vuq3auiCvLLjGdQV8q9-VVv-H6Dn0BQjU_aGcIKJDQ",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "ok",
+    "res": {
+     "refund": "rf_1"
+    }
+   },
+   "expect": {
+    "res": {
+     "refund": "rf_1"
+    },
+    "tally": {
+     "acc": 1788400030,
+     "call": "pgnTlHutXdxyH18iDQ55RH2mvPt81TKVQYS5EjhmIaA",
+     "err": null,
+     "op": "sys/undo",
+     "out": "GUBj91CyxMGDQRtH2YF61Daz_J3a2jFTsFI2lavwBVQ",
+     "rev": null,
+     "sig": "S7iq-3i50o5Z07sGAl_YCBw_hBnjM_OHNErXlQZAFAIF0PyHOY4Rr_ihuo3OEe57m9NUNxJ8JJe8XjYTDRPNDg",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "a replay of the undo returns its stored tally",
+   "now": 1788400031,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzOQ",
+    "op": "sys/undo",
+    "sig": "Lc_kJaISfNNUDB5EZY0QREq36GZP12_hfQ_EShiuApz3Vuq3auiCvLLjGdQV8q9-VVv-H6Dn0BQjU_aGcIKJDQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "refund": "rf_1"
+    },
+    "tally": {
+     "acc": 1788400030,
+     "call": "pgnTlHutXdxyH18iDQ55RH2mvPt81TKVQYS5EjhmIaA",
+     "err": null,
+     "op": "sys/undo",
+     "out": "GUBj91CyxMGDQRtH2YF61Daz_J3a2jFTsFI2lavwBVQ",
+     "rev": null,
+     "sig": "S7iq-3i50o5Z07sGAl_YCBw_hBnjM_OHNErXlQZAFAIF0PyHOY4Rr_ihuo3OEe57m9NUNxJ8JJe8XjYTDRPNDg",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "a new undo call performs nothing and returns the reversal's body",
+   "now": 1788400040,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDA0MA",
+    "op": "sys/undo",
+    "sig": "Sms34kibcPDkPyDchul3dtk-r_ZJ6Q54JG8prLWWETmjQCjO_JY2jPGeEB6amaSDu4awyvkgdYX0LUPjXDe0Bw",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "refund": "rf_1"
+    },
+    "tally": {
+     "acc": 1788400040,
+     "call": "8Hp_ZfMPaKW1e4hU75Dk_AR2zt8ERMZbKtVgyosIiG8",
+     "err": null,
+     "op": "sys/undo",
+     "out": "GUBj91CyxMGDQRtH2YF61Daz_J3a2jFTsFI2lavwBVQ",
+     "rev": null,
+     "sig": "SF0hzbbjlNRWRBYLVTZG3T0PpSbLhDjubCuPqxQmjJS63eW_BV5DkWiMM4sIEwhXcI5Stl6TSkvA2LhhhwJgAA",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "the intermediate issuer has standing too",
+   "now": 1788400050,
+   "call": {
+    "args": {
+     "tally": {
+      "acc": 1788400010,
+      "call": "Smhi7iTwnhIP_-V2enCpxFcaWz0v5PazL5nYKXepRAA",
+      "err": null,
+      "op": "travel/charge",
+      "out": "5kmtVpEXh2Trk-obCCg1BRR_UIwgj0cKPFqWQSKS1AQ",
+      "rev": {
+       "until": 1788486400
+      },
+      "sig": "6YG-L-n1RluvRdl4rrkRk17CnO18WVxbvrm8_eMGCLBfXJdyJC3TaTUN6las1K8cmXxt9XflwfqKiDG_641lAg",
+      "st": "ok",
+      "sub": [],
+      "typ": "tally",
+      "used": {
+       "amount": 58900
+      },
+      "v": 1,
+      "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+      "wrt": []
+     }
+    },
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel"
+       },
+       "amount": {
+        "t": "max",
+        "v": 60000
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNA",
+      "prv": null,
+      "sig": "X4QOXPmxykUSaS1MTrsUom1eIrlSiMsiS9qsqxsl_Jy0dCMvZsxvuwCCLv9eNzxT4nHZpB4sqxYvGUhmKQx_Bg",
+      "typ": "writ",
+      "v": 1
+     },
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "travel/charge"
+       },
+       "amount": {
+        "t": "max",
+        "v": 58900
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788401800,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+      "nnc": "c2NlbmUtMDAwMDAwMDAzNQ",
+      "prv": "wWbTcmfTvj-r-tcd57TUzT7KeqwtPklYBZAY0MLCs1Q",
+      "sig": "ObvSpzCrkj3l_HHquAv65k_8bN6qO4gGaUkU_uIJhctlEU7IKdvkvDKIr7MOFxaQSn9FJgrbwXkqtrq3V7n0DA",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "id": "c2NlbmUtMDAwMDAwMDA0MQ",
+    "op": "sys/undo",
+    "sig": "04zT2ayJMeWnPVWhG8m7voAWNb0j2lxPd8ZWOV4U7leQD2fobIQgOt0-Tk_E8Eo-0z4nNYrbsmDXB7oYCJTUAQ",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "res": {
+     "refund": "rf_1"
+    },
+    "tally": {
+     "acc": 1788400050,
+     "call": "b1pr3VhhiaLw90odcHnbwlNq5__vrT93wXbBnq-ms_M",
+     "err": null,
+     "op": "sys/undo",
+     "out": "GUBj91CyxMGDQRtH2YF61Daz_J3a2jFTsFI2lavwBVQ",
+     "rev": null,
+     "sig": "XXxw4h1c-bDtEZ3L_aIQWi7WuBfQwV14sZ6et-s0tFAFBq6EHky5KK79PkgMcpXriV-J7cLbgKxgyjTC38PLAQ",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AuPf8A1Y40fzSHcKH7ELElEWFKsUvLqTTAQ6AOsYpgg",
+     "wrt": []
+    }
+   }
+  }
+ ]
+}

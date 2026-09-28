@@ -69,7 +69,8 @@ def verify_writ(data):
 def verify_chain(chain, now=None):
     """Section 2.1 plus expiry. Returns the parsed chain or raises.
 
-    Order: chain length (too_large), every writ passes 6.1 in order, root
+    Order: an array, chain length (too_large), every element an object,
+    not empty, every writ passes 6.1 in order, root
     prv is null, each adjacent pair attenuates (section 4), depth over the
     whole chain, then now < exp for every writ (expired). ``now`` None
     means the real clock; verify.NO_CLOCK skips the expiry step.
@@ -78,6 +79,9 @@ def verify_chain(chain, now=None):
         raise WritError("malformed", "chain is not an array")
     if len(chain) > O.MAX_CHAIN:
         raise WritError("too_large", f"chain has {len(chain)} writs, limit {O.MAX_CHAIN}")
+    for i, w in enumerate(chain):
+        if not isinstance(w, dict):
+            raise WritError("malformed", f"chain[{i}] is not an object")
     if not chain:
         raise WritError("malformed", "chain is empty")
     writs = [O.verify_object(w, "writ") for w in chain]
@@ -107,33 +111,45 @@ def check_forward_args(leaf, args):
 STANDING_OPS = ("sys/undo", "sys/tallies")
 
 
-def check_standing_args(op, args, writs, ids, now):
-    """Section 8: the stateless checks on a standing call's args.
+def check_standing_args(op, args, writs, ids, now, from_):
+    """Section 8: the checks on a standing call's args that need no store.
+
+    An executor runs them when it performs the operation (section 7 step
+    11), after replay, so a failure is a stored outcome, not a refusal.
 
     An op under sys/ that is not a defined standing operation is
-    forbidden_op. sys/undo: the target tally verifies under the leaf hld
-    (not_reversible), names the leaf writ (tally_mismatch), is reversible
-    now (not_reversible), and is ok (not_reversible). sys/tallies: the
-    named writ is in the chain (tally_mismatch).
+    forbidden_op. sys/undo (section 8.1, in its order): args.tally is an
+    object (malformed); it passes section 6.1 signed by the leaf hld, which
+    at an executor is its own key (any failure is not_reversible); it names
+    the leaf writ (tally_mismatch); it has a rev, now < rev.until, and st
+    is ok (not_reversible). The last 8.1 check, that the tally is held in
+    the executor's tally store, is the executor's. sys/tallies: args.writ
+    is the identity of a writ in the chain that ``from_`` issued, or of one
+    below it (tally_mismatch).
+
+    Returns the parsed target tally for sys/undo, else None.
     """
     if op not in STANDING_OPS:
         raise WritError("forbidden_op", f"{op!r} is not a standing operation")
     leaf = writs[-1]
     if op == "sys/undo":
         target = args.get("tally")
+        if not isinstance(target, dict):
+            raise WritError("malformed", "args.tally is not an object")
         try:
             target = O.verify_object(target, "tally", signer=leaf["hld"])
         except WritError as e:
-            raise WritError("not_reversible", f"target tally does not verify under the leaf hld: {e.message}") from None
+            raise WritError("not_reversible", f"target tally does not verify under the leaf hld: {e.reason}: {e.message}") from None
         if target["writ"] != ids[-1]:
             raise WritError("tally_mismatch", "target tally names a writ other than the leaf")
-        if target["rev"] is None or now >= target["rev"]["until"]:
-            raise WritError("not_reversible", "target tally has no rev or its until has passed")
-        if target["st"] != "ok":
-            raise WritError("not_reversible", "target tally is not ok")
-    elif op == "sys/tallies":
-        if args.get("writ") not in ids:
-            raise WritError("tally_mismatch", "args.writ is not the identity of a writ in the chain")
+        if target["rev"] is None or now >= target["rev"]["until"] or target["st"] != "ok":
+            raise WritError("not_reversible", "target tally has no rev, is past rev.until, or is not ok")
+        return target
+    w = args.get("writ")
+    first = next((i for i, x in enumerate(writs) if x["iss"] == from_), len(writs))
+    if not isinstance(w, str) or w not in ids[first:]:
+        raise WritError("tally_mismatch", "args.writ is not a writ in the chain that from issued, or one below it")
+    return None
 
 
 def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None, standing_ops=True):
@@ -143,8 +159,9 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
     iterable of root issuer dids (step 5), ``revoked`` a set of revoked writ
     identities (step 7, forward calls only, as is expiry at step 4). Each of
     the three is skipped when None. With
-    ``standing_ops`` false a standing call gets only the no_standing check,
-    which is the conformance scope of the verify_call op. Returns the
+    ``standing_ops`` false a standing call gets only the no_standing and
+    forbidden_op checks, which is the conformance scope of the verify_call
+    op. Returns the
     parsed call.
     """
     call = O.check_structure(data, "call")                      # step 1
@@ -174,7 +191,9 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
         if call["from"] not in {w["iss"] for w in writs}:
             raise WritError("no_standing", "from is not the iss of any writ in the chain")
         if standing_ops:
-            check_standing_args(op, call["args"], writs, ids, t)
+            check_standing_args(op, call["args"], writs, ids, t, call["from"])
+        elif op not in STANDING_OPS:
+            raise WritError("forbidden_op", f"{op!r} is not a standing operation")
     else:
         if call["from"] != leaf["iss"]:
             raise WritError("no_standing", "from is not the leaf iss")
@@ -186,23 +205,29 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
 
 
 def verify_revoke(data, now=None):
-    """Section 9.1: a revoke passes 6.1, its chain is valid, its leaf is the
-    revoked writ, and the revoker is an issuer on the chain.
+    """Section 9.1, its four checks in its order.
 
-    Reasons beyond 6.1: chain failures as reported by section 4;
-    chain_broken when the leaf identity is not ``writ``; no_standing when
-    ``iss`` is not the iss of a writ in the chain. Expiry is not checked,
-    since revoking an expired writ is harmless. Returns the parsed revoke.
+    1. Section 6.1 steps 1 to 5 on the revoke (writ a hash or "*", iss a
+       key, chain an array of at most 8 objects, empty exactly when writ
+       is "*").
+    2. Every writ in chain passes section 6.1, in array order.
+    3. The revoke's signature verifies under iss (bad_signature).
+    4. Unless writ is "*": the chain is valid (section 4, with its
+       reasons); its leaf identity is writ (chain_broken); iss is the iss
+       of some writ in the chain (no_standing).
+
+    Expiry is not checked on a revoke, so ``now`` is accepted and ignored.
+    Returns the parsed revoke with its chain replaced by parsed writs.
     """
-    r = O.verify_object(data, "revoke")
-    if r["writ"] == "*":
-        return r
-    writs = [O.verify_object(w, "writ") for w in r["chain"]]
-    ids = C.check_chain(writs)
-    if ids[-1] != r["writ"]:
-        raise WritError("chain_broken", "the chain's leaf is not the revoked writ")
-    if r["iss"] not in {w["iss"] for w in writs}:
-        raise WritError("no_standing", "iss is not the issuer of any writ in the chain")
+    r = O.check_structure(data, "revoke")                        # 1
+    writs = [O.verify_object(w, "writ") for w in r["chain"]]     # 2
+    O.check_signature(r, r["iss"])                               # 3
+    if r["writ"] != "*":                                         # 4
+        ids = C.check_chain(writs)
+        if ids[-1] != r["writ"]:
+            raise WritError("chain_broken", "the chain's leaf is not the revoked writ")
+        if r["iss"] not in {w["iss"] for w in writs}:
+            raise WritError("no_standing", "iss is not the issuer of any writ in the chain")
     r["chain"] = writs
     return r
 
@@ -252,7 +277,7 @@ def _tree(writ, writ_id, chain, tally, call=None, call_id=None, res=None):
         wrt_ids = {i: x for i, x in wrt}
         for S in T["sub"]:                                                    # step 9
             named = S.get("writ") if isinstance(S, dict) else None
-            if named not in wrt_ids:
+            if not isinstance(named, str) or named not in wrt_ids:
                 raise WritError("sub_unmatched", "sub-tally names a writ absent from wrt")
             X = wrt_ids[named]
             sub = _tree(X, named, chain + [X], S)

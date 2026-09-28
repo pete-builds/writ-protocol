@@ -1,0 +1,22 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "set",
+   "v": [
+    "a",
+    "a",
+    {}
+   ]
+  },
+  "parent": {
+   "t": "set",
+   "v": [
+    "a"
+   ]
+  }
+ },
+ "name": "set elements in array order",
+ "op": "narrows",
+ "reason": "noncanonical"
+}

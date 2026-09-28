@@ -293,7 +293,9 @@ func TestTallyRejections(t *testing.T) {
 	forged["wrt"] = []any{}
 	forged, _ = normalize(forged)
 	_ = wire.Sign(forged, p.B)
-	if v, _, err := VerifyTally(p.W1, kAB, forged, nil); v != Unverifiable || CodeOf(err) != SubUnmatched {
+	// Spec 6.2 step 9 and the verdict paragraph (2026-09-28): T's own signer
+	// admitted the unmatched sub-tally, so T is signed_unauthorized.
+	if v, _, err := VerifyTally(p.W1, kAB, forged, nil); v != SignedUnauthorized || CodeOf(err) != SubUnmatched {
 		t.Errorf("sub without wrt: got %s/%v", v, err)
 	}
 	check("wrong signer", base(), p.C, nil, BadSignature, Unverifiable)

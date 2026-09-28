@@ -1,0 +1,252 @@
+{
+ "name": "several count bounds on one writ, the smallest holds",
+ "executor": {
+  "seed": "0303030303030303030303030303030303030303030303030303030303030303",
+  "accept": [
+   "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+  ]
+ },
+ "steps": [
+  {
+   "do": "call",
+   "note": "the one use",
+   "now": 1788400010,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "x"
+       },
+       "retries": {
+        "t": "count",
+        "v": 10
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAyOQ",
+      "prv": null,
+      "sig": "4RisV36xgv7u4NMn-E2FAygINjaMed71lJdFt4p13hOEBmSLKFiAAbUttFdy0I1Xp6cdLVMX4Bux2gbatnWtDQ",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzMA",
+    "op": "x",
+    "sig": "bGJVETlNE4Fx2qPkd_b4Y3aSIKSEKjiY7VoxmvpduImBVMDrEb9eG7fKDT3r7dxlqREiysin-anPEe1uWxv4DQ",
+    "typ": "call",
+    "v": 1
+   },
+   "app": {
+    "st": "ok"
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400010,
+     "call": "jDnpticAeIGFzQetceqjIWvsLiflochGErKEVm60Rrk",
+     "err": null,
+     "op": "x",
+     "out": null,
+     "rev": null,
+     "sig": "HBmLE4aqoECQfg9A7LSEXjETTuCDxSI-nK2cLPEns1tPTKFaBM8bODRueDlIro07mZq8OnROA5hvlss5c-IbCw",
+     "st": "ok",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AKqv6Ahi_-sVGtGfIYypGQv3BErgyn695ym3JLgdehU",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "uses 1 holds whatever retries allows",
+   "now": 1788400020,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "x"
+       },
+       "retries": {
+        "t": "count",
+        "v": 10
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAyOQ",
+      "prv": null,
+      "sig": "4RisV36xgv7u4NMn-E2FAygINjaMed71lJdFt4p13hOEBmSLKFiAAbUttFdy0I1Xp6cdLVMX4Bux2gbatnWtDQ",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzMQ",
+    "op": "x",
+    "sig": "pBoklKQSBQQCcE4AmHzVwPnVyE436-Ot3FI4U5J5TNTJUl3GBNiEOLO1vfoqdqh8otY90_MIvPFXx62Jn4noBw",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400020,
+     "call": "6l8q9x3a7nujj8KCHE-t3xE0k7DRJLl71VegvYbh_JA",
+     "err": {
+      "code": "count_exhausted"
+     },
+     "op": "x",
+     "out": null,
+     "rev": null,
+     "sig": "pqnRzAjt068-9EM5YcT4FQEclQHwqYSoyrKmKguytpPORokwU02I5JgCyZ7eD-YoLGh4b3qMCgdwLCDG7saEAw",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AKqv6Ahi_-sVGtGfIYypGQv3BErgyn695ym3JLgdehU",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "uses 1 holds whatever retries allows",
+   "now": 1788400021,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "x"
+       },
+       "retries": {
+        "t": "count",
+        "v": 10
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAyOQ",
+      "prv": null,
+      "sig": "4RisV36xgv7u4NMn-E2FAygINjaMed71lJdFt4p13hOEBmSLKFiAAbUttFdy0I1Xp6cdLVMX4Bux2gbatnWtDQ",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzMg",
+    "op": "x",
+    "sig": "3dJYUxdpO6E8mkvx1GtGQ1vceG2TCiIo9aK6pxv_XwjShTrll8wuIbfgq0-rcyX2L8gs2DCvjJegg-_clZGXDA",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400021,
+     "call": "cz0D2CFHRQgL24sFavwUnKPzmctmntCJhBhKwwfig1g",
+     "err": {
+      "code": "count_exhausted"
+     },
+     "op": "x",
+     "out": null,
+     "rev": null,
+     "sig": "aAfL47LNGTp1hG0At018Lp4KdqP7H3jV6op3ZaJRBsQkSK9WLx0sU9mS-1uVVB9k_f4VSPPOcHfyIZvg9VwhAg",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AKqv6Ahi_-sVGtGfIYypGQv3BErgyn695ym3JLgdehU",
+     "wrt": []
+    }
+   }
+  },
+  {
+   "do": "call",
+   "note": "uses 1 holds whatever retries allows",
+   "now": 1788400022,
+   "call": {
+    "args": {},
+    "chain": [
+     {
+      "bnd": {
+       "act": {
+        "t": "prefix",
+        "v": "x"
+       },
+       "retries": {
+        "t": "count",
+        "v": 10
+       },
+       "uses": {
+        "t": "count",
+        "v": 1
+       }
+      },
+      "exp": 1788403600,
+      "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+      "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+      "nnc": "c2NlbmUtMDAwMDAwMDAyOQ",
+      "prv": null,
+      "sig": "4RisV36xgv7u4NMn-E2FAygINjaMed71lJdFt4p13hOEBmSLKFiAAbUttFdy0I1Xp6cdLVMX4Bux2gbatnWtDQ",
+      "typ": "writ",
+      "v": 1
+     }
+    ],
+    "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "id": "c2NlbmUtMDAwMDAwMDAzMw",
+    "op": "x",
+    "sig": "I5dyvhgFHjWQT4Ah58iKUu6gCoBlbAL4-JVDzZuGsDkCRSYU1nACDu7qeOfJNYDfLHDZw2I6w4aONx1TFf4tDg",
+    "typ": "call",
+    "v": 1
+   },
+   "expect": {
+    "tally": {
+     "acc": 1788400022,
+     "call": "CxnHct6D7CmRGtUTD5U8oBTV9WlnAnPhfuKSAbr0oLI",
+     "err": {
+      "code": "count_exhausted"
+     },
+     "op": "x",
+     "out": null,
+     "rev": null,
+     "sig": "mmv8jC5JrZC7diTP6Sti-XX7psgBtXYIo_-439I2SGx4rowXYkacSb4bJsrtsxwaE3qzHUJrPVXP_ODsMNSRBQ",
+     "st": "failed",
+     "sub": [],
+     "typ": "tally",
+     "used": {},
+     "v": 1,
+     "writ": "AKqv6Ahi_-sVGtGfIYypGQv3BErgyn695ym3JLgdehU",
+     "wrt": []
+    }
+   }
+  }
+ ]
+}

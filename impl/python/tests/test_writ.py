@@ -159,6 +159,22 @@ class CanonTest(Base):
         d = canon.loads_lenient('{"a": 1, "a": 2}')
         self.assertReason("noncanonical", canon.canonicalize, d)
 
+    def test_nesting_limit(self):
+        # Section 1.1 rule 7: 64 levels pass, 65 are too_large, found before
+        # any other rule. The 2026-09-23 review crashed this implementation
+        # with RecursionError on deep input, so the deep cases go far past
+        # Python's recursion limit.
+        self.assertEqual(canon.canonical_text("[" * 64 + "]" * 64), "[" * 64 + "]" * 64)
+        self.assertReason("too_large", canon.parse, "[" * 65 + "]" * 65)
+        self.assertReason("too_large", canon.parse, "[" * 65 + "1.5" + "]" * 65)
+        self.assertReason("too_large", canon.parse, b"[" * 100000 + b"]" * 100000)
+        self.assertEqual(canon.parse('["' + "[{" * 200 + '"]'), ["[{" * 200])
+        deep = 1
+        for _ in range(100000):
+            deep = [deep]
+        w = dict(FX.w1, x=deep)
+        self.assertReason("too_large", O.verify_object, w, "writ")
+
 
 # ---------------------------------------------------------------- bounds
 
@@ -390,9 +406,13 @@ class CallTest(Base):
         self.assertReason("not_reversible", V.verify_call, resign(undo, A, args={"tally": forged}), now=NOW)
         other = resign(FX.tC, CK, writ=O.identity(FX.w1))
         self.assertReason("tally_mismatch", V.verify_call, resign(undo, A, args={"tally": other}), now=NOW)
-        t = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)})
+        t = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w2)})
         V.verify_call(t, now=NOW)
         self.assertReason("tally_mismatch", V.verify_call, resign(t, BK, args={"writ": O.identity(FX.callA)}), now=NOW)
+        # Section 8.2 as revised 2026-09-28: B issued w2, not w1, and w1's
+        # index covers A's other delegations, so B may not name it. A may.
+        self.assertReason("tally_mismatch", V.verify_call, resign(t, BK, args={"writ": O.identity(FX.w1)}), now=NOW)
+        V.verify_call(issue.make_call(A, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)}), now=NOW)
 
     def test_forbidden_op(self):
         bad = resign(FX.callB, BK, op="travel/chargeback")
@@ -421,11 +441,21 @@ class CallTest(Base):
     def test_revoked(self):
         self.assertReason("revoked", V.verify_call, FX.callB, now=NOW, revoked={O.identity(FX.w1)})
 
+    def test_undo_target_not_an_object_is_malformed(self):
+        # Section 8.1: "args.tally is an object (malformed)" comes before the
+        # section 6.1 check whose failures are not_reversible. A string used
+        # to be parsed as JSON text and reported not_reversible.
+        for bad in ("not an object", None, [FX.tC]):
+            undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": bad})
+            self.assertReason("malformed", V.verify_call, undo, now=NOW)
+        undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {})
+        self.assertReason("malformed", V.verify_call, undo, now=NOW)
+
     def test_standing_survives_expiry_and_revocation(self):
         # Section 7 step 6: a forward call is expired at exp, and stays so
         # however the chain is presented; a standing call is not.
         undo = issue.make_call(A, [FX.w1, FX.w2], "sys/undo", {"tally": FX.tC})
-        tallies = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w1)})
+        tallies = issue.make_call(BK, [FX.w1, FX.w2], "sys/tallies", {"writ": O.identity(FX.w2)})
         after_leaf = EXP2
         after_root = EXP1 + 60
         self.assertReason("expired", V.verify_call, FX.callB, now=after_leaf)
@@ -467,6 +497,16 @@ class CallTest(Base):
         self.assertReason("chain_broken", V.verify_revoke, resign(r, A, chain=[FX.w1]))
         self.assertReason("chain_broken", V.verify_revoke, resign(r, A, chain=[FX.w2]))
         self.assertReason("bad_signature", V.verify_revoke, {**r, "iss": BK.did})
+
+    def test_revoke_check_order(self):
+        """Section 9.1: chain writs (step 2) before the revoke's signature
+        (step 3), and the signature before the chain's validity (step 4)."""
+        r = issue.make_revoke(A, FX.w2, chain=[FX.w1, FX.w2])
+        bad_writ = {k: v for k, v in FX.w1.items() if k != "nnc"}
+        # A malformed chain writ and a forged signature: the writ is reported.
+        self.assertReason("malformed", V.verify_revoke, {**r, "chain": [bad_writ, FX.w2]})
+        # A broken chain and a forged signature: the signature is reported.
+        self.assertReason("bad_signature", V.verify_revoke, {**r, "chain": [FX.w2]})
 
 
 # ----------------------------------------------------------------- tally
@@ -555,6 +595,10 @@ class TallyTest(Base):
         p = issue.make_tally(BK, FX.callA, FX.w1, st="pending", acc=NOW)
         self.assertTrue(V.verify_tally(FX.w1, FX.callA, p).ok)
         self.assertReason("malformed", O.verify_object, resign(p, BK, used={"amount": 1}), "tally", signer=BK.did)
+        # Section 6.1 step 5 as pinned 2026-09-28: the whole pending shape.
+        self.assertReason("malformed", O.verify_object, resign(p, BK, err={"code": "busy"}), "tally", signer=BK.did)
+        self.assertReason("malformed", O.verify_object, resign(p, BK, wrt=[FX.w2]), "tally", signer=BK.did)
+        self.assertReason("malformed", O.verify_object, resign(p, BK, sub=[FX.tC]), "tally", signer=BK.did)
         self.assertReason("malformed", O.verify_object, resign(FX.tB, BK, st="failed"), "tally", signer=BK.did)
         f = issue.make_tally(BK, FX.callA, FX.w1, st="failed", err={"code": "undeliverable"}, acc=NOW)
         self.assertTrue(V.verify_tally(FX.w1, FX.callA, f).ok)

@@ -35,6 +35,9 @@ var ErrInvalidUTF8 = errors.New("jcs: string is not valid UTF-8")
 
 // Canonicalize parses raw JSON and returns its canonical serialization.
 func Canonicalize(raw []byte) ([]byte, error) {
+	if err := CheckDepth(raw); err != nil {
+		return nil, err
+	}
 	if err := Strict(raw); err != nil {
 		return nil, err
 	}

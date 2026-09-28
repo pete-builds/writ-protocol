@@ -1,0 +1,23 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "window",
+   "v": [
+    10,
+    1,
+    5
+   ]
+  },
+  "parent": {
+   "t": "window",
+   "v": [
+    1,
+    10
+   ]
+  }
+ },
+ "name": "window shape before order",
+ "op": "narrows",
+ "reason": "malformed"
+}

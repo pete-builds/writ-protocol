@@ -1,0 +1,96 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {},
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "depth": {
+       "t": "max",
+       "v": 0
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDA1NQ",
+     "prv": null,
+     "sig": "6XSBdpc_M9SK6lZ0jeAu0JK-qDNbqllJU9U4jp3UbgE7s4xzdew9CUcZKFyPrRCcHpZpCwkT_XOa3WwF9gHtAw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "id": "bm9uY2UtMDAwMDAwMDA1Nw",
+   "op": "travel/book",
+   "sig": "i-rCvW9hbv5acS7tVK6P-H7G2LLtWB3HlLVCHjzKbs1oH7D0D0XCVE3pvLoQIvgb_TySBP3mxIwr2uAQyX8sCQ",
+   "typ": "call",
+   "v": 1
+  },
+  "tally": {
+   "acc": 1788400005,
+   "call": "25wlod6pH7gMlbfmRa8VeLaDI-tHy3inC0_jq_pMAg4",
+   "err": null,
+   "op": "travel/book",
+   "out": null,
+   "rev": null,
+   "sig": "7Gw0hRIGEB4wYNbYuW8dc9QDGabEtsYbTKXFlPgNutGNZRoX5OYrrvckE05-HIBSU5MwjeQnLgR33pelZPRkDg",
+   "st": "ok",
+   "sub": [],
+   "typ": "tally",
+   "used": {},
+   "v": 1,
+   "writ": "OtFCekSVOXmU-CE1lSBVKmM0nT2h80IilolJ8bbgOow",
+   "wrt": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "depth": {
+       "t": "max",
+       "v": 0
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDA1Ng",
+     "prv": "OtFCekSVOXmU-CE1lSBVKmM0nT2h80IilolJ8bbgOow",
+     "sig": "fo_SD8mJYFCmmUtblsDYcvLVRoEpIZVwZh5Y2AqZFotP3cWiXBAN2VsHcC538LNSWSxJCvi778BmJeEZzYZpCw",
+     "typ": "writ",
+     "v": 1
+    }
+   ]
+  },
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "depth": {
+     "t": "max",
+     "v": 0
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDA1NQ",
+   "prv": null,
+   "sig": "6XSBdpc_M9SK6lZ0jeAu0JK-qDNbqllJU9U4jp3UbgE7s4xzdew9CUcZKFyPrRCcHpZpCwkT_XOa3WwF9gHtAw",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "depth applies to wrt",
+ "op": "verify_tally",
+ "reason": "not_narrowed"
+}
