@@ -193,23 +193,29 @@ def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None
 
 
 def verify_revoke(data, now=None):
-    """Section 9.1: a revoke passes 6.1, its chain is valid, its leaf is the
-    revoked writ, and the revoker is an issuer on the chain.
+    """Section 9.1, its four checks in its order.
 
-    Reasons beyond 6.1: chain failures as reported by section 4;
-    chain_broken when the leaf identity is not ``writ``; no_standing when
-    ``iss`` is not the iss of a writ in the chain. Expiry is not checked,
-    since revoking an expired writ is harmless. Returns the parsed revoke.
+    1. Section 6.1 steps 1 to 5 on the revoke (writ a hash or "*", iss a
+       key, chain an array of at most 8 objects, empty exactly when writ
+       is "*").
+    2. Every writ in chain passes section 6.1, in array order.
+    3. The revoke's signature verifies under iss (bad_signature).
+    4. Unless writ is "*": the chain is valid (section 4, with its
+       reasons); its leaf identity is writ (chain_broken); iss is the iss
+       of some writ in the chain (no_standing).
+
+    Expiry is not checked on a revoke, so ``now`` is accepted and ignored.
+    Returns the parsed revoke with its chain replaced by parsed writs.
     """
-    r = O.verify_object(data, "revoke")
-    if r["writ"] == "*":
-        return r
-    writs = [O.verify_object(w, "writ") for w in r["chain"]]
-    ids = C.check_chain(writs)
-    if ids[-1] != r["writ"]:
-        raise WritError("chain_broken", "the chain's leaf is not the revoked writ")
-    if r["iss"] not in {w["iss"] for w in writs}:
-        raise WritError("no_standing", "iss is not the issuer of any writ in the chain")
+    r = O.check_structure(data, "revoke")                        # 1
+    writs = [O.verify_object(w, "writ") for w in r["chain"]]     # 2
+    O.check_signature(r, r["iss"])                               # 3
+    if r["writ"] != "*":                                         # 4
+        ids = C.check_chain(writs)
+        if ids[-1] != r["writ"]:
+            raise WritError("chain_broken", "the chain's leaf is not the revoked writ")
+        if r["iss"] not in {w["iss"] for w in writs}:
+            raise WritError("no_standing", "iss is not the issuer of any writ in the chain")
     r["chain"] = writs
     return r
 
