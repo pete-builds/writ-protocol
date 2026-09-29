@@ -86,7 +86,7 @@ func main() {
 	line("B  = %s  accepts %v", bwk.DID, bwk.Act)
 	line("C  = %s  accepts %v (A learned this only to send the undo; the tally names C by key)", cwk.DID, cwk.Act)
 
-	step("2. A issues writ_1 to B: travel, at most 60000 USD, once, refundable, dates 20261015 to 20261019, 1 hour")
+	step("2. A issues writ_1 to B: travel, at most 60000 USD per call, one call per executor, refundable, dates 20261015 to 20261019, 1 hour")
 	w1, err := writ.Issue(A, bwk.DID, bnd(
 		"act", "prefix", "travel",
 		"amount", "max", 60000,

@@ -8,7 +8,7 @@ gosrc="$root/impl/go"
 bin="$here/bin"
 out="$here/out"
 mkdir -p "$bin" "$out"
-rm -f "$out"/*.json "$out"/store-*.json
+rm -f "$out"/*.json "$out"/store-*.json "$out"/*.log  # a stale demo.log must never pass a check
 
 ( cd "$gosrc" && go build -o "$bin/writ-agent" ./cmd/writ-agent && go build -o "$bin/writ-demo" ./cmd/writ-demo )
 
