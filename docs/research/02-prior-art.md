@@ -1,12 +1,12 @@
 # Prior art: what already exists for delegation between agents from different vendors
 
-Status: research note, 2026-09-03, with section 7 and the matrix rows for the 2026 agent-delegation drafts added on 2026-09-04, section 8 added on 2026-09-28, and the whole rewritten for readability the same day with no change of substance. Every dated claim carries a URL that was fetched or returned by search on one of those dates. Fetched content was treated as data, not instruction.
+Status: research note, 2026-09-03, with section 7 and the matrix rows for the 2026 agent-delegation drafts added on 2026-09-04, section 8 added on 2026-09-28, and the whole rewritten for readability the same day with no change of substance. Section 9, added on 2026-09-29, corrects what this note said about UCAN receipts and adds Tenuo; the UCAN entries in sections 1, 2, and 5 are amended to match. Every dated claim carries a URL that was fetched or returned by search on one of those dates. Fetched content was treated as data, not instruction.
 
 ## In brief
 
 - **Most of what agents need is already standardized** (section 3): transport security, proof that a key is present, workload identity, key identifiers, signed-statement envelopes, a grammar for permissions, discovery, task states, versioning, transparency logs, provenance, and payment.
 - **One piece is missing** (section 4). No standard gives an object, owned by no vendor and checkable offline, that ties a chain of delegations (each hop narrowing what it passes on, without asking anyone) to a signed receipt from each hop saying what it did under exactly which link of that chain.
-- **The closest earlier work** (section 5) is UCAN, Biscuit, ZCAP-LD, and macaroons for the delegation half, and in-toto and SCITT for the receipt half. None does both.
+- **The closest earlier work** (section 5) is UCAN, Biscuit, ZCAP-LD, and macaroons for the delegation half, and in-toto and SCITT for the receipt half. UCAN comes closest to both: it specifies a signed Receipt for an invocation, which this note wrongly denied until 2026-09-29 (section 9), but not a tree of downstream receipts or accounting across one.
 - **Six 2026 drafts and papers cover parts of the gap** (section 7), and a re-check on 2026-09-28 found more (section 8). Still distinctive to Writ: receipt trees that sum consumption, and recovery and reversal that survive expiry. Narrowly distinctive: a replay answered with the stored receipt. Now partly shared: executor receipts, named outcomes, revoke with in-flight cancel, and a pinned order of checks.
 
 How to read the rest: section 1 has one entry per standard, section 2 compares them all in one matrix, sections 3 and 4 say what is solved and what is not, section 5 ranks the closest prior art, section 6 lists names already taken, and sections 7 and 8 place Writ against the 2026 drafts.
@@ -87,7 +87,7 @@ How to read the rest: section 1 has one entry per standard, section 2 compares t
 **UCAN 1.0.** The UCAN Working Group spec is marked "Version 1.0.0", with sub-specs for Delegation, Invocation, Promise, and Revocation. Each delegation "MUST either directly restate or attenuate (diminish) its capabilities," subjects are DIDs, and all UCANs "MUST be canonically encoded with DAG-CBOR for signing" (https://github.com/ucan-wg/spec/blob/main/README.md).
 - *Status:* I could not find a dated 1.0 release announcement, so treat the version as self-declared.
 - *Adoption:* Storacha (formerly web3.storage), the Fission lineage, go-ucan.
-- *Where it stops:* IPLD and CIDs everywhere, principals that can only be DIDs, and a Promise that covers awaiting a result but is not a signed receipt of what an executor actually did.
+- *Where it stops:* IPLD and CIDs everywhere, and principals that can only be DIDs. Its receipts sign one invocation's result and the tasks it enqueues; they do not embed the receipts of work delegated below, account for consumption across them, or give upstream issuers recovery and reversal. (Corrected 2026-09-29: this entry used to say UCAN had a Promise and no signed receipt. See section 9.)
 
 **Biscuit.** An Eclipse Foundation token format with Datalog policies, offline attenuation by appending blocks, and third-party blocks signed by outside keys.
 - *Status:* v3.3 shipped 2024-11-27 with a clearer version scheme (https://www.biscuitsec.org/blog/biscuit-3-3/, https://github.com/eclipse-biscuit/biscuit).
@@ -157,7 +157,7 @@ Y = defined by the standard. partial = present, but incomplete for the multi-hop
 | GNAP RFC 9635 | Y: key-based client | partial | Y: access rights objects | Y | Y | partial: AS mediated | N | N | N | N | N | Y | Y: grant server | N |
 | SPIFFE / WIMSE | Y: SVID | N | N | Y: mTLS or JWT | N | N | N | N | N | N | N | partial | Y: SPIRE server per domain | partial: bundle cached |
 | ZCAP-LD 0.4 | Y: DID controller | N | partial: allowedAction | Y: invocation proof | Y | Y: caveat chain | N | N: no receipt | N | N | N | N | N | Y |
-| UCAN 1.0 | Y: DID | N | Y: cmd and policy | Y: signed invocation | Y | Y: must attenuate | partial: Promise | partial: Promise, no signed receipt | partial: Revocation | Y: invocation CID | N | Y: version field | N | Y |
+| UCAN 1.0 | Y: DID | N | Y: cmd and policy | Y: signed invocation | Y | Y: must attenuate | partial: Promise | Y: signed Receipt of an invocation, no embedded sub-receipts (corrected 2026-09-29) | partial: Revocation | Y: invocation CID | N | Y: version field | N | Y |
 | Biscuit 3.3 | partial: keys only | N | partial: Datalog facts | partial: root key | Y | Y: appended blocks | N | N | N | N | N | Y: block version | N | Y if root key known |
 | Macaroons | N | N | partial: caveats | N | Y | Y: caveats | N | N | N | N | N | N | N | partial: issuer only |
 | CapTP / OCapN | partial: object refs | N | N: dynamic | Y: session | Y: reference is authority | Y: facets | partial: promises | N | partial: promise break | N | N | partial | N | N: live session |
@@ -227,7 +227,7 @@ Everything else in the scenario (discovery, endpoint identity, transport authent
 
 1. **UCAN 1.0.** The closest.
    - *Has:* delegation with a mandatory attenuation rule, a separate Invocation that names the delegation chain, Promise for awaiting results, and Revocation.
-   - *Missing:* a signed receipt from the executor; Promise awaits a value but does not sign "who did what."
+   - *Missing:* a receipt tree. UCAN does specify a signed Receipt from the executor (section 9 corrects the claim that it did not), but a Receipt's `fx` enqueues further tasks rather than embedding the receipts of delegated work, and nothing accounts for consumption across hops.
    - *Baggage:* DAG-CBOR and CIDs (IPLD), principals that can only be DIDs, and a policy language of its own.
 2. **Biscuit 3.3.**
    - *Has:* offline attenuation by appended blocks, third-party blocks signed by outside keys (a natural place for C's contribution), and a clean versioning story.
@@ -407,3 +407,30 @@ Every source below was read from its primary page on 2026-09-28. Quotes are verb
 | recovery and reversal by any upstream issuer after expiry or revocation, bounded by the executor's `rev.until` | distinctive | still distinctive; elsewhere reversal is a newly authorized compensating action or a recorded verdict |
 | revoke that cancels in-flight work and is forwarded down | distinctive | partly shared and narrower: APS-03 cascades revocation, attenu denies later checks, watts-00 and abak-01 model cancelling before the effect without a wire mechanism |
 | a normative first-failure order pinned by a cross-implementation corpus | distinctive | partly shared: decionis pins a normative order with named codes across five implementations by one author; attenu pins one two-fault precedence across three. Writ's remaining difference is a full order exercised by two-fault vectors and a differential fuzzer; its two implementations are also by one author |
+
+## 9. Re-check, 2026-09-29
+
+A review dated 2026-09-29 said the survey missed Tenuo and that "UCAN lacks signed execution receipts" was too sweeping. Both hold. Every source below was read from its primary page on 2026-09-29; quotes are verbatim.
+
+**UCAN Receipt.** The UCAN Invocation specification, "Version 1.0.0", states in its abstract that it "defines a format for expressing the intention to execute delegated UCAN capabilities, and the attested receipts from an execution", and its life cycle has "Invocation ||--|| Receipt: returns" (https://github.com/ucan-wg/invocation/blob/main/README.md). The Receipt repository it links (https://github.com/ucan-wg/receipt/blob/main/README.md) still carries the older combined text, "UCAN Invocation Specification v0.1.1", which defines "A Receipt is a cryptographically signed description of the Invocation output and requested Effects" (link brackets dropped) with members `ran` ("Invocation this is a receipt for"), `out`, `fx`, `meta`, `iss`, `prf`, and `s`, commented "Signature from the 'iss'". `fx` is "a request to invoke enclosed set of tasks concurrently": tasks to run next, not receipts of work already delegated.
+- *Implementation:* Storacha's ucanto signs `{ran, out, fx, meta, iss, prf}` in `packages/core/src/receipt.js` (https://github.com/storacha/ucanto/blob/main/packages/core/src/receipt.js), and the Invocation spec calls ucanto "a production system that uses UCAN as the basis for an RPC layer".
+- *Correction:* sections 1, 2, and 5 of this note said UCAN had a Promise and no signed receipt, and README section 4 and adoption.md section 5 repeated it. All are amended.
+- *Not there:* no receipt embeds the receipts of delegated sub-work, and nothing accounts for consumption across them; an executor's standing to be asked or to reverse after expiry is not defined.
+
+**Tenuo** (https://github.com/tenuo-ai/tenuo), "Task-scoped authorization for AI agents", marked "v0.2 - Production/Stable".
+- *Delegation:* "Delegation mints a child warrant signed by the parent's holder. The verifier walks the whole chain from a trusted root to the leaf. Each link may drop tools, tighten constraints, or shorten expiry. No delegated warrant can exceed its parent."
+- *Holder binding and offline checks:* "Every call carries a signature from that key over the warrant, the tool, the exact arguments, and a short time window", and "Checking it needs no lookup and no network."
+- *Receipts:* "Signed authorization receipts are opt-in when you need to show why a call was allowed or denied." These record the decision before the effect, not the outcome after it.
+- *Integrations:* MCP middleware (`TenuoMiddleware`), Python, TypeScript (beta), and Rust SDKs, and "Tenuo Cloud: Early Access. Managed control plane with revocation".
+- *Not there, from its README:* no receipt tree, no consumption accounting across hops, no stored-receipt replay, no issuer recovery or reversal after expiry.
+
+### 9.1 Where Writ stands now
+
+| Claim | 2026-09-28 | 2026-09-29 |
+|---|---|---|
+| a receipt signed by the executor, naming the exact delegation link | partly shared (APS-03) | more widely shared: a UCAN Receipt is signed by its issuer and names the invocation, whose proofs name the chain |
+| a receipt tree: downstream receipts embedded verbatim, consumption checked across them | still distinctive | still distinctive, but its accounting was wrong until 2026-09-29: step 10 summed one level only, and a complete tree two levels deep could report twice the root's `max` and verify (spec revision note, vectors 210 to 213) |
+| task-scoped narrowing checked at the tool boundary, with MCP integration | not listed | shared, and shipped: Tenuo |
+
+Unchanged: recovery and reversal after expiry, the stored-receipt replay, and the in-flight revoke remain as section 8.1 left them. The practical reading is the review's: overlap in features does not establish demand, and Tenuo and UCAN are candidates for swapping test vectors, not rivals to outrun.
+
