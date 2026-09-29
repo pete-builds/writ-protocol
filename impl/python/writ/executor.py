@@ -40,7 +40,9 @@ call's ``sub`` before returning the verdict, so the application acts on it
 only after it is persisted. The final tally carries every issued writ and
 every received sub-tally, whatever its own ``st``, including a ``failed``
 tally with ``undeliverable`` for a sub-call that never answered, and so
-does the tally a pending record resolves to after a restart.
+does the tally a pending record resolves to after a restart. Either
+tally's ``used`` is raised, where the outcome reports less, to cover its
+sub-tallies' (section 6: ``used`` is inclusive of the subtree).
 
 ``forward_revoke(revoke, holder)``, when given, is called after a valid
 revoke for the holder of every writ this executor issued under the revoked
@@ -75,6 +77,26 @@ STORE_WRITE_FAILED = "writ-py/store_write_failed"
 count store could not be written at section 7 steps 9 and 10 (section 9)."""
 
 OUTCOME_STATES = ("ok", "failed", "canceled")
+
+
+def _max_names(writ):
+    """Names of the writ's max bounds, in canonical order."""
+    bnd = writ["bnd"]
+    return [n for n in sorted(bnd, key=lambda k: k.encode("utf-16-be", "surrogatepass")) if bnd[n]["t"] == "max"]
+
+
+def _cover_subs(used, max_names, sub):
+    """Section 6: used is inclusive of the subtree. Returns used raised, for
+    every max bound of the leaf, to the sum over the sub-tallies: an
+    operation cannot have consumed less than the work it delegated reports,
+    and a record resolved after a restart, whose own outcome is unknown,
+    reports at least that much."""
+    out = dict(used)
+    for name in max_names:
+        total = sum(S["used"].get(name, 0) for S in sub)
+        if total > out.get(name, 0):
+            out[name] = total
+    return out
 
 
 class Outcome:
@@ -264,7 +286,7 @@ class Executor:
         rec = {                                                     # step 11
             "state": PENDING, "leaf": leaf_id, "id": call["id"], "call": call_id,
             "op": call["op"], "acc": now, "chain": ids, "iss": [w["iss"] for w in writs],
-            "exp": writs[-1]["exp"], "standing": standing,
+            "exp": writs[-1]["exp"], "standing": standing, "max": _max_names(writs[-1]),
         }
         if not self._write_admission(rec, counted):
             return self._refusal(call_id, leaf_id, call["op"], now, STORE_WRITE_FAILED), None
@@ -481,7 +503,8 @@ class Executor:
             op.call_id, op.leaf_id, op.op, op.acc, outcome.st,
             None if outcome.st == "ok" else {"code": outcome.code},
             None if outcome.res is None else O.hash_body(outcome.res),
-            outcome.used, rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
+            _cover_subs(outcome.used, _max_names(op.call["chain"][-1]), rec.get("sub", [])),
+            rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
         )
         return self._persist_final(rec, tally, outcome.res)
 
@@ -705,12 +728,14 @@ class Executor:
             rev = None
             if not rec["standing"] and outcome.rev is not None:
                 rev = {"until": outcome.rev}
-            # Section 9.2: wrt and sub complete for everything it did learn.
+            # Section 9.2: wrt and sub complete for everything it did learn,
+            # and used covering the sub-tallies (sections 6 and 9).
             tally = self._sign_tally(
                 rec["call"], rec["leaf"], rec["op"], rec["acc"], outcome.st,
                 None if outcome.st == "ok" else {"code": outcome.code},
                 None if outcome.res is None else O.hash_body(outcome.res),
-                outcome.used, rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
+                _cover_subs(outcome.used, rec.get("max", []), rec.get("sub", [])),
+                rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
             )
             self._persist_final(rec, tally, outcome.res)
             n += 1

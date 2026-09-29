@@ -685,6 +685,47 @@ class DelegationTest(Base):
         self.assertEqual((len(rec["tally"]["sub"]), len(rec["tally"]["wrt"])), (1, 2))
         self.assertTrue(V.verify_tally(ch[-1], call, rec["tally"]).ok)
 
+    def charge_below(self, op, n):
+        child = op.issue(CK.did, bnd={"act": {"t": "prefix", "v": "travel/charge"},
+                                      "amount": {"t": "max", "v": 58900}}, nnc=nnc(60 + n))
+        sub = op.make_call(child, "travel/charge", {"amount": 58900}, call_id=cid(60 + n))
+        ans = self.cex.receive_call(sub)
+        self.assertTrue(op.receive_tally(sub, ans["tally"], ans.get("res")).ok)
+
+    def test_used_covers_sub_tallies(self):
+        # Section 6: used is inclusive of the subtree. An outcome that
+        # reports less than the sub-tallies consumed is raised to cover them,
+        # so the executor never signs a tally every verifier rejects.
+        ch = self.root_chain()
+        self.capp.push(Outcome("ok", res={"charge": "c"}, used={"amount": 58900}))
+
+        def book(op):
+            self.charge_below(op, 1)
+            return Outcome("ok", res={"pnr": "K"}, used={"amount": 0})
+        self.app.push(book)
+        call = issue.make_call(A, ch, "travel/book", {"amount": 60000}, call_id=cid(1))
+        ans = self.ex.receive_call(call)
+        self.assertEqual(ans["tally"]["used"], {"amount": 58900})
+        self.assertTrue(V.verify_tally(ch[-1], call, ans["tally"], res=ans["res"]).ok)
+
+    def test_restart_after_a_charge_below_resolves_covering_it(self):
+        # Sections 7.5 and 9: a record resolved after a crash carries the
+        # sub-tally persisted before the crash, with used covering it.
+        ch = self.root_chain()
+        self.capp.push(Outcome("ok", res={"charge": "c"}, used={"amount": 58900}))
+
+        def book(op):
+            self.charge_below(op, 2)
+            return HELD
+        self.app.push(book)
+        call = issue.make_call(A, ch, "travel/book", {"amount": 60000}, call_id=cid(1))
+        self.ex.receive_call(call)
+        self.assertEqual(self.ex.restart(), 1)
+        t = self.ex.receive_call(call)["tally"]
+        self.assertEqual((t["err"], t["used"], len(t["sub"]), len(t["wrt"])),
+                         ({"code": "unknown_outcome"}, {"amount": 58900}, 1, 1))
+        self.assertTrue(V.verify_tally(ch[-1], call, t).ok)
+
 
 # --------------------------------------------------------- scenario runner
 
