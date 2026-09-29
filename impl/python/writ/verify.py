@@ -284,12 +284,16 @@ def _tree(writ, writ_id, chain, tally, call=None, call_id=None, res=None):
             verdict.subs.append(sub)
             if not sub.ok:
                 raise WritError(sub.reason, f"sub-tally: {sub.message}")
-        for name, limit in _max_bounds(writ):                                 # step 10
+        # Step 10: used is inclusive of the subtree, so T's own used must
+        # cover its sub-tallies'. With step 7 at every level this bounds the
+        # whole tree by the writ, however deep.
+        for name, _ in _max_bounds(writ):                                     # step 10
             total = 0
             for S in T["sub"]:
                 total += S["used"].get(name, 0)
-            if total > limit:
-                raise WritError("out_of_bounds", f"sub-tallies used {total} of {name}, bound {limit}")
+            own = T["used"].get(name, 0)
+            if total > own:
+                raise WritError("out_of_bounds", f"sub-tallies used {total} of {name}, more than the tally's own {own}")
     except WritError as e:
         verdict.status = SIGNED_UNAUTHORIZED
         verdict.reason = e.reason

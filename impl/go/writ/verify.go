@@ -121,13 +121,17 @@ func verifyTree(W *Writ, chain []*Writ, T *Tally) error {
 		}
 		T.Sub = append(T.Sub, S)
 	}
+	// Step 10: used is inclusive of the subtree, so T's own used must cover
+	// its sub-tallies'. With step 7 at every level, this bounds the whole
+	// tree by W, however deep; summing only against W let an intermediary
+	// that reported zero hide what its own sub-tallies consumed.
 	for _, name := range maxNames(W) {
 		var sum int64
 		for _, S := range T.Sub {
 			sum += S.Used[name]
 		}
-		if sum > W.Bnd[name].Int {
-			return fail(OutOfBounds, "sum of sub used.%s %d exceeds %d", name, sum, W.Bnd[name].Int)
+		if sum > T.Used[name] {
+			return fail(OutOfBounds, "sum of sub used.%s %d exceeds the tally's own used %d", name, sum, T.Used[name])
 		}
 	}
 	return nil

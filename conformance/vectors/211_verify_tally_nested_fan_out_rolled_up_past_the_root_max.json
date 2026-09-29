@@ -1,0 +1,378 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {
+    "amount": 60000,
+    "currency": "USD",
+    "date": 20261015,
+    "fare": "refundable"
+   },
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "id": "bm9uY2UtMDAwMDAwMDAzOA",
+   "op": "travel/book",
+   "sig": "qvjrpq7KtioXF7tdbML-aaV0b_K8jdtZYDu7YXHUhMFEL_BWij4Kjz200NHQRWRk-m_JGqrlkjXhFQUGoYMdDA",
+   "typ": "call",
+   "v": 1
+  },
+  "tally": {
+   "acc": 1788400005,
+   "call": "DZTG75dHN7rJ60JQVy0UUpOLFS8x4-SW02QfZKnGbfg",
+   "err": null,
+   "op": "travel/book",
+   "out": null,
+   "rev": null,
+   "sig": "EjaHYeL0mEEE9Mr7Pxs9m-kI-z5y6PGHxovGJFG3W6u_Kpz3XDIFJ8ut_9IHCnsIdDwr0Om3IafZ4nxN5U9JAw",
+   "st": "ok",
+   "sub": [
+    {
+     "acc": 1788400015,
+     "call": "d8uqh_FlNfgQVnlLIrv0mfF1mkcBWEUOeg83NQAdcKM",
+     "err": null,
+     "op": "travel/book",
+     "out": null,
+     "rev": null,
+     "sig": "PGDZRNuT-1eml_vGYbKkWiWOKBdMyt-4ZY4jNM7jCg6FWvC1JeB-R0WC3KJfW0Hzmeq74Nw-lgswKjmfFDoUBw",
+     "st": "ok",
+     "sub": [
+      {
+       "acc": 1788400020,
+       "call": "cd9Ziri66tVdUGFjvaZq7rIy99KjdjCp2IhyLNjZbII",
+       "err": null,
+       "op": "travel/charge",
+       "out": null,
+       "rev": null,
+       "sig": "iBElbYQFRRAZplNLrfDKp_jxJU71Id4SyeJ2yEllpBSNSGrBdINRghg788hqBkOQ1Tqfro4qWdzZ8HrC-gjODw",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {
+        "amount": 58900
+       },
+       "v": 1,
+       "writ": "gllvhceduBaOC5-u-9LiGj8kj_USGmWmCFETIWBP0QQ",
+       "wrt": []
+      }
+     ],
+     "typ": "tally",
+     "used": {
+      "amount": 58900
+     },
+     "v": 1,
+     "writ": "blHvux4F3lgcHf8tINNtFrLjp3fJwcF1vt5tZBY9qvM",
+     "wrt": [
+      {
+       "bnd": {
+        "act": {
+         "t": "prefix",
+         "v": "travel"
+        },
+        "amount": {
+         "t": "max",
+         "v": 60000
+        },
+        "currency": {
+         "t": "set",
+         "v": [
+          "USD"
+         ]
+        },
+        "date": {
+         "t": "window",
+         "v": [
+          20261015,
+          20261019
+         ]
+        },
+        "fare": {
+         "t": "set",
+         "v": [
+          "refundable"
+         ]
+        },
+        "uses": {
+         "t": "count",
+         "v": 1
+        }
+       },
+       "exp": 1788400900,
+       "hld": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+       "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+       "nnc": "bm9uY2UtMDAwMDAwMDA3MQ",
+       "prv": "blHvux4F3lgcHf8tINNtFrLjp3fJwcF1vt5tZBY9qvM",
+       "sig": "iH93_hNYLdpSF7URsGkM0gy5XQjX_DykJfZYLVlG-7Fzg1G8BpsO8tmBjI8SWQh9TaOZlrJTPlXTn7BuoBhoBA",
+       "typ": "writ",
+       "v": 1
+      }
+     ]
+    },
+    {
+     "acc": 1788400016,
+     "call": "xLuec4ri0TNWCTBdGLKqE9brUpEM5DZ6ksx8Iq_aRcQ",
+     "err": null,
+     "op": "travel/book",
+     "out": null,
+     "rev": null,
+     "sig": "Nc7xsSudYluPIekZFK5kIzqLBu6qkxY7C0xsEg1EOx3GZvKDXGujEBWdnP48vZkrZ829jIe5LIvRx2h-ikghCA",
+     "st": "ok",
+     "sub": [
+      {
+       "acc": 1788400021,
+       "call": "cHptd016wg6YcmQJ7sUmuarl_rBLn-6JC0F51R2j4wk",
+       "err": null,
+       "op": "travel/charge",
+       "out": null,
+       "rev": null,
+       "sig": "5OVQKrzIgwHuppcWTyAUFjBCRm5PrVh10L_bQ5IjKBOzLeh9f5MfoLrJpBKI0gsEQpAD0WGerQtSJgoPR2Q2Cg",
+       "st": "ok",
+       "sub": [],
+       "typ": "tally",
+       "used": {
+        "amount": 58900
+       },
+       "v": 1,
+       "writ": "mgwN-QZxIZ1pf8MbUwf-Bba7cudBCHDePTfelp9cj9E",
+       "wrt": []
+      }
+     ],
+     "typ": "tally",
+     "used": {
+      "amount": 58900
+     },
+     "v": 1,
+     "writ": "29_5IeUg6W4APxK1q1Aslp-K2LB0NCNwvikPhxgbT24",
+     "wrt": [
+      {
+       "bnd": {
+        "act": {
+         "t": "prefix",
+         "v": "travel"
+        },
+        "amount": {
+         "t": "max",
+         "v": 60000
+        },
+        "currency": {
+         "t": "set",
+         "v": [
+          "USD"
+         ]
+        },
+        "date": {
+         "t": "window",
+         "v": [
+          20261015,
+          20261019
+         ]
+        },
+        "fare": {
+         "t": "set",
+         "v": [
+          "refundable"
+         ]
+        },
+        "uses": {
+         "t": "count",
+         "v": 1
+        }
+       },
+       "exp": 1788400900,
+       "hld": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+       "iss": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+       "nnc": "bm9uY2UtMDAwMDAwMDA3NQ",
+       "prv": "29_5IeUg6W4APxK1q1Aslp-K2LB0NCNwvikPhxgbT24",
+       "sig": "KPSJC4MUBvFQiWQk0_ZjC1RDVYLFGlM3jsi2U3RLdi1rvew9lysA9cxELbl0Dx0j8MHsL-7W7sF09_t1FcQ6CQ",
+       "typ": "writ",
+       "v": 1
+      }
+     ]
+    }
+   ],
+   "typ": "tally",
+   "used": {
+    "amount": 117800
+   },
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+   "wrt": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDA2OQ",
+     "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+     "sig": "5jmqHOnCbPdX9Qkemre_3o4EJdEpyuMi6eFrjmQA8Q_UwmKYpVxLaYpU8BIPS-WImCMzHV6YY3_6CoynILbuAw",
+     "typ": "writ",
+     "v": 1
+    },
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDA3Mw",
+     "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+     "sig": "Mn-2Ip3pc2E9yGCEemBTz0va58KhbkUkXUY4Klz2rA-PfbxzQnyAeqccZApHzpqOEDzy1O3E7dcZeDogFd_rDQ",
+     "typ": "writ",
+     "v": 1
+    }
+   ]
+  },
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "nested fan out rolled up past the root max",
+ "op": "verify_tally",
+ "reason": "out_of_bounds"
+}

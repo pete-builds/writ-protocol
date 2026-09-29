@@ -73,6 +73,22 @@ func must[T any](v T, err error) T {
 	return v
 }
 
+// must3 is must for NewTally, which also returns the result body.
+func must3(t *writ.Tally, _ any, err error) *writ.Tally {
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// usedOf is a used object naming amount, or an empty one for zero.
+func usedOf(amount int64) map[string]int64 {
+	if amount == 0 {
+		return nil
+	}
+	return map[string]int64{"amount": amount}
+}
+
 // resign copies a writ's raw object, applies f, and re-signs with signer
 // (nil leaves the old signature in place).
 func resign(w *writ.Writ, signer *keys.Identity, f func(o wire.Object)) wire.Object {
@@ -608,6 +624,46 @@ func main() {
 
 	// Section 9.1 step 1: members in table order, iss before chain.
 	rvv("iss before chain length", rv(nine[8].ID, raws(nine...), "did:web:a.example", A), writ.BadKey)
+
+	// Section 6.2 step 10: used is inclusive of the subtree, so every tally's
+	// used covers its sub-tallies'. The first vector is the 2026-09-29 review's
+	// reproduction: two branches two levels deep each charge
+	// 58900 under a root max of 60000, the intermediaries report nothing, and
+	// the old rule, which summed immediate sub-tallies against the writ,
+	// accepted it.
+	E, F := id(5), id(6)
+	narrowAll := func(parent *writ.Writ, iss *keys.Identity, hld string, exp int64) *writ.Writ {
+		nb := map[string]any{}
+		for name, pb := range parent.Bnd {
+			nb[name] = map[string]any{"t": pb.T, "v": pb.Raw}
+		}
+		return must(writ.Issue(iss, hld, nb, exp, parent))
+	}
+	args := func(amount int) map[string]any {
+		return map[string]any{"amount": amount, "currency": "USD", "fare": "refundable", "date": 20261015}
+	}
+	type branch struct {
+		mid, leaf       *keys.Identity
+		midUsed, charge int64
+	}
+	tree := func(branches []branch, rootUsed int64) wire.Object {
+		var subs []*writ.Tally
+		var wrts []*writ.Writ
+		for i, br := range branches {
+			wc := narrowAll(w1, B, br.mid.DID(), now+1800)
+			kc := must(writ.NewCall(B, []*writ.Writ{w1, wc}, "travel/book", args(int(br.charge))))
+			wd := narrowAll(wc, br.mid, br.leaf.DID(), now+900)
+			kd := must(writ.NewCall(br.mid, []*writ.Writ{w1, wc, wd}, "travel/charge", args(int(br.charge))))
+			td := must3(writ.NewTally(br.leaf, writ.TallyInput{Call: kd, Acc: now + 20 + int64(i), St: "ok", Used: usedOf(br.charge)}))
+			tc := must3(writ.NewTally(br.mid, writ.TallyInput{Call: kc, Acc: now + 15 + int64(i), St: "ok", Used: usedOf(br.midUsed), Sub: []*writ.Tally{td}, Wrt: []*writ.Writ{wd}}))
+			subs, wrts = append(subs, tc), append(wrts, wc)
+		}
+		return must3(writ.NewTally(B, writ.TallyInput{Call: kAB, Acc: now + 5, St: "ok", Used: usedOf(rootUsed), Sub: subs, Wrt: wrts})).Raw
+	}
+	tv("nested intermediaries report nothing", w1, kAB, tree([]branch{{C, D, 0, 58900}, {E, F, 0, 58900}}, 0), nil, writ.OutOfBounds)
+	tv("nested fan out rolled up past the root max", w1, kAB, tree([]branch{{C, D, 58900, 58900}, {E, F, 58900, 58900}}, 117800), nil, writ.OutOfBounds)
+	tv("branching tree within the root max", w1, kAB, tree([]branch{{C, D, 20000, 20000}, {E, F, 30500, 30000}}, 51000), nil, "")
+	tv("own used below its sub tally", w1, kAB, rt(func(o wire.Object) { o["used"] = map[string]any{} }, B), nil, writ.OutOfBounds)
 
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }
