@@ -28,6 +28,7 @@ func main() {
 	store := flag.String("store", "", "path of the durable store (empty for memory)")
 	accept := flag.String("accept", "", "comma-separated did:key roots this agent acts under")
 	downstream := flag.String("downstream", "", "base URL of the payment agent (booking role)")
+	audit := flag.String("audit", "", "path of the append-only audit record, one JSON line per call or revoke (empty for none)")
 	flag.Parse()
 
 	seed, err := hex.DecodeString(*seedHex)
@@ -47,6 +48,17 @@ func main() {
 		}
 	}
 	e.AcceptRoot = func(did string) bool { return roots[did] }
+	if *audit != "" {
+		al, err := exec.OpenAuditLog(*audit)
+		if err != nil {
+			log.Fatal(err)
+		}
+		e.Audit = func(a exec.AuditEntry) {
+			if err := al.Record(a); err != nil {
+				log.Printf("audit record not written: %v", err)
+			}
+		}
+	}
 	if n := e.Recover(); n > 0 {
 		log.Printf("recovered %d crashed call(s) to unknown_outcome", n)
 	}

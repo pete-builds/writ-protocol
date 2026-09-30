@@ -48,30 +48,36 @@ func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) 
 		_ = json.NewEncoder(w).Encode(wk)
 	})
 	mux.HandleFunc("POST /writ", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if peerOf != nil {
+			if p, ok := peerOf(r); ok {
+				ctx = exec.WithPeer(ctx, p)
+			}
+		}
+		// An object rejected here never reaches the executor's own checks,
+		// so the binding records it in the audit record itself (spec 9.3).
+		unreadable := func(code writ.Reason) {
+			e.AuditUnreadable(ctx, code)
+			reject(w, code)
+		}
 		// A request body is one call or one revoke (spec section 10), and
 		// both are limited to 65536 bytes, so no request may be larger.
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
 		if err != nil || len(body) > maxRequestBytes {
-			reject(w, writ.TooLarge)
+			unreadable(writ.TooLarge)
 			return
 		}
 		if jcs.CheckDepth(body) != nil {
-			reject(w, writ.TooLarge)
+			unreadable(writ.TooLarge)
 			return
 		}
 		obj, err := wire.Decode(body)
 		if err != nil {
-			reject(w, writ.Noncanonical)
+			unreadable(writ.Noncanonical)
 			return
 		}
 		switch obj["typ"] {
 		case "call":
-			ctx := r.Context()
-			if peerOf != nil {
-				if p, ok := peerOf(r); ok {
-					ctx = exec.WithPeer(ctx, p)
-				}
-			}
 			rep, rej := e.Execute(ctx, obj)
 			if rej != nil {
 				reject(w, rej.Code)
@@ -79,7 +85,7 @@ func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) 
 			}
 			respond(w, rep)
 		case "revoke":
-			tallies, rej := e.Revoke(obj)
+			tallies, rej := e.RevokeContext(ctx, obj)
 			if rej != nil && rej.Code == writ.Reason(exec.StoreUnavailable) {
 				fail(w, http.StatusServiceUnavailable, rej.Code)
 				return
@@ -93,7 +99,7 @@ func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) 
 			}
 			respond(w, map[string]any{"tallies": tallies})
 		default:
-			reject(w, writ.WrongType)
+			unreadable(writ.WrongType)
 		}
 	})
 	return mux

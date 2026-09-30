@@ -145,3 +145,42 @@ func TestPeerAndUnsavedRevoke(t *testing.T) {
 		t.Fatalf("unsaved key-wide revoke: %d %v, want 503 %s", status, out, exec.StoreUnavailable)
 	}
 }
+
+// Spec 9.3: the binding audits what it rejects before the executor sees it,
+// and passes the authenticated peer through for revokes as well as calls.
+func TestBindingAudits(t *testing.T) {
+	A, _ := keys.FromSeed(bytes.Repeat([]byte{1}, 32))
+	B, _ := keys.FromSeed(bytes.Repeat([]byte{2}, 32))
+	e := exec.New(B, nil)
+	var got []exec.AuditEntry
+	e.Audit = func(a exec.AuditEntry) { got = append(got, a) }
+	peerOf := func(r *http.Request) (string, bool) { return "spiffe://a.example/agent", true }
+	srv := httptest.NewServer(HandlerWithPeer(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, peerOf))
+	defer srv.Close()
+	post := func(body []byte) {
+		resp, err := http.Post(srv.URL+"/writ", ContentType, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	post([]byte(`{"v":1,"typ":"call",` + strings.Repeat(" ", writ.MaxCallBytes) + `}`))
+	post([]byte(`{"v":1,"typ":"note"}`))
+	rv, _ := writ.NewRevoke(A, nil)
+	body, _ := json.Marshal(rv.Raw)
+	post(body)
+	if len(got) != 3 {
+		t.Fatalf("%d audit entries, want 3: %+v", len(got), got)
+	}
+	for i, w := range []struct{ kind, outcome, reason string }{
+		{"unknown", "rejected", "too_large"}, {"unknown", "rejected", "wrong_type"}, {"revoke", "recorded", ""},
+	} {
+		g := got[i]
+		if g.Kind != w.kind || g.Outcome != w.outcome || g.Reason != w.reason || g.Peer == nil || *g.Peer != "spiffe://a.example/agent" {
+			t.Errorf("entry %d: %+v, want %+v with the peer", i, g, w)
+		}
+	}
+	if got[2].From != A.DID() || got[2].Leaf != "*" {
+		t.Errorf("revoke entry does not name its signer and target: %+v", got[2])
+	}
+}

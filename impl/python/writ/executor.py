@@ -65,6 +65,7 @@ from . import chain as C
 from . import issue as I
 from . import objects as O
 from . import verify as V
+from .canon import loads_lenient as canon_loads
 from .errors import WritError
 from .keys import Key
 from .stores import BEGAN, DONE, FINAL, PENDING, UNKNOWN, Stores
@@ -141,6 +142,8 @@ class Operation:
         self._stop = threading.Event()
         self._ex = executor
         self._subcalls = {}         # identity of a sub-call -> the sub-call
+        self.peer = None            # the transport-authenticated peer that delivered the call
+        self.deferred = False       # answered inflight; audited when it finishes (section 9.3)
 
     def issue(self, holder, bnd=None, exp=None, nnc=None):
         """Section 7.5: issue a child of the leaf writ to ``holder``,
@@ -184,7 +187,9 @@ class Executor:
     pending record found after a restart, when the application can tell
     what happened; otherwise the record resolves to ``unknown_outcome``.
     ``peers`` maps each transport identity the executor holds a binding for
-    to the keys that peer speaks for (section 7.6).
+    to the keys that peer speaks for (section 7.6). ``audit(entry)``, when
+    given, receives one dict for every call and revoke the executor answers,
+    refusals included (section 9.3); ``writ.audit.AuditLog.record`` fits.
 
     Opening an executor over a directory that holds pending records is a
     restart: they are resolved at once, and ``resolved_at_open`` says how
@@ -192,11 +197,12 @@ class Executor:
     """
 
     def __init__(self, key, accept, store_dir, app=None, clock=None, resolver=None,
-                 forward_revoke=None, peers=None):
+                 forward_revoke=None, peers=None, audit=None):
         self.key = key if isinstance(key, Key) else Key.from_seed(key)
         self.did = self.key.did
         self.accept = frozenset(accept)
         self.peers = {p: frozenset(ks) for p, ks in (peers or {}).items()}
+        self.audit = audit
         self.store_dir = store_dir
         self.app = app
         self.resolver = resolver
@@ -228,8 +234,44 @@ class Executor:
         with self._lock:
             answer, op = self._admit(data, peer)
         if op is None:
+            self._audit_received(data, peer, answer)
             return answer
-        return self._perform(op)
+        op.peer = peer
+        answer = self._perform(op)
+        if answer.get("inflight"):
+            op.deferred = True  # audited when its final tally is signed
+        else:
+            self._audit_received(data, peer, answer)
+        return answer
+
+    # ------------------------------------------------------------- audit
+
+    def _audit(self, entry):
+        if self.audit is not None:
+            self.audit({k: v for k, v in entry.items() if k == "peer" or v not in (None, "")})
+
+    def _audit_received(self, data, peer, answer):
+        """Section 9.3 for an answer given as the call arrived."""
+        if self.audit is None:
+            return
+        entry = {"at": self.now(), "kind": "call", "peer": peer}
+        try:
+            entry["id"] = O.identity(data if isinstance(data, dict) else canon_loads(data))
+        except Exception:  # noqa: BLE001, an unreadable object has no identity
+            pass
+        if "error" in answer:
+            entry.update(outcome="rejected", reason=answer["error"])
+            self._audit(entry)
+            return
+        call = O.check_structure(data, "call")  # its signature verified, so from is known
+        self._audit_tally(entry, call["from"], call["chain"][0]["iss"], answer["tally"])
+
+    def _audit_tally(self, entry, frm, root, tally):
+        entry.update(
+            id=tally["call"], **{"from": frm}, root=root, leaf=tally["writ"], op=tally["op"],
+            outcome=tally["st"], reason=(tally["err"] or {}).get("code"), tally=O.identity(tally),
+        )
+        self._audit(entry)
 
     def _admit(self, data, peer=None):
         """Steps 1 to 10 and the pending record of step 11.
@@ -513,7 +555,11 @@ class Executor:
             _cover_subs(outcome.used, _max_names(op.call["chain"][-1]), rec.get("sub", [])),
             rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
         )
-        return self._persist_final(rec, tally, outcome.res)
+        answer = self._persist_final(rec, tally, outcome.res)
+        if op.deferred and self.audit is not None:
+            entry = {"at": self.now(), "kind": "call", "peer": op.peer}
+            self._audit_tally(entry, op.call["from"], op.call["chain"][0]["iss"], answer["tally"])
+        return answer
 
     def _finish_tallies(self, op):
         """Section 8.2: the list is computed before this call's own tally
@@ -635,9 +681,28 @@ class Executor:
 
     # ----------------------------------------------------------- revokes
 
-    def receive_revoke(self, data):
+    def receive_revoke(self, data, peer=None):
         """Section 9.1: verify, record, and answer with the tallies of every
-        forward call under the revoked writ that is not yet final."""
+        forward call under the revoked writ that is not yet final. ``peer``
+        is recorded in the audit record only; any key may revoke its own
+        writs (section 7.6)."""
+        answer = self._receive_revoke(data)
+        if self.audit is not None:
+            entry = {"at": self.now(), "kind": "revoke", "peer": peer, "outcome": "recorded"}
+            try:
+                entry["id"] = O.identity(data if isinstance(data, dict) else canon_loads(data))
+            except Exception:  # noqa: BLE001, an unreadable object has no identity
+                pass
+            if "error" in answer:
+                entry.update(outcome="rejected", reason=answer["error"])
+            if "error" not in answer or answer["error"] == STORE_WRITE_FAILED:
+                r = V.verify_revoke(data)  # verified, so its signer is known
+                entry.update(**{"from": r["iss"]}, leaf=r["writ"],
+                             root=r["chain"][0]["iss"] if r["chain"] else None)
+            self._audit(entry)
+        return answer
+
+    def _receive_revoke(self, data):
         with self._lock:
             try:
                 r = V.verify_revoke(data)
