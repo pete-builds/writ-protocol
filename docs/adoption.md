@@ -115,6 +115,8 @@ On each request, the proxy:
 
 A failure before the call's signature verifies is a `400` with `{"error": <reason>}`. Every later failure is a `200` carrying a signed `failed` tally, and the request never reaches the API. On success, the proxy strips the Writ material, so the legacy API sees a request identical to what it saw yesterday, and forwards it. On the response, it computes `used` from the mapping, signs the tally with its own key, and fills `rev.until` from the template. The legacy API changes zero lines.
 
+*Built 2026-09-30 as `cmd/writ-gate` (docs/writ-gate.md), with a JSON mapping and the reference file store in place of YAML and SQLite, and the call in the `Writ-Call` header only.*
+
 It is the adapter that matters most, for three reasons:
 
 - **It gives value with two parties even when one of them is not participating.** A customer's agent gets enforced bounds and a signed tally from a vendor whose API team has not been asked for anything.
