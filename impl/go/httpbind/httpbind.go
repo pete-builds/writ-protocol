@@ -46,6 +46,10 @@ type Options struct {
 	// passed to the executor for peer binding and the audit record (spec
 	// sections 7.6, 9.3, and 10).
 	PeerOf func(*http.Request) (string, bool)
+	// MTLS reads the peer and the keys it speaks for from the verified
+	// client certificate (ClientCert), ahead of PeerOf. The server's TLS
+	// configuration must require and verify client certificates.
+	MTLS bool
 	// PerMinute, when above zero, bounds the requests accepted from each
 	// peer, or from each remote host when there is no peer, and refuses the
 	// rest with status 429 before they reach the executor or its audit
@@ -65,7 +69,10 @@ func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
 	mux.HandleFunc("POST /writ", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		source := "host:" + remoteHost(r)
-		if peerOf != nil {
+		if p, keys, ok := ClientCert(r); o.MTLS && ok {
+			ctx = exec.WithAttestedKeys(exec.WithPeer(ctx, p), keys)
+			source = "peer:" + p
+		} else if peerOf != nil {
 			if p, ok := peerOf(r); ok {
 				ctx = exec.WithPeer(ctx, p)
 				source = "peer:" + p
