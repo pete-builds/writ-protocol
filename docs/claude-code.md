@@ -57,6 +57,44 @@ Register the hooks in the project's `.claude/settings.json`. The empty matcher c
 
 Set `WRIT_HOME` in the command to keep keys and state somewhere other than `~/.writ`.
 
+## Keep the keys out of Claude's reach
+
+Run as above, the gate opens its keys and state in the hook process, as your user, which is the user Claude Code's tools run as. A grant without a shell cannot reach them, because the gate refuses any input that names `~/.writ`. A grant with a shell can: a command that builds the path at run time gets past a text check. So for a grant that must hold, run the gate as its own process where your user cannot read its files, and let the hooks only carry each event to it:
+
+```
+writ-hook serve -socket /run/writ/gate.sock
+```
+
+The hook commands find it through `WRIT_HOOK_SOCKET`:
+
+```json
+{"type": "command", "command": "WRIT_HOOK_SOCKET=/run/writ/gate.sock writ-hook pre"}
+```
+
+Over the socket the gate answers `pre`, `post`, `recover`, and `receipts`, and nothing else. It never grants: granting is a local command run as the gate's own user, so a model with a shell and the socket still cannot grant itself. If the gate cannot be reached, `pre` blocks the call.
+
+Where the gate runs is the choice that matters. The code is the same in each case:
+
+| Where the gate runs | What keeps Claude out | Tested here |
+|---|---|---|
+| **A second OS user on the same machine** | the operating system: your user cannot read the gate user's files, and granting needs `sudo -u` | no; the socket and the gate are tested, but under one user |
+| **The same user, with Claude Code's own sandbox denying its tools the gate's directory** | the sandbox | no |
+| **Another machine**, reached over the network | the keys are never on the machine the tools run on | no; this would put an mTLS listener (docs/directories.md) in front of the gate, which is not built |
+
+On Linux or NixOS, the second-user setup is:
+
+```
+sudo useradd --system --create-home --home-dir /var/lib/writ writ     # NixOS: users.users.writ = { isSystemUser = true; group = "writ"; home = "/var/lib/writ"; createHome = true; };
+sudo install -d -o writ -m 0755 /run/writ
+sudo -u writ writ-hook init
+sudo -u writ writ-hook grant -name files -tools Read,Edit,Write -under /home/you/project -ttl 8h
+sudo -u writ writ-hook serve -socket /run/writ/gate.sock               # or as a systemd service with User=writ
+```
+
+On macOS the steps are the same with a standard account made for the gate and a socket under `/tmp`; they have not been run.
+
+What the socket still allows: any local process can send `pre` and `post` events, so a model with a shell could report a false outcome for one of its own calls in flight, or spend its own grant's `uses`. It cannot widen a grant, read a key, or sign a receipt for work the gate did not admit.
+
 ## Check the receipts
 
 ```
@@ -73,12 +111,14 @@ The tool does not run, and Claude gets the reason with what the grant allows, fo
 Writ: missing_arg: this grant requires file_path on every call and a Bash call has none; the grant allows only Read
 ```
 
-This was run against Claude Code on 2026-09-30: an allowed Read ran and was receipted, a Read outside the granted folder and a Bash call were both blocked, and a Read of a missing file produced a verified `failed` receipt through `PostToolUseFailure`.
+Refusals the hook makes before the executor sees a call, such as an input naming `~/.writ` or a path with `..`, are in the audit record too, with a `claude/` reason code.
+
+This was run against Claude Code on 2026-09-30: an allowed Read ran and was receipted, a Read outside the granted folder and a Bash call were both blocked, and a Read of a missing file produced a verified `failed` receipt through `PostToolUseFailure`. The same was run again with the gate as its own process behind `writ-hook serve`: the Read was receipted through the socket, and a `cat` of the grantor's key was blocked.
 
 ## What it does not do
 
 - **A bound applies to every call under its grant.** `-under` adds a `file_path` bound, so a tool whose input has no `file_path` is refused under that grant: Bash, Grep and Glob (which use `path`), and NotebookEdit (which uses `notebook_path`). Give those tools their own named grant.
-- **Bash defeats it.** The gate refuses any input that names `~/.writ`, so an allowed tool cannot read the keys or rewrite the grant, but that is a text match, and a shell command can build the path at run time. A grant that must hold does not include Bash.
+- **Bash defeats it unless the gate runs apart.** Run in place, the gate protects its keys with a text match, which a shell command can get past. Run as its own user (above), the operating system protects them. Either way, a grant cannot say what a shell command will do: `rm -rf` and `ls` are both one Bash call. Bounding that is a sandbox's job, not a grant's.
 - **The keys live on the same machine as the tools.** A receipt proves what the gate admitted and what Claude Code reported back, signed by a key the model cannot reach through an allowed tool. It does not prove the tool's effect in the world, and anyone with access to `~/.writ` can do anything.
 - **Paths are checked as text.** Inputs with `.` or `..` segments are refused, but a symlink inside the granted folder can still point outside it.
 - **A revoke does not stop a tool already running**; it refuses every later call.

@@ -268,7 +268,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit, mTLS peers and directory bindings through a real TLS handshake |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
-| `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 6 tests, including parallel hook processes, a tampered receipt, failing closed, and named grants per tool; also run against Claude Code itself |
+| `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
 | `cmd/writ-demo` | agent A | |
 | `cmd/writ-vectors` | regenerates the vector corpus from fixed seeds | |

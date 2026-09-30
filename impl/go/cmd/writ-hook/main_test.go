@@ -120,12 +120,17 @@ func TestGrantIsEnforcedAndEveryCallReceipted(t *testing.T) {
 
 	ok, report := receipts(t, e)
 	if !ok || !strings.Contains(report, "3 receipt(s) verified, 0 invalid, 0 call(s) still unfinished") ||
-		!strings.Contains(report, "failed                   1") || !strings.Contains(report, "4 refusal(s)") {
+		!strings.Contains(report, "failed                   1") || !strings.Contains(report, "8 refusal(s)") {
 		t.Fatalf("receipts:\n%s", report)
 	}
 	audit, _ := os.ReadFile(e.path("audit.jsonl"))
-	if n := bytes.Count(audit, []byte("\n")); n != 7 {
-		t.Fatalf("%d audit entries, want 7: three receipts and four refusals by the executor", n)
+	if n := bytes.Count(audit, []byte("\n")); n != 11 {
+		t.Fatalf("%d audit entries, want 11: three receipts, four refusals by the executor, four by the hook", n)
+	}
+	for _, code := range []string{"claude/unclean_path", "claude/protected_state", "claude/tool_member", "claude/no_tool_use_id"} {
+		if !bytes.Contains(audit, []byte(`"reason":"`+code+`"`)) {
+			t.Errorf("the audit record has no %s refusal", code)
+		}
 	}
 }
 
