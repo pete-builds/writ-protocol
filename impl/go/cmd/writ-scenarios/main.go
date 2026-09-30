@@ -549,6 +549,21 @@ func main() {
 		b.call(now+30, call(B, []*writ.Writ{v1, v2}, "travel/y", map[string]any{}), nil, "failed:revoked", "including writs B signs after the restart")
 		b.write()
 	}
+	// Added 2026-09-30: a revoke of one writ MUST survive restart too
+	// (section 9). One lost at a restart re-admitted work under the writ,
+	// and the executor signed tallies for it that verified.
+	{
+		b := scenario("a revoke of one writ survives restart", A)
+		w1, w2 := plainChain("travel")
+		ch := []*writ.Writ{w1, w2}
+		b.revoke(now+10, must(writ.NewRevoke(A, []*writ.Writ{w1})).Raw, "tallies:0", "A revokes w1, the writ above the executor's own")
+		b.restart("resolved:0", "the executor restarts")
+		b.call(now+20, call(B, ch, "travel/x", map[string]any{}), nil, "failed:revoked", "work under w2 is still refused, because w1 above it stays revoked")
+		v1 := issue(A, B, bnd("act", "prefix", "travel"), now+3600, nil)
+		v2 := issue(B, C, bnd("act", "prefix", "travel"), now+3600, v1)
+		b.call(now+30, call(B, []*writ.Writ{v1, v2}, "travel/y", map[string]any{}), ok(map[string]any{"n": 1}), "ok", "a writ A issued separately is untouched")
+		b.write()
+	}
 
 	fmt.Printf("wrote %d scenarios to %s\n", count, dir)
 }

@@ -8,33 +8,38 @@ import (
 	"writproto/writ"
 )
 
-// Spec 9: a key-wide revoke MUST survive restart. One the executor cannot
-// write is still honored, is answered as an error rather than as recorded,
-// and is written when the sender retries.
-func TestKeyWideRevokeWriteFailure(t *testing.T) {
+// Spec 9: a revoke MUST survive restart, of one writ as of a whole key. One
+// the executor cannot write is still honored, is answered as an error rather
+// than as recorded, and is written when the sender retries.
+func TestRevokeWriteFailure(t *testing.T) {
 	A := id(1)
-	good := filepath.Join(t.TempDir(), "store.json")
-	e := newC(t, good, A, func(ctx context.Context, k *writ.Call) Result { return Result{} })
-	e.Store.path = filepath.Join(t.TempDir(), "no-such-dir", "store.json")
-	rv, _ := writ.NewRevoke(A, nil)
-	if _, rej := e.Revoke(rv.Raw); rej == nil || rej.Code != writ.Reason(StoreUnavailable) {
-		t.Fatalf("unwritable revoke log: got %v, want %s", rej, StoreUnavailable)
-	}
-	w, _ := writ.Issue(A, e.ID.DID(), bnd("act", "prefix", "x"), now+3600, nil)
-	k, _ := writ.NewCall(A, []*writ.Writ{w}, "x", map[string]any{})
-	rep, _ := e.Execute(context.Background(), k.Raw)
-	if got := tallyCode(rep); got != "failed:revoked" {
-		t.Fatalf("while the revoke is held only in memory: %s, want failed:revoked", got)
-	}
-	e.Store.path = good
-	if _, rej := e.Revoke(rv.Raw); rej != nil {
-		t.Fatalf("retry after the store recovered: %v", rej)
-	}
-	restarted := newC(t, good, A, func(ctx context.Context, k *writ.Call) Result { return Result{} })
-	k2, _ := writ.NewCall(A, []*writ.Writ{w}, "x", map[string]any{})
-	rep, _ = restarted.Execute(context.Background(), k2.Raw)
-	if got := tallyCode(rep); got != "failed:revoked" {
-		t.Fatalf("after restart: %s, want failed:revoked", got)
+	for _, kind := range []string{"key-wide", "one writ"} {
+		good := filepath.Join(t.TempDir(), "store.json")
+		e := newC(t, good, A, func(ctx context.Context, k *writ.Call) Result { return Result{} })
+		w, _ := writ.Issue(A, e.ID.DID(), bnd("act", "prefix", "x"), now+3600, nil)
+		rv, _ := writ.NewRevoke(A, nil)
+		if kind == "one writ" {
+			rv, _ = writ.NewRevoke(A, []*writ.Writ{w})
+		}
+		e.Store.path = filepath.Join(t.TempDir(), "no-such-dir", "store.json")
+		if _, rej := e.Revoke(rv.Raw); rej == nil || rej.Code != writ.Reason(StoreUnavailable) {
+			t.Fatalf("%s: unwritable revoke log: got %v, want %s", kind, rej, StoreUnavailable)
+		}
+		k, _ := writ.NewCall(A, []*writ.Writ{w}, "x", map[string]any{})
+		rep, _ := e.Execute(context.Background(), k.Raw)
+		if got := tallyCode(rep); got != "failed:revoked" {
+			t.Fatalf("%s: while the revoke is held only in memory: %s, want failed:revoked", kind, got)
+		}
+		e.Store.path = good
+		if _, rej := e.Revoke(rv.Raw); rej != nil {
+			t.Fatalf("%s: retry after the store recovered: %v", kind, rej)
+		}
+		restarted := newC(t, good, A, func(ctx context.Context, k *writ.Call) Result { return Result{} })
+		k2, _ := writ.NewCall(A, []*writ.Writ{w}, "x", map[string]any{})
+		rep, _ = restarted.Execute(context.Background(), k2.Raw)
+		if got := tallyCode(rep); got != "failed:revoked" {
+			t.Fatalf("%s: after restart: %s, want failed:revoked", kind, got)
+		}
 	}
 }
 

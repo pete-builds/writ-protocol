@@ -503,14 +503,15 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	// call is then either refused at step 7 or collected here.
 	var hits []inflight
 	e.mu.Lock()
-	// A key-wide revoke MUST survive restart (spec 9). One that cannot be
-	// written is still honored below, and answered as an error so the sender
-	// retries. A writ's revoke is SHOULD-durable and bounded by its exp.
+	// A revoke MUST survive restart (spec 9). One that cannot be written is
+	// still honored below, and answered as an error so the sender retries:
+	// answering it as recorded would let a restart re-admit the writ, or the
+	// key, it withdrew.
 	var unsaved error
 	if r.Writ == "*" {
 		unsaved = e.Store.revoke("*:"+r.Iss, 1<<62)
 	} else {
-		_ = e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
+		unsaved = e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
 	}
 	// Cancel in-flight forward work under the revoked writ and answer with
 	// pending tallies, in ascending order of call identity (spec 9.1). A

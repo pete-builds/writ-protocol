@@ -723,11 +723,11 @@ class Executor:
             try:
                 self.stores.revokes.add(r, exp)
             except OSError:
-                # Honored in memory either way. A writ's revoke is SHOULD-durable;
-                # a key-wide one MUST survive restart, so it is answered as an
-                # error and the sender retries (section 9).
+                # Honored in memory either way. A revoke MUST survive restart,
+                # so one that could not be written is answered as an error and
+                # the sender retries (section 9).
                 self._revoked_mem.append(r)
-                unsaved = r["writ"] == "*"
+                unsaved = True
             hit = []
             for rec in self.stores.calls.pending():
                 if rec["standing"]:

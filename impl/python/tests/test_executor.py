@@ -586,14 +586,22 @@ class StoreFailureTest(Base):
         self.assertEqual(self.ex.restart(), 0)
         self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
 
-    def test_unsaved_writ_revoke_is_answered_as_recorded(self):
+    def test_unsaved_writ_revoke_is_an_error_and_still_honored(self):
+        # Section 9: a revoke of one writ MUST survive restart too; answering
+        # an unsaved one as recorded let a restart re-admit the writ.
         ch = chain()
+        real = self.ex.stores.revokes.add
 
         def broken(revoke, exp=None):
             raise OSError("disk full")
         self.ex.stores.revokes.add = broken
-        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]])), {"tallies": []})
+        rv = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        self.assertEqual(self.ex.receive_revoke(rv), {"error": STORE_WRITE_FAILED})
         self.assertRefused(self.ex.receive_call(fwd(ch, 1)), "revoked")
+        self.ex.stores.revokes.add = real
+        self.assertEqual(self.ex.receive_revoke(rv), {"tallies": []})
+        self.assertEqual(self.ex.restart(), 0)
+        self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
 
 
 # ------------------------------------------------------------ peer binding
@@ -853,7 +861,7 @@ class ScenarioRunnerTest(unittest.TestCase):
 
     def test_corpus_scenarios_pass(self):
         names = sorted(n for n in os.listdir(SCENARIOS) if n.endswith(".json"))
-        self.assertEqual(len(names), 22)
+        self.assertEqual(len(names), 23)
         for name in names:
             with self.subTest(name=name):
                 self.run_one(self.load(name))
