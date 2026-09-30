@@ -60,6 +60,8 @@ A server that does not understand the extension ignores unknown `_meta` keys, wh
 
 Both rules exist so that "the server will probably honor it" is never an assumption the client can make.
 
+*Built 2026-09-30 as `impl/go/mcpbind` and the stdio server `cmd/writ-mcp`; docs/bindings.md says what was tested.*
+
 **Living with MCP authorization.** The OAuth 2.1 profile answers "who is this client, and may it talk to this endpoint?" The resource server validates the bearer token as the spec requires. The rule that servers must not accept or pass along other tokens is untouched, because a writ is not a token for the server's authorization server and never appears in `Authorization`. It is application data in `_meta` that tells the server what the upstream principal permitted. In one sentence for an MCP server author: the token gets you in the door, the writ says what you may do once inside, and the server checks both.
 
 ### 2b. A2A
@@ -77,6 +79,8 @@ The did:key appears in the extension's params. Because the card is JWS-signed un
 
 - **Carrying the chain.** Two forms are allowed, and one is preferred. Preferred: a `DataPart` in the request message with `metadata.mimeType` set to `application/writ-call+json`, whose `data` is the full call object including `chain`. For clients that cannot add parts: `message.metadata["io.writ/call"]`, holding the same object. A server that supports the extension accepts both and answers in the shape it received.
 - **Returning the tally.** The tally is an `Artifact` on the task with one `DataPart` of `application/writ-tally+json`. It is the last artifact emitted before the terminal state, and the terminal status message repeats the tally's hash in `metadata["io.writ/tally"]`, so a streaming client that missed the artifact can fetch it.
+*Message-level helpers built 2026-09-30 as `impl/go/a2abind` (docs/bindings.md); not yet run against an A2A SDK.*
+
 - **Cancelling.** A2A's `TASK_STATE_CANCELED` maps to `st: canceled`. A `CancelTask` from the client carries a `revoke` in `message.metadata["io.writ/revoke"]`, which the server forwards to any sub-delegate it used; the tally's `sub` array shows the client whether that forwarding happened. A revoke ends new work only: the client keeps its standing to send `sys/undo` or `sys/tallies` under the revoked chain (spec section 8).
 
 ### 2c. Plain HTTP APIs

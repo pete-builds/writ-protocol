@@ -268,6 +268,8 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit, mTLS peers and directory bindings through a real TLS handshake |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
+| `mcpbind`, `cmd/writ-mcp` | Writ over MCP: the call in `tools/call` `_meta`, the tally in the result, a stdio MCP server that enforces it ([docs/bindings.md](docs/bindings.md)) | 4 tests; also run with Claude Code as the MCP client |
+| `a2abind` | Writ over A2A: the call in a message part or metadata, the tally as the task's last artifact | 1 test, message level |
 | `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
 | `cmd/writ-demo` | agent A | |
@@ -326,6 +328,7 @@ docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
 docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
+docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               213 vectors
