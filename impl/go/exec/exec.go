@@ -156,6 +156,13 @@ type Reply struct {
 // reply (always carrying a signed tally) or an unsigned rejection for failures
 // before the call's signature could be verified (steps 1 and 2).
 func (e *Executor) execute(ctx context.Context, obj wire.Object) (*Reply, *writ.Error) {
+	return e.run(ctx, obj, false)
+}
+
+// run is section 7. When deferred is set, a forward call that passes steps 1
+// to 10 is left pending at step 11 and run returns nil, nil: the operation is
+// performed elsewhere and reported through complete.
+func (e *Executor) run(ctx context.Context, obj wire.Object, deferred bool) (*Reply, *writ.Error) {
 	k, err := writ.ParseCall(obj)
 	if err != nil {
 		return nil, err.(*writ.Error)
@@ -255,6 +262,10 @@ func (e *Executor) execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if !admitted {
 		return refuse(string(writ.CountExhausted))
 	}
+	if deferred && !k.Standing() {
+		// Step 11's pending record is persisted; the operation runs elsewhere.
+		return nil, nil
+	}
 	// Step 11: the pending record is persisted; register in flight, then
 	// release mu before performing.
 	cctx, cancel := context.WithCancel(ctx)
@@ -276,6 +287,13 @@ func (e *Executor) execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	default:
 		r = e.Handle(cctx, k)
 	}
+	return e.seal(k, acc, pending, r)
+}
+
+// seal is step 12 for the call k, accepted at acc under the pending record.
+func (e *Executor) seal(k *writ.Call, acc int64, pending *Record, r Result) (*Reply, *writ.Error) {
+	leaf := k.Leaf()
+	ids := chainIDs(k)
 	if r.St == "" {
 		r.St = "ok"
 	}
