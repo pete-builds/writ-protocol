@@ -23,8 +23,12 @@ MAX_REQUEST = 65536  # a call and a revoke share the limit of section 1.6
 
 def serve(executor, well_known, host="127.0.0.1", port=0, peer_of=None):
     """Start a server in a background thread and return it; its bound port
-    is ``server.server_address[1]``. ``peer_of(handler)`` may return the
-    identity the transport authenticated, or None (section 7.6)."""
+    is ``server.server_address[1]``. ``peer_of(handler)`` returns the
+    identity the transport authenticated; an ``executor.UnidentifiedPeer``
+    when it authenticated a peer it cannot name, such as a verified client
+    certificate with no identity; or None only when it authenticated no peer
+    at all (section 7.6). Returning None for an authenticated connection
+    skips peer binding, so a captured call could fetch its stored result."""
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # quiet: the audit record is the log

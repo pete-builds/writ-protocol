@@ -146,6 +146,22 @@ func peerOf(ctx context.Context) (string, bool) {
 	return p, ok
 }
 
+type unidentifiedKey struct{}
+
+// WithUnidentifiedPeer returns ctx carrying a peer the transport authenticated
+// but could not name, such as a verified client certificate with no usable
+// identity, under label for the audit record. It is not a transport that
+// authenticated no peer: no binding and no attested key matches it, so every
+// call over it fails peer binding, before replay (spec 7.6).
+func WithUnidentifiedPeer(ctx context.Context, label string) context.Context {
+	return context.WithValue(WithPeer(ctx, label), unidentifiedKey{}, true)
+}
+
+func unidentified(ctx context.Context) bool {
+	u, _ := ctx.Value(unidentifiedKey{}).(bool)
+	return u
+}
+
 type attestedKey struct{}
 
 // WithAttestedKeys returns ctx carrying keys the transport's own credential
@@ -239,8 +255,9 @@ func (e *Executor) run(ctx context.Context, obj wire.Object, deferred bool) (*Re
 		e.afterRevokeCheck()
 	}
 	// Step 8 opens with peer binding, before replay, so a captured call
-	// presented over another connection cannot fetch the stored result.
-	if peer, ok := peerOf(ctx); ok && !attested(ctx, k.From) && !e.PeerBinds(peer, k.From) {
+	// presented over another connection cannot fetch the stored result. A
+	// peer the transport authenticated but could not name binds nothing.
+	if peer, ok := peerOf(ctx); ok && (unidentified(ctx) || (!attested(ctx, k.From) && !e.PeerBinds(peer, k.From))) {
 		return refuse(string(writ.PeerMismatch))
 	}
 	// Step 8, continued: standing, then the forward or standing rules.
