@@ -34,4 +34,4 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* $pre \
             --title "Writ $GITHUB_REF_NAME" \
-            --notes "Binaries for Linux and macOS, amd64 and arm64: writ (the CLI), writ-agent and writ-demo (the three-agent demo), writ-hook (Claude Code), writ-mcp (MCP), writ-gate (reverse proxy). Check a download against SHA256SUMS. The spec is docs/spec/writ-v0.1.md; README.md has three ways in."
+            --notes "Binaries for Linux and macOS, amd64 and arm64: writ (the CLI), writ-agent and writ-demo (the three-agent demo), writ-hook (Claude Code), writ-mcp and writ-mcp-proxy (MCP server and client side), writ-gate (reverse proxy). Check a download against SHA256SUMS. The spec is docs/spec/writ-v0.1.md; README.md has three ways in."

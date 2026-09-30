@@ -40,4 +40,4 @@ Questions the specification or the adapters leave open, each with the options, a
 
 **Options.** Build a client adapter that signs a call for each MCP tool use an agent makes, such as a `writ-hook` mode that adds `_meta` to MCP tool calls (which needs Claude Code to let a hook change a tool's input), or a proxy MCP server that fronts another and adds the call. Or wait for demand.
 
-**Recommendation: the proxy MCP server,** because it needs nothing from any client: point the client at the proxy, and the proxy signs under a grant and forwards to the real server. It is the MCP counterpart of `writ-gate`.
+**Recommendation: the proxy MCP server,** because it needs nothing from any client: point the client at the proxy, and the proxy signs under a grant and forwards to the real server. It is the MCP counterpart of `writ-gate`. *Built 2026-09-30 as `cmd/writ-mcp-proxy` and run with Claude Code (docs/bindings.md), so this one is decided.*

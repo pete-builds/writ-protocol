@@ -118,12 +118,12 @@ func (s *server) handle(req rpcRequest) (any, *mcpbind.RPCError) {
 		_ = json.Unmarshal(req.Params, &p)
 		return map[string]any{
 			"protocolVersion": p.ProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{}, "extensions": mcpbind.ExtensionInfo()},
+			"capabilities":    map[string]any{"tools": map[string]any{}, "extensions": mcpbind.ExtensionInfo(s.did)},
 			"serverInfo":      map[string]any{"name": "writ-mcp", "version": "0.1"},
 			"instructions":    fmt.Sprintf("Tool calls run under Writ. This server's key is %s.", s.did),
 		}, nil
 	case "server/discover":
-		return map[string]any{"extensions": mcpbind.ExtensionInfo()}, nil
+		return map[string]any{"extensions": mcpbind.ExtensionInfo(s.did)}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":

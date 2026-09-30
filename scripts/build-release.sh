@@ -5,7 +5,7 @@ set -eu
 tag=$1
 out=$(mkdir -p "$2" && cd "$2" && pwd)
 root=$(cd "$(dirname "$0")/.." && pwd)
-cmds="writ writ-agent writ-demo writ-hook writ-mcp writ-gate"
+cmds="writ writ-agent writ-demo writ-hook writ-mcp writ-mcp-proxy writ-gate"
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   os=${target%/*}
   arch=${target#*/}

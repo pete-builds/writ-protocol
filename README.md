@@ -272,6 +272,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
 | `mcpbind`, `cmd/writ-mcp` | Writ over MCP: the call in `tools/call` `_meta`, the tally in the result, a stdio MCP server that enforces it ([docs/bindings.md](docs/bindings.md)) | 4 tests; also run with Claude Code as the MCP client |
 | `cmd/writ-gate` | a reverse proxy that enforces Writ in front of an API that has never heard of it ([docs/writ-gate.md](docs/writ-gate.md)) | 1 end-to-end test against a fake orders API, including undo |
+| `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if its tally verifies | 2 tests; run with Claude Code as the client |
 | `a2abind` | Writ over A2A: the call in a message part or metadata, the tally as the task's last artifact | 1 test, message level |
 | `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |

@@ -10,7 +10,19 @@ A client puts the Writ call in `params._meta["io.writ/call"]` on `tools/call`, w
 - **Client:** `mcpbind.Params(tool, call)` builds the request. `mcpbind.Ready(call, advertised)` refuses to send a chain with `max` or `count` bounds to a server that does not advertise the extension (`unenforced_server`). `mcpbind.Check(call, result)` verifies the tally, and treats a result with no tally as `missing_tally`: the work does not count as done.
 - **`writ-mcp`** is a minimal MCP server over stdio with one tool, `echo`, that runs only under a Writ call.
 
-Tested: the binding end to end in `mcpbind_test.go` (an enforced call, a count running out, arguments differing from what was signed, a failing tool, both client rules, a result body changed after signing), a scripted stdio session in `cmd/writ-mcp`, and Claude Code itself as the MCP client on 2026-09-30: it connected, listed `echo`, called it, and received the `missing_call` refusal, because no MCP client attaches Writ calls yet. That last point is the gap: a client adapter that signs calls for an agent's MCP tool use is the next piece.
+Tested: the binding end to end in `mcpbind_test.go` (an enforced call, a count running out, arguments differing from what was signed, a failing tool, both client rules, a result body changed after signing), a scripted stdio session in `cmd/writ-mcp`, and Claude Code itself as the MCP client on 2026-09-30: connected straight to `writ-mcp`, it listed `echo`, called it, and received the `missing_call` refusal, because the client attached no Writ call. The proxy below closes that gap.
+
+## The client side, for any MCP client: `cmd/writ-mcp-proxy`
+
+No MCP client attaches Writ calls, and none needs to. `writ-mcp-proxy` is an MCP server over stdio that starts the real server as a child process and relays everything, except that each `tools/call` leaves carrying a Writ call signed under a grant, and each result comes back only if its tally verifies:
+
+```
+writ-mcp-proxy -agent-seed-file agent.seed -grant grant.json -receipts receipts.jsonl -- <the real MCP server and its arguments>
+```
+
+The grant is a writ from its root to the agent key. The proxy learns the server's key from `server/discover`, where a Writ server advertises it, passes the grant on to that key unchanged, and keeps every verified tally in `-receipts`. It refuses a server that does not advertise the extension when the grant has `max` or `count` bounds, and turns a result with no tally, or one that does not verify, into an error.
+
+Run on 2026-09-30 with Claude Code as the client, through the proxy, to `writ-mcp` under a grant of two uses: the first two `echo` calls returned their results with verified tallies, the third returned "Writ refused this call: count_exhausted", and the proxy's receipts and the server's audit record both show ok, ok, count_exhausted. Unit tests cover the relay (including the server's notifications), a server that does not advertise, and a server that strips the tally.
 
 ## A2A: `impl/go/a2abind`
 

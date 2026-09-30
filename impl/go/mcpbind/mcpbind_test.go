@@ -66,6 +66,9 @@ func TestToolCallUnderAWrit(t *testing.T) {
 	if err != nil || tl.Err == nil || tl.Err.Code != "count_exhausted" || res["isError"] != true {
 		t.Fatalf("over the count: %v %+v", err, tl)
 	}
+	if text := res["content"].([]any)[0].(map[string]any)["text"]; text != "Writ refused this call: count_exhausted" {
+		t.Fatalf("a refusal's text for the model: %q", text)
+	}
 }
 
 func TestWhatWasSignedIsWhatRuns(t *testing.T) {

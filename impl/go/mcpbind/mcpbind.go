@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"writproto/exec"
@@ -26,9 +27,26 @@ const (
 	OpPrefix = "mcp/tools/"
 )
 
-// ExtensionInfo is the entry a server lists for server/discover.
-func ExtensionInfo() map[string]any {
-	return map[string]any{Extension: map[string]any{"version": 1}}
+// ExtensionInfo is the entry a server lists for server/discover, naming the
+// key it executes under, so a client can delegate to it (the leaf hld).
+func ExtensionInfo(did string) map[string]any {
+	return map[string]any{Extension: map[string]any{"version": 1, "did": did}}
+}
+
+// Advertised reads a server/discover or initialize result: whether the server
+// enforces the extension, and the key it executes under.
+func Advertised(result map[string]any) (bool, string) {
+	ext, _ := result["extensions"].(map[string]any)
+	if ext == nil {
+		caps, _ := result["capabilities"].(map[string]any)
+		ext, _ = caps["extensions"].(map[string]any)
+	}
+	info, ok := ext[Extension].(map[string]any)
+	if !ok {
+		return false, ""
+	}
+	did, _ := info["did"].(string)
+	return true, did
 }
 
 // Tool performs one MCP tool. It returns the structured result, which is the
@@ -135,6 +153,9 @@ func result(body map[string]any, isErr bool, tally wire.Object) map[string]any {
 		if b, err := jcs.Marshal(body); err == nil {
 			text = string(b)
 		}
+	} else if e, ok := tally["err"].(map[string]any); ok && isErr {
+		// A refusal has no result body; say why, for the model reading it.
+		text = fmt.Sprintf("Writ refused this call: %v", e["code"])
 	}
 	r := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}, "isError": isErr}
 	if body != nil {
