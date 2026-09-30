@@ -1,22 +1,42 @@
-# The Writ Protocol, version 0.1
+---
+title: "Writ: Narrowable Delegation Between Agents, with Signed Receipts"
+abbrev: Writ
+docname: draft-stergion-writ-00
+category: exp
+submissiontype: independent
+ipr: trust200902
+keyword:
+  - agents
+  - delegation
+  - capabilities
+  - receipts
+stand_alone: yes
+pi: [toc, sortrefs, symrefs]
+author:
+  - name: Pete Stergion
+    org: Independent
 
-Status: draft for independent implementation. First published 2026-09-04.
+normative:
+  RFC8032:
+  RFC8785:
+  RFC4648:
+  RFC6838:
+informative:
+  RFC7515:
+  RFC9396:
+  DID-KEY:
+    title: "The did:key Method"
+    target: https://w3c-ccg.github.io/did-key-spec/
+    author:
+      org: W3C Credentials Community Group
 
-Revisions:
-
-- **2026-09-04, the same day.** Fixed the standing-operation expiry and revocation rule (section 7 steps 4 and 7, section 8).
-- **2026-09-23.** Added executor scenarios and `verify_revoke` vectors to the conformance corpus (section 14), and pinned the executor details those scenarios compare byte for byte: the pending tally's `err` (section 6), atomic replay and count (section 7 steps 9 and 10), what the tally store holds (section 9), the order of `sys/tallies` results and of a revoke's answer, which undo counts and how reversals of one tally are serialized (section 8), the order of revoke checks and that a revoke leaves standing calls running (section 9.1), a writ with several `count` bounds (section 7 step 10), store write failures (section 9), and a nesting limit (sections 1.1 and 1.6). No member, object, or reason code changed meaning; `pending` is named as the pending tally's `err.code`.
-- **2026-09-28.** Pinned every first-failure order a differential fuzzer found open between two implementations: the checks inside one bound (section 3); which binary members section 6.1 step 2 covers; the order of `crit` checks; member order in section 6.1 step 5, including inside `bnd`, `chain`, and `err`; that a tally's `wrt` and `sub` entries are checked at section 6.2 steps 8 and 9, after the tally's own signature, with `depth` applied to `wrt` entries; the order of section 7 steps 1 and 2 for the `verify_call` vector; that every element of a chain is checked to be an object before any writ in it is verified (section 4); and the operand order of the `narrows` vector (section 14). Two rules changed: a pending tally's shape is now checked in full (section 6.1 step 5), and a tally whose `sub` names a writ absent from its `wrt` is `signed_unauthorized`, an admission by its signer, where the 2026-09-23 text also called it `unverifiable`.
-- **2026-09-28, second revision.** A second executor, written from this text alone without reading the first, logged the ten places the text left it to guess (`impl/python/DIVERGENCES.md`). This revision answers each one: a refusal's `acc` (section 6); which sub-tallies go into `sub` (section 7.5); that failures at section 7 steps 1 and 2 are unsigned; that step 3 is section 4's chain verification, `depth` included; that a standing operation's own checks run when it is performed, after replay, so their failures are stored outcomes (sections 7, 8.1, 8.2); what a second `sys/undo` gets while a reversal is running (section 8.1); the reversal store and the key and lifetime of a key-wide revoke (section 9); which bytes "identity compared as byte strings" means (sections 8.2 and 9.1); and a held operation's `app` (section 14.1). Two rules changed by decision: `sys/tallies` names a writ `from` issued or one below it (section 8.2), and executors bound revoke intake (section 12).
-- **2026-09-29.** A review dated that day found that section 6.2 step 10 summed only the immediate sub-tallies and left out the tally's own `used`, so a complete tree two levels deep could report twice the root's `max` and verify. `used` is now inclusive of the subtree: a tally's `used` covers what its sub-tallies report, and step 10 checks that it does (sections 6 and 6.2). Every accepted vector in the corpus already met the rule; what it newly rejects is a tally whose signer reported less than its own sub-tallies. Also pinned: an executor persists each writ it issues before sending it, and a resolved pending record carries that evidence (sections 7.5 and 9); recording a revoke is atomic with steps 7 to 11 of a forward call (section 7); and the section 2 example says what its numbers bound. Section 13 no longer implies that UCAN has no receipts, and names Tenuo.
-- **2026-09-30.** Tied the protocol to workload identity and audit, after review by someone who would have to operate it. A call delivered over an authenticated transport is now checked against a binding of that peer to the call's `from`, before replay (section 7 step 8, section 7.6, new reason `peer_mismatch`), so a captured call is useless from any other connection. A key-wide revoke MUST survive restart, and one an executor cannot persist is answered with an error, not as recorded (sections 9 and 10). Added an audit record kept beside the protocol's stores (section 9.3), and security text on rotating a key and on which keys in a chain are tied to anything outside it (section 12). Executor scenarios gained `peers` and `peer` (section 14.1).
-- **2026-09-30, later.** Added Appendix D, a non-normative JWS profile: the signed object as the payload of a compact JWS signed again by the same key. No rule, object, or reason code changed.
-
-Writ: pass narrowable authority between agents and bring back a signed account of what was done under it.
-
-## Abstract
+--- abstract
 
 Writ defines four signed JSON objects and the rules for checking them. A **writ** is a grant of bounded authority from one key to another that the holder can narrow and pass on without contacting the original issuer. A **call** assigns work under a chain of writs. A **tally** is the executor's signed account of what it did under exactly which writ, including the tallies of everyone it delegated to. A **revoke** withdraws a writ. Verification needs only the objects and the public keys embedded in them.
+
+--- middle
+
+# Introduction and Conventions
 
 Writ is not a transport, a discovery mechanism, a task lifecycle, or a tool schema. Those belong to existing protocols (HTTP, A2A Agent Cards, A2A and MCP tasks, MCP tools). Writ carries what they leave out: an authority object that survives a hop into a foreign trust domain, can be narrowed by its holder under a mechanical subset rule, and is named by the receipt that comes back.
 
@@ -24,47 +44,47 @@ How to read this specification (non-normative). Sections 1 to 4 define the encod
 
 In terms of prior work: a writ is an OAuth Rich Authorization Request value set plus a comparison table, signed by the delegator instead of an authorization server; a tally is a UCAN-style receipt with consumption accounting and an embedded sub-tree. Hash-linked offline attenuation for agents is also the subject of several 2026 Internet-Drafts; section 13 and the prior-art survey place Writ against them.
 
-## 1. Conventions
+This document is generated from docs/spec/writ-v0.1.md in the repository at https://github.com/pete-builds/writ-protocol, which also holds two implementations and a conformance corpus. Section numbers match that text.
 
-The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, MAY are to be interpreted as in RFC 2119 and RFC 8174.
+{::boilerplate bcp14-tagged}
 
 **Object** means a JSON object. **Member** means a name and value pair in an object. **Hash** means the base64url encoding, without padding, of the SHA-256 of a byte string: 43 characters. **Key** means a did:key identifier of an Ed25519 public key.
 
-### 1.1 Encoding rules
+## Encoding rules
 
 1. Every protocol object is UTF-8 JSON (RFC 8259).
 2. Numbers MUST be integers in the range negative (2^53 minus 1) to positive (2^53 minus 1), written without fraction or exponent. Any other number is a rejection with reason `noncanonical`. The literal `-0` is accepted and canonicalizes to `0`.
 3. Strings MUST be valid UTF-8. A `\u` escape MUST NOT encode an unpaired surrogate. Producers SHOULD emit NFC-normalized strings. Verifiers compare bytes and MUST NOT normalize.
 4. An object MUST NOT repeat a member name at any depth.
-5. Binary values (signatures, hashes, nonces, identifiers) are base64url (RFC 4648 section 5) without padding. A verifier MUST reject, with reason `noncanonical`, a value that is empty, contains padding or characters outside the base64url alphabet, or is an encoding that does not re-encode to the same string (non-zero trailing bits, or a length congruent to 1 modulo 4), so that every byte string has exactly one encoding. A value that decodes to the wrong number of bytes for its member (32 for a hash, 64 for a signature, fewer than 16 for `nnc` or `id`) is a rejection with reason `malformed`.
+5. Binary values (signatures, hashes, nonces, identifiers) are base64url ({{RFC4648}} section 5) without padding. A verifier MUST reject, with reason `noncanonical`, a value that is empty, contains padding or characters outside the base64url alphabet, or is an encoding that does not re-encode to the same string (non-zero trailing bits, or a length congruent to 1 modulo 4), so that every byte string has exactly one encoding. A value that decodes to the wrong number of bytes for its member (32 for a hash, 64 for a signature, fewer than 16 for `nnc` or `id`) is a rejection with reason `malformed`.
 6. Times are integer Unix seconds, UTC.
 7. Arrays and objects MUST NOT nest more than 64 levels deep, the outermost value being level 1. Deeper input is a rejection with reason `too_large`, found before any other rule of this section is applied, so a verifier can refuse it without building it.
 
-### 1.2 Canonical form
+## Canonical form
 
-The canonical form of an object is its serialization under RFC 8785 (JSON Canonicalization Scheme) with the integer restriction of rule 2 above: member names sorted by UTF-16 code units, no whitespace, strings escaped per RFC 8785 section 3.2.2.2, integers in shortest decimal form.
+The canonical form of an object is its serialization under {{RFC8785}} (JSON Canonicalization Scheme) with the integer restriction of rule 2 above: member names sorted by UTF-16 code units, no whitespace, strings escaped per {{RFC8785}} section 3.2.2.2, integers in shortest decimal form.
 
 A verifier MUST reject an object whose received bytes, after parsing, violate rules 2 to 4 of section 1.1, reason `noncanonical`. A verifier MAY accept non-canonical whitespace and member order in received bytes, because it re-canonicalizes before checking any signature or computing any hash.
 
-### 1.3 Identity
+## Identity
 
-A principal is identified by a did:key for an Ed25519 public key: the string `did:key:z` followed by the base58btc encoding of the bytes `0xed 0x01` and the 32-byte public key. Every such identifier begins with `did:key:z6Mk`. Version 1 supports exactly this one key type. A verifier MUST reject any other identifier with reason `bad_key`.
+A principal is identified by a did:key {{DID-KEY}} for an Ed25519 public key: the string `did:key:z` followed by the base58btc encoding of the bytes `0xed 0x01` and the 32-byte public key. Every such identifier begins with `did:key:z6Mk`. Version 1 supports exactly this one key type. A verifier MUST reject any other identifier with reason `bad_key`.
 
 The identifier is the key. No resolution, registry, or fetch is needed to verify a signature. Binding a key to a vendor, a person, or a domain is outside this protocol (see section 12).
 
-### 1.4 Signatures
+## Signatures
 
 Every object has a `sig` member. The signing input is the byte string:
 
     <typ> "/" <v> 0x00 <canonical form of the object with sig removed>
 
-for example `writ/1` followed by a NUL byte followed by the canonical bytes. The signature is Ed25519 (RFC 8032) over that input, encoded base64url without padding (86 characters). The NUL-separated prefix prevents a signature made for one object type or protocol from verifying as another.
+for example `writ/1` followed by a NUL byte followed by the canonical bytes. The signature is Ed25519 ({{RFC8032}}) over that input, encoded base64url without padding (86 characters). The NUL-separated prefix prevents a signature made for one object type or protocol from verifying as another.
 
-### 1.5 Object identity
+## Object identity
 
 The identity of a signed object is the hash of the canonical form of the whole object, `sig` included. Every reference from one object to another (`prv`, `call`, `writ`) is such a hash.
 
-### 1.6 Limits
+## Limits
 
 | Limit | Value |
 |---|---|
@@ -78,11 +98,11 @@ The identity of a signed object is the hash of the canonical form of the whole o
 
 A verifier MUST check byte length, nesting depth, and chain length before verifying any signature, reason `too_large`. The deepest legitimate object, a tally tree under an eight-writ chain, nests fewer than 30 levels.
 
-### 1.7 Unknown members and `crit`
+## Unknown members and `crit`
 
 A verifier MUST ignore members it does not recognize, except that every object MAY carry `crit`, an array of member names; a verifier that does not understand every name in `crit` MUST reject the object with reason `unsupported_critical`. Members named in `crit` MUST be present.
 
-## 2. The writ
+# The writ
 
 A writ is a grant from `iss` to `hld` of authority to perform operations matching `act` within `bnd`, until `exp`.
 
@@ -114,13 +134,13 @@ Example, A grants B the authority to book travel for at most 60000 minor units p
  "prv":null,"exp":1788403600,"nnc":"Qm3bq8w1s5XK7jZRt0aB2w","sig":"..."}
 ```
 
-### 2.1 Chains
+## Chains
 
 A chain is an array of writs, root first, in which each writ after the first is a child of the one before it. A chain is valid when every writ verifies (section 6.1) and every adjacent pair satisfies the attenuation rule (section 4).
 
 The authority under a chain is the leaf writ's bounds. Because the attenuation rule requires a child to carry every bound of its parent no wider, the leaf's bounds are at least as tight as every ancestor's.
 
-## 3. Bounds
+# Bounds
 
 `bnd` is an object whose members are bound names and whose values are objects `{"t": <type>, "v": <value>}` with no other members. Version 1 defines five types. A verifier MUST reject a bound of any other type, reason `unknown_bound`. A bound a verifier cannot compare is a bound it cannot enforce.
 
@@ -134,7 +154,7 @@ The authority under a chain is the leaf writ's bounds. Because the attenuation r
 
 A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max` or `count` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. A verifier checks one bound in this order and reports the first failure: it is an object, its members are exactly `t` and `v`, and `t` is a string (`malformed`); `t` is in this table (`unknown_bound`); `v` has the JSON type for `t` (`malformed`); the value rule (`noncanonical`). A `set` is checked element by element in array order, each element's type (`malformed`) before whether it repeats an earlier element (`noncanonical`). A `window` is checked for its shape, an array of two integers (`malformed`), before `lo` is compared with `hi`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it.
 
-### 3.1 Prefix matching
+## Prefix matching
 
 A prefix value P matches a string S when one of the following holds:
 
@@ -144,7 +164,7 @@ A prefix value P matches a string S when one of the following holds:
 
 So `travel` matches `travel` and `travel/charge`; `travel/` matches `travel/charge` but not `travel`; `travel/charge` matches `travel/charge` and `travel/charge/retry` but not `travel/chargeback`. There is no value that matches every string.
 
-### 3.2 Reserved bound names
+## Reserved bound names
 
 | Name | Type | Required | Meaning |
 |---|---|---|---|
@@ -154,7 +174,7 @@ So `travel` matches `travel` and `travel/charge`; `travel/` matches `travel/char
 
 An `act` that is not of type `prefix`, an `hld` that is not a `set` of keys, or a `depth` that is not a `max` is a rejection with reason `malformed` (`bad_key` when an `hld` element is not a valid key). All other names are application bounds and are compared against the call's `args` by name (section 7.2). Operation names under `act` are a convention between the parties; this protocol assigns them no meaning beyond string matching. Names beginning with `sys/` are reserved for this protocol and are never matched by `act` (section 8).
 
-## 4. Attenuation
+# Attenuation
 
 A writ C is a valid child of a writ P when all of the following hold. A verifier MUST check them in this order and report the first failure.
 
@@ -170,7 +190,7 @@ Chain verification, as an operation, is: the chain is an array (`malformed`) of 
 
 Authority never widens: a child cannot drop, retype, or loosen a bound, cannot outlive its parent, and cannot be issued by anyone but the parent's holder. A holder MAY issue a child to itself; doing so gains nothing, because `count` is consumed against every writ in the chain (section 7.3).
 
-## 5. The call
+# The call
 
 A call assigns work under a chain.
 
@@ -205,7 +225,7 @@ Example, B assigns C the payment step under a child writ narrowed to `travel/cha
  "sig":"..."}
 ```
 
-## 6. The tally
+# The tally
 
 A tally is the executor's signed account of one call.
 
@@ -246,7 +266,7 @@ Example, C's tally for the call above:
 
 B's tally for A's call embeds C's tally in `sub` and writ_2 in `wrt`.
 
-### 6.1 Verifying a single signed object
+## Verifying a single signed object
 
 For a writ, call, tally, or revoke, in this order:
 
@@ -264,7 +284,7 @@ For a writ, call, tally, or revoke, in this order:
 
 A tally names its writ by hash, so a tally can only be verified by a party holding that writ (section 6.2). A refusal with reason `wrong_executor` is signed by the party that received the call, which is not the leaf holder; it is evidence of the refusal but does not verify under section 6.2.
 
-### 6.2 Verifying a tally tree
+## Verifying a tally tree
 
 A verifier V that made a call K under a chain whose leaf writ is W, and received a tally T with an optional result body R, checks in this order:
 
@@ -285,7 +305,7 @@ A verifier cannot check `S.call` for a sub-tally because it does not hold the ca
 
 The result of verification for each tally is one of `valid`, `signed_unauthorized` (section 6.1 passed for T but a later step failed, anywhere in the tree, including a `sub_unmatched` in T itself: an admission by a signer), or `unverifiable` (T itself fails section 6.1). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
 
-## 7. Executing a call
+# Executing a call
 
 An executor E receiving a call K over a transport binding (section 10) proceeds in this order, stopping at the first failure. A failure at step 1 or 2 MUST be answered with an unsigned error, because until the call's signature has verified no signed statement can bind the executor to it; every later failure MUST be answered with a signed tally with `st` `failed` and the reason in `err.code`, so that a refusal is evidence.
 
@@ -308,11 +328,11 @@ Steps 9 and 10 are one atomic operation with respect to other calls: two calls w
 
 Steps 7 to 11 of a forward call are likewise atomic with respect to recording a revoke (section 9.1). Either the revoke is recorded first and the call is refused at step 7, or the call is accepted first and is among the calls the revoke answers for and tells to stop. No forward call may pass step 7 before a revoke is recorded, miss that revoke's answer, and run.
 
-### 7.1 Root acceptance
+## Root acceptance
 
 A self-issued root writ proves only that a key signed it. E MUST hold, from outside the chain, a decision that it will act under writs rooted at `chain[0].iss`: a configured list, a transport-authenticated identity, an Agent Card binding, or a contract. This protocol defines the check and its reason code, not the policy.
 
-### 7.2 Applying bounds to arguments
+## Applying bounds to arguments
 
 Let the application bounds be every member N of the leaf's `bnd` other than `act`, `hld`, `depth`, and any bound of type `count`, taken in canonical member-name order. Two passes:
 
@@ -323,7 +343,7 @@ Presence is checked for all bounds before satisfaction is checked for any, so a 
 
 Members of `args` with no corresponding bound are unconstrained.
 
-### 7.3 What `count` and `max` mean
+## What `count` and `max` mean
 
 `count` N on a writ means: each executor performs at most N operations under that writ or any writ below it, for as long as the executor's count store persists. It is consumed at acceptance, against every writ in the chain, so a holder cannot reset it by delegating to itself.
 
@@ -331,15 +351,15 @@ Members of `args` with no corresponding bound are unconstrained.
 
 Nothing in this protocol is exactly-once. An executor executes at most once per (leaf writ identity, `id`) while its call store persists, and at most `count` times per writ while its count store persists. A caller retries the identical signed bytes until it holds a final tally or the leaf expires. When an executor cannot determine whether an effect occurred, it says so with `st` `pending` or `err.code` `unknown_outcome`; store loss is never proof that nothing happened.
 
-### 7.4 Expiry during execution
+## Expiry during execution
 
 E MUST NOT accept a forward call at or after the leaf `exp`. E MAY complete an operation it accepted before `exp`. A verifier judges `acc`, not the time the tally was signed. Standing calls are accepted after `exp` (section 7 step 4) and are bounded by section 8 instead.
 
-### 7.5 Delegating onward
+## Delegating onward
 
 An executor that delegates part of its work issues a child writ (section 4) and makes a forward call under the extended chain. It MUST construct the child by narrowing a writ it holds; it MUST NOT sign a writ object received as data from any source, including the output of a language model. It MUST persist each writ it issues before sending it to anyone, and each sub-tally it receives before acting on the sub-tally's contents, so that a crash cannot lose evidence of work done below it. It MUST include every sub-tally in `sub` and every issued writ in `wrt`, whatever its own `st`, MUST report a `used` that covers its sub-tallies' (section 6), and MUST return a tally even when a sub-call never answers (section 9.2). A sub-tally is one that passes section 6.1 under the child writ's holder; an object that does not proves nothing and is left out. One that passes and then fails a later check of section 6.2 is included, as the sub-executor's signed admission. A pending sub-tally superseded by a final one (section 6) is replaced by it, so `sub` holds one tally per sub-call.
 
-### 7.6 Peer binding
+## Peer binding
 
 A call proves which key signed it, not which party delivered it. Transport authentication (section 10) proves which party is connected, not which keys it speaks for. When the transport authenticated the peer, E MUST hold, from outside the call, a decision that the peer speaks for `K.from`. The sources are those of section 7.1: a credential the transport verified that names the did:key (an X.509 or JWT SVID or a client certificate carrying it as a URI subject alternative name, or an OAuth token whose `cnf` or subject is the did:key), a configured map from transport identities to keys, or an Agent Card E has verified. A peer MAY speak for several keys, as a gateway relaying for its own agents does; which keys is E's decision. A peer E holds no binding for fails exactly as one bound to other keys does: the check fails closed.
 
@@ -349,13 +369,13 @@ The check runs before replay (section 7 step 9) on purpose. Without it, anyone w
 
 When the transport authenticated no peer, as on a plain local connection, the check is skipped, and the audit record (section 9.3) SHOULD say so. A revoke is not subject to it: any key may revoke its own writs, a revoke carries its own signature, and executors forward revokes they did not sign (section 9.1).
 
-## 8. Standing operations
+# Standing operations
 
 Standing operations are authorized by position in the chain, not by `act`. A forward `act` prefix never matches them, and they never satisfy a forward `act`.
 
 A standing call is accepted after every writ in its chain has expired and after any of them has been revoked (section 7 steps 4 and 7). The chain is evidence that `from` was an issuer above the executor at the time the work was assigned; expiry and revocation end the holder's authority to do new work, not the issuer's standing to ask about or reverse work already done. What bounds a standing operation in time is stated per operation below. Expiry or revocation never restores forward authority: a forward call under an expired or revoked chain is refused whether or not a standing call has been made under it.
 
-### 8.1 `sys/undo`
+## `sys/undo`
 
 Reverses the effect recorded by a tally. `args` is `{"tally": <the tally object, signed members>}`. The chain is the chain the tally's call ran under, verbatim. `from` is any `iss` on that chain.
 
@@ -365,11 +385,11 @@ The time bound on reversal is `tally.rev.until`, which the executor chose when i
 
 Because every ancestor issuer has standing, the original delegator can reverse an effect three hops down without the intermediate hop being reachable, and an intermediate hop can reverse its own sub-delegate's effect during its own compensation.
 
-### 8.2 `sys/tallies`
+## `sys/tallies`
 
 Returns every tally the executor still holds whose chain included a given writ. `args` is `{"writ": <hash>}`; a `writ` member that is absent, not a string, or not the identity of a writ in `chain` that `from` issued or of one below it is `tally_mismatch`, checked when the operation is performed (section 7 step 11). `from` is any `iss` on the chain. A writ above the one `from` issued is refused because the executor's index under it also holds work under sibling delegations that `from` never issued. The result body is `{"tallies": [<tally>...]}`, listing every tally in the executor's tally store indexed under that writ (section 9) in ascending order of `acc`, ties in ascending order of tally identity compared as the ASCII bytes of the identity string, so that one store state always yields one body; the returned tally's `out` commits to it. The list is computed before the `sys/tallies` call's own tally is signed and so never contains it. This is the recovery path when an executor acted but its caller never received the tally, and it works after the writ has expired or been revoked, which is exactly when a caller most needs it: the executor answers with whatever its tally store retains under the retention rule of section 9, and an empty list is a signed statement that nothing is retained, not proof that nothing ran.
 
-## 9. State an executor holds
+# State an executor holds
 
 | Store | Key | Lifetime | Durable | If lost |
 |---|---|---|---|---|
@@ -387,7 +407,7 @@ An executor that cannot persist a key-wide revoke MUST keep honoring it for as l
 
 The tally store holds every final tally the executor signs at section 7 step 12 and every tally it signs resolving a pending record, forward and standing alike. It holds no refusal: a tally signed for a failure at section 7 steps 3 to 10 is returned to the caller and not recorded (a failed check of section 8.1 or 8.2 is an outcome at step 11, not a refusal, and is held), so a party without standing cannot fill an executor's stores, and a retry of a refused call is checked afresh.
 
-### 9.1 Revocation
+## Revocation
 
 | Member | Type | Required | Meaning |
 |---|---|---|---|
@@ -412,19 +432,19 @@ An executor that receives a valid revoke MUST record it and MUST NOT accept new 
 
 Safety MUST NOT depend on a revoke arriving. `exp` is the hard bound. A key-wide revoke (`"*"`) signed by a key is honored by every verifier that sees it, and a compromised key cannot undo it.
 
-### 9.2 Silence
+## Silence
 
 A caller whose call receives no tally by the leaf `exp` treats the call as `unacknowledged`. It MAY recover through `sys/tallies` to the executor, or to any executor further down that it learns of. An executor whose own sub-call is unacknowledged MUST still return a tally: `failed` with `undeliverable`, with `wrt` and `sub` complete for everything it did learn.
 
 A revoke that races completion is answered with the completed tally, and the caller proceeds to `sys/undo` if `rev` permits. Both outcomes are named; silence is never read as stopped.
 
-### 9.3 Audit record
+## Audit record
 
 The stores above hold what the checks of this protocol need, for as long as they need it. They are not an audit log: a refusal is returned and not stored, and retention ends at `exp` or `rev.until`. An executor SHOULD keep, separately, an append-only audit record with one entry for every call and revoke it receives, whatever the outcome, holding at least: the time by E's clock; the identity of the call or revoke, or the reason it could not be parsed; `from`, or the revoke's `iss`; the transport-authenticated peer, or that there was none; the root issuer and the leaf writ's identity; `op`; the outcome, with the reason code of a refusal; and the identity of the tally, when one was signed.
 
 No check in this protocol consults the audit record, `sys/tallies` does not return it, and an entry confers no standing. Anyone can send a call or a revoke, so the record's growth is bounded the way revoke intake is (section 12), by rate per transport-authenticated peer. How long it is kept is deployment policy; an executor that keeps it longer than its tally store SHOULD keep tallies as long, so an entry naming a tally can still produce it. Evidence meant to outlive the executor belongs in a transparency log: a tally can be registered with a SCITT log (section 13).
 
-## 10. HTTP binding
+# HTTP binding
 
 Every implementation MUST support this binding. Other bindings carry the same objects.
 
@@ -442,7 +462,7 @@ Response to a revoke: status 200 and body `{"tallies": [<tally>...]}`, in the or
 
 Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NOT be replaced by it: a writ is authority to act, not proof of who is connecting. When the transport authenticates the peer, the binding MUST pass that identity to the executor, which checks it against the call's `from` (section 7.6). A writ MUST NOT be sent in an `Authorization` header.
 
-## 11. Reason codes
+# Reason codes
 
 | Code | Meaning |
 |---|---|
@@ -476,7 +496,7 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 
 Application failures use `failed` with a code outside this table; such codes SHOULD be prefixed with an application namespace and MUST NOT collide with the codes above.
 
-## 12. Security considerations
+# Security considerations
 
 **Enforcement point.** Every check in sections 4, 6, 7, 8, and 9 MUST be performed by deterministic code in the receiving implementation before any effect, independent of any language model. A model may decide whether to delegate and to whom; it never decides whether a chain is valid. An implementation MUST NOT sign a writ received as data (section 7.5). Conformance tests present a literal writ to an issuing implementation and expect refusal.
 
@@ -510,7 +530,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 **Residual risks.** The protocol does not detect an executor that lies within its bounds, an executor colluding with a resource that does not check chains, or a sub-delegation that never surfaces because the sub-executor stays silent and the holder omits it. It makes each of these a signed statement its author cannot disown, bounds the damage by `exp`, `count`, and typed bounds, and leaves attribution to key bindings and liability to contract.
 
-## 13. Relationship to other protocols
+# Relationship to other protocols
 
 | Function | Owner | Writ's position |
 |---|---|---|
@@ -519,7 +539,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 | workload identity, directories | SPIFFE/SPIRE, WIMSE, enterprise identity providers | supplies the peer bindings of section 7.6 and the root decisions of section 7.1; Writ objects name keys only |
 | task lifecycle, streaming, push | A2A tasks, MCP Tasks extension | a Writ call is one unit of work inside a task; the tally is the task's evidence |
 | tool schemas | MCP | `op` and `args` are opaque to Writ |
-| structured permission values | OAuth RAR (RFC 9396) | `bnd` reuses the idea and adds the comparison |
+| structured permission values | OAuth RAR ({{RFC9396}}) | `bnd` reuses the idea and adds the comparison |
 | delegation with attenuation | UCAN, Biscuit, macaroons, ZCAP-LD, Tenuo | Writ is the JSON-only, DID-key-only, five-comparison subset, plus receipt trees |
 | receipts | UCAN Receipt, in-toto, SCITT | a UCAN Receipt signs an invocation's result and the tasks it enqueues; a tally also embeds the tallies of the work delegated below it and accounts for consumption across them. A tally can be wrapped as an in-toto statement or registered with a SCITT log by an extension |
 | payment mandates | AP2 | an AP2 mandate can be carried as an application bound; Writ does not settle payments |
@@ -528,7 +548,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 Bindings for MCP (`_meta` members on `tools/call` and its result) and A2A (a `DataPart` of media type `application/writ+json` and an Agent Card extension) are specified in the adoption document and are not part of this core.
 
-## 14. Conformance
+# Conformance
 
 An implementation conforms when it passes the conformance corpus: a directory of JSON vectors, each an object with `name`, `op`, `input`, `expect` (`accept` or `reject`), `reason` (on reject, a code from section 11), and optionally `now` (integer, the verifier's clock for that vector). Operations and their `input` shapes:
 
@@ -547,9 +567,9 @@ A vector without `now` is evaluated with no clock: expiry is not checked. A vect
 
 Two implementations are interoperable when each accepts every object the other produces from the same seeds, rejects every vector in the corpus with the same reason, and passes every scenario.
 
-### 14.1 Executor scenarios
+## Executor scenarios
 
-A scenario tests one executor over a sequence of steps. It is an object with `name`, `executor`, and `steps`. `executor` is `{"seed": <64 hex digits>, "accept": [<key>...]}`, with an optional `peers` member: the implementation under test runs one executor whose Ed25519 private key is that 32-byte seed (RFC 8032 section 5.1.5), which acts under writs rooted at exactly the listed keys (section 7.1) and starts with empty stores. `peers` maps each transport identity the executor holds a binding for, an opaque string, to the array of keys that peer speaks for (section 7.6); absent, the executor holds none. Steps run in array order, each against the state the previous ones left.
+A scenario tests one executor over a sequence of steps. It is an object with `name`, `executor`, and `steps`. `executor` is `{"seed": <64 hex digits>, "accept": [<key>...]}`, with an optional `peers` member: the implementation under test runs one executor whose Ed25519 private key is that 32-byte seed ({{RFC8032}} section 5.1.5), which acts under writs rooted at exactly the listed keys (section 7.1) and starts with empty stores. `peers` maps each transport identity the executor holds a binding for, an opaque string, to the array of keys that peer speaks for (section 7.6); absent, the executor holds none. Steps run in array order, each against the state the previous ones left.
 
 | `do` | Members | What the executor does | `expect` |
 |---|---|---|---|
@@ -562,7 +582,23 @@ A scenario tests one executor over a sequence of steps. It is an object with `na
 
 A step passes when the executor's answer equals `expect`. Tallies and result bodies compare by canonical form, so every member, `acc`, `out`, and `sig` included, must match: Ed25519 signatures are deterministic, and every member of a tally is fixed by the executor's key, its clock, the call, and the scripted outcome, so two conforming executors given the same scenario sign the same bytes. A reply with no result body has no `res` member. Scripted outcomes carry no `sub` or `wrt`; tally trees are tested by `verify_tally` vectors.
 
-## Appendix A. Worked example
+# IANA Considerations
+
+## Media Type
+
+This document requests registration of the media type `application/writ+json` in the "Media Types" registry {{RFC6838}}, for a single Writ call, tally, or revoke object in the canonical JSON form of section 1.2 (section 10). Type name: application. Subtype name: writ+json. Required parameters: none. Optional parameters: none. Encoding considerations: binary; the content is UTF-8 JSON. Security considerations: see section 12. Interoperability considerations: see section 14. Published specification: this document.
+
+## Writ Bound Types
+
+This document requests a new registry, "Writ Bound Types", with the policy Specification Required. Each entry names a bound type and points to the specification that defines its comparison for narrowing and its test against an argument (section 3). The initial entries are `max`, `count`, `prefix`, `set`, and `window`, defined by this document.
+
+## Writ Reason Codes
+
+This document requests a new registry, "Writ Reason Codes", with the policy Specification Required, holding the codes of section 11 and their meanings. Codes outside the registry are application codes and carry a namespace prefix (section 11).
+
+--- back
+
+# Worked example
 
 The demo in the reference implementation runs this exchange between three processes.
 
@@ -577,7 +613,7 @@ The demo in the reference implementation runs this exchange between three proces
 
 Rejected attempts in the same demo: writ_2 with `amount` 65000 (`not_narrowed`), a call with `amount` 61000 (`out_of_bounds`), a second call under writ_2 (`count_exhausted`), a call with no `amount` (`missing_arg`), a chain re-rooted at a stranger (`root_not_accepted`), and a call whose `op` is `travel/chargeback` under `act` `travel/charge` (`forbidden_op`).
 
-## Appendix B. Well-known document (non-normative)
+# Well-known document (non-normative)
 
 Where no Agent Card exists, an executor MAY publish `/.well-known/writ`:
 
@@ -587,9 +623,9 @@ Where no Agent Card exists, an executor MAY publish `/.well-known/writ`:
 
 `act` lists prefixes the executor is willing to accept. This document is a convenience for standalone use; it is not signed and asserts nothing a verifier relies on.
 
-## Appendix C. Design notes
+# Design notes
 
-Why integers only: RFC 8785 number formatting is the one part of canonical JSON implementers get wrong, and no bound needs a fraction. Money is minor units; time is seconds; dates are integers.
+Why integers only: {{RFC8785}} number formatting is the one part of canonical JSON implementers get wrong, and no bound needs a fraction. Money is minor units; time is seconds; dates are integers.
 
 Why did:key only: the identifier is the key, so verification has no network step and no trust list. A later version can admit did:web by `crit`.
 
@@ -607,13 +643,12 @@ Why reversal is a standing call and not a new writ: the chain the tally names al
 
 Why standing survives expiry and revocation: `exp` and revoke bound the holder's authority to start work; `rev.until` bounds the executor's promise to undo it; the tally store's retention bounds what can be recovered. Tying the second and third to the first made the promise in `rev` a lie whenever `until` was later than `exp`, which in the demo it always is.
 
-## Appendix D. JWS profile (non-normative)
+# JWS profile (non-normative)
 
-For tooling and standards bodies that expect JOSE, a Writ object may travel as the payload of an RFC 7515 JWS in compact serialization. The profile changes nothing a verifier checks:
+For tooling and standards bodies that expect JOSE, a Writ object may travel as the payload of an {{RFC7515}} JWS in compact serialization. The profile changes nothing a verifier checks:
 
 - The payload is the complete signed object, `sig` included, in canonical form (section 1.2). Its identity, and every `prv` naming it, is computed on that object as always, never on the JWS.
 - The protected header has exactly three members: `alg` `"EdDSA"`, `typ` `"writ-<object type>+jws"`, and `kid`, the did:key of the key that signed the object: `iss` for a writ or a revoke, `from` for a call, the executor for a tally. A header with any other member, or any other `alg`, is rejected.
 - The JWS signature is a second Ed25519 signature by that same key over the JWS signing input. It lets JOSE tooling authenticate the envelope; it is not a substitute for the object's own signature, which a Writ verifier checks exactly as section 6.1 says, ignoring the envelope.
 
 So a JWS-carried object and a bare one are the same object: a verifier unwraps, checks that `kid` is the object's signer, and verifies the object. The reference implementation is `impl/go/jws`, whose output an unrelated Ed25519 implementation (Python's `cryptography`) verified as ordinary JWS on 2026-09-30.
-

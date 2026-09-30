@@ -11,7 +11,7 @@ Writ is a draft protocol with one author so far. The most useful thing you can d
 - `conformance/vectors/`: one JSON object per file with `name`, `op`, `input`, `expect` (`accept` or `reject`), and on a reject the `reason` a verifier must give. Spec section 14 defines the operations.
 - `conformance/scenarios/`: multi-step executor behavior, compared byte for byte (section 14.1).
 
-Both are generated, never edited by hand: `go run ./cmd/writ-vectors` and `go run ./cmd/writ-scenarios` from `impl/go`, `python3 tools/gen_vectors.py` from `impl/python`. CI fails if a regeneration changes a byte, so new vectors go at the end.
+Both are generated, never edited by hand: `go run ./cmd/writ-vectors` and `go run ./cmd/writ-scenarios` from `impl/go`, `python3 tools/gen_vectors.py` from `impl/python`. CI fails if a regeneration changes a byte, so new vectors go at the end. The Internet-Draft in `docs/ietf/` is generated from the spec too: after changing the spec, run `python3 scripts/build-ietf-draft.py`.
 
 ## Changing the code or the spec
 

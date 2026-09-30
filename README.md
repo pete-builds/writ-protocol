@@ -266,6 +266,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
 | `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, the audit record, and operations performed outside the executor (`Begin` and `Complete`) | 26 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, the unsaved key-wide revoke, audit, and `Begin`/`Complete` tests from 2026-09-30, and a revoke answering for calls running outside the executor |
 | `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit, mTLS peers and directory bindings through a real TLS handshake |
+| `jws` | the JWS profile of spec Appendix D: a Writ object as the payload of a compact JWS, for JOSE tooling | 2 tests; its output verified by Python's `cryptography` as plain JWS |
 | `filebind` | a second transport: calls and revokes as files in a directory, claimed by rename, recovered after a crash; `writ-agent -files DIR` | 1 test including both crash cases |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
@@ -314,8 +315,8 @@ docs/adoption.md has the full plan. The first users are enterprise platform team
 2. **Stranger test.** One engineer who has seen neither implementation builds a verifier from the spec and runs the corpus. Every divergence becomes a spec fix and a vector. Move on after zero divergences from two strangers in a row.
 3. **Second transport.** Run the demo over a message queue and over files in a directory, with the same objects, to prove the protocol does not depend on HTTP. *Files are done (`filebind`, 2026-09-30); a message queue is not, since it needs a broker the reference implementation does not ship.*
 4. **Adapters.** The reverse proxy, then the MCP `_meta` binding as an MCP extension proposal, then the A2A DataPart binding as an A2A extension. Move on once one production pair runs between two organizations that are not the authors.
-5. **JWS profile.** Publish the mapping from the bare envelope to a JWS with a fixed `alg`, so IETF bodies have a familiar container without changing a single member. Ask the UCAN community whether a JSON-only, did:key-only profile with receipt trees belongs under their umbrella, and record the answer either way.
-6. **Individual draft.** After six months of the production pair, an Internet-Draft in the OAuth or a new working group, with the corpus as the interoperability appendix and the threat model as Security Considerations. Registries for bound types and reason codes under Specification Required, with the two-implementation rule.
+5. **JWS profile.** Publish the mapping from the bare envelope to a JWS with a fixed `alg`, so IETF bodies have a familiar container without changing a single member. *Drafted 2026-09-30 as spec Appendix D and `impl/go/jws`.* Ask the UCAN community whether a JSON-only, did:key-only profile with receipt trees belongs under their umbrella, and record the answer either way.
+6. **Individual draft.** After six months of the production pair, an Internet-Draft in the OAuth or a new working group, with the corpus as the interoperability appendix and the threat model as Security Considerations. Registries for bound types and reason codes under Specification Required, with the two-implementation rule. *The draft text is generated from the spec as `docs/ietf/draft-stergion-writ-00.md` (2026-09-30) and renders cleanly; it is not submitted.*
 7. **Standards track.** Two independent implementations that interoperate, an interop report, and a security review by people who did not write it.
 
 ## Repository map
@@ -332,6 +333,7 @@ docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
+docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               213 vectors
