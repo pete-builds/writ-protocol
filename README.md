@@ -56,7 +56,7 @@ Two more properties matter in practice:
 - **Nothing runs twice by accident.** A retried call gets the original receipt back, byte for byte, instead of causing a second charge.
 - **Issuers keep a say after the fact.** Anyone above an agent in the chain can ask it what ran under their writ (`sys/tallies`), or reverse an effect it promised it could reverse (`sys/undo`), even after the writ has expired or been revoked.
 
-Every check needs only the objects themselves. Identities are public keys written into the objects (did:key, Ed25519), so there is no registry to look up and no central party. Where the transport does authenticate the caller (mTLS, a SPIFFE ID, an OAuth token), the executor also checks that the caller speaks for the key that signed the call, before it answers from its stores. That binding is where a directory or workload identity system meets Writ (spec section 7.6).
+Every check needs only the objects themselves. Identities are public keys written into the objects (did:key, Ed25519), so there is no registry to look up and no central party. Where the transport does authenticate the caller (mTLS, a SPIFFE ID, an OAuth token), the executor also checks that the caller speaks for the key that signed the call, before it answers from its stores. That binding is where a directory or workload identity system meets Writ (spec section 7.6); [docs/directories.md](docs/directories.md) shows the two ways the reference implementation connects one, an mTLS certificate or a bindings file exported from the directory.
 
 ### The whole exchange, drawn out
 
@@ -265,7 +265,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `wire` | the signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
 | `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
 | `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, the audit record, and operations performed outside the executor (`Begin` and `Complete`) | 26 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, the unsaved key-wide revoke, audit, and `Begin`/`Complete` tests from 2026-09-30, and a revoke answering for calls running outside the executor |
-| `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit |
+| `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit, mTLS peers and directory bindings through a real TLS handshake |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
 | `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 6 tests, including parallel hook processes, a tampered receipt, failing closed, and named grants per tool; also run against Claude Code itself |
@@ -325,6 +325,7 @@ docs/design/                       04 six architectures, 05 threat model, 06 kil
 docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
 docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
+docs/directories.md                connecting a directory: mTLS certificates and bindings files
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               213 vectors

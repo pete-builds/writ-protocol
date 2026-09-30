@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -28,6 +30,10 @@ func main() {
 	store := flag.String("store", "", "path of the durable store (empty for memory)")
 	accept := flag.String("accept", "", "comma-separated did:key roots this agent acts under")
 	downstream := flag.String("downstream", "", "base URL of the payment agent (booking role)")
+	tlsCert := flag.String("tls-cert", "", "server certificate (PEM); with -tls-key and -client-ca, serve mTLS")
+	tlsKey := flag.String("tls-key", "", "server private key (PEM)")
+	clientCA := flag.String("client-ca", "", "CA bundle (PEM) that client certificates must chain to; peers come from them")
+	bindings := flag.String("bindings", "", "JSON file mapping each peer to the did:keys it speaks for, exported from a directory")
 	perMinute := flag.Int("per-minute", 0, "requests accepted per minute from each peer or host (0 for no limit)")
 	audit := flag.String("audit", "", "path of the append-only audit record, one JSON line per call or revoke (empty for none)")
 	flag.Parse()
@@ -49,6 +55,13 @@ func main() {
 		}
 	}
 	e.AcceptRoot = func(did string) bool { return roots[did] }
+	if *bindings != "" {
+		b, err := exec.LoadBindings(*bindings)
+		if err != nil {
+			log.Fatal(err)
+		}
+		e.PeerBinds = b.Binds
+	}
 	if *audit != "" {
 		al, err := exec.OpenAuditLog(*audit)
 		if err != nil {
@@ -78,7 +91,23 @@ func main() {
 	wk := httpbind.WellKnown{V: 1, DID: id.DID(), Endpoint: "/writ", Act: act}
 	log.Printf("%s agent %s listening on :%d", *role, id.DID(), *port)
 	fmt.Fprintln(os.Stderr, "ready")
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", *port), httpbind.NewHandler(e, wk, httpbind.Options{PerMinute: *perMinute})))
+	opts := httpbind.Options{PerMinute: *perMinute}
+	addr := fmt.Sprintf("127.0.0.1:%d", *port)
+	if *clientCA == "" {
+		log.Fatal(http.ListenAndServe(addr, httpbind.NewHandler(e, wk, opts)))
+	}
+	pem, err := os.ReadFile(*clientCA)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		log.Fatal("no certificates in -client-ca")
+	}
+	opts.MTLS = true
+	srv := &http.Server{Addr: addr, Handler: httpbind.NewHandler(e, wk, opts),
+		TLSConfig: &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, MinVersion: tls.VersionTLS13}}
+	log.Fatal(srv.ListenAndServeTLS(*tlsCert, *tlsKey))
 }
 
 // installPayment: agent C. It charges within the leaf bounds and can refund.

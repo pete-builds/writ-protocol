@@ -146,6 +146,26 @@ func peerOf(ctx context.Context) (string, bool) {
 	return p, ok
 }
 
+type attestedKey struct{}
+
+// WithAttestedKeys returns ctx carrying keys the transport's own credential
+// binds to the peer, such as did:key URIs in a verified client certificate.
+// A call from one of them passes peer binding without consulting PeerBinds:
+// the credential is the binding (spec 7.6).
+func WithAttestedKeys(ctx context.Context, keys []string) context.Context {
+	return context.WithValue(ctx, attestedKey{}, keys)
+}
+
+func attested(ctx context.Context, did string) bool {
+	keys, _ := ctx.Value(attestedKey{}).([]string)
+	for _, k := range keys {
+		if k == did {
+			return true
+		}
+	}
+	return false
+}
+
 // Reply is the HTTP-binding response body for a call.
 type Reply struct {
 	Tally wire.Object `json:"tally"`
@@ -220,7 +240,7 @@ func (e *Executor) run(ctx context.Context, obj wire.Object, deferred bool) (*Re
 	}
 	// Step 8 opens with peer binding, before replay, so a captured call
 	// presented over another connection cannot fetch the stored result.
-	if peer, ok := peerOf(ctx); ok && !e.PeerBinds(peer, k.From) {
+	if peer, ok := peerOf(ctx); ok && !attested(ctx, k.From) && !e.PeerBinds(peer, k.From) {
 		return refuse(string(writ.PeerMismatch))
 	}
 	// Step 8, continued: standing, then the forward or standing rules.
