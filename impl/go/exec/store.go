@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +21,12 @@ type Record struct {
 	Call   wire.Object `json:"call"`            // the call, so a crashed record can be resolved on restart
 	Tally  wire.Object `json:"tally,omitempty"` // final tally; nil while executing
 	Final  bool        `json:"final"`
+	// While the call is pending: every writ the operation issued and every
+	// sub-tally it received, persisted before the writ is sent or the
+	// sub-tally acted on (spec 7.5), so a record resolved after a crash still
+	// carries the evidence of work done below it (spec 9).
+	Wrt []wire.Object `json:"wrt,omitempty"`
+	Sub []wire.Object `json:"sub,omitempty"`
 }
 
 type tallyRec struct {
@@ -202,6 +209,80 @@ func (s *FileStore) finish(tid string, t *tallyRec, rec *Record) error {
 		return err
 	}
 	return nil
+}
+
+// errNotPending is returned for evidence about a call with no pending record:
+// it was never admitted, or it is already final.
+var errNotPending = errors.New("exec: the call is not pending")
+
+// addEvidence persists a writ the pending call at key issued (w), or a
+// sub-tally it received (t), in one write (spec 7.5). A sub-tally must name a
+// writ already recorded, and replaces an earlier tally for the same sub-call,
+// as a final tally supersedes a pending one (spec 6). On a failed write the
+// record is left as it was and the error returned.
+func (s *FileStore) addEvidence(key string, w, t wire.Object) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.Calls[key]
+	if !ok || rec.Tally != nil {
+		return errNotPending
+	}
+	next := *rec
+	next.Wrt = append([]wire.Object{}, rec.Wrt...)
+	next.Sub = append([]wire.Object{}, rec.Sub...)
+	issued := func(id string) bool {
+		for _, o := range next.Wrt {
+			if h, _ := wire.Hash(o); h == id {
+				return true
+			}
+		}
+		return false
+	}
+	if w != nil {
+		id, err := wire.Hash(w)
+		if err != nil {
+			return err
+		}
+		if !issued(id) {
+			next.Wrt = append(next.Wrt, w)
+		}
+	}
+	if t != nil {
+		if named, _ := t["writ"].(string); !issued(named) {
+			return errors.New("exec: the sub-tally names a writ this call did not issue")
+		}
+		call, _ := t["call"].(string)
+		replaced := false
+		for i, o := range next.Sub {
+			if c, _ := o["call"].(string); c == call {
+				next.Sub[i], replaced = t, true
+				break
+			}
+		}
+		if !replaced {
+			next.Sub = append(next.Sub, t)
+		}
+	}
+	s.Calls[key] = &next
+	if err := s.flush(); err != nil {
+		s.Calls[key] = rec
+		return err
+	}
+	return nil
+}
+
+// pendingRecord returns a copy of the pending record at key, or nil.
+func (s *FileStore) pendingRecord(key string) *Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.Calls[key]
+	if !ok || rec.Tally != nil {
+		return nil
+	}
+	c := *rec
+	c.Wrt = append([]wire.Object{}, rec.Wrt...)
+	c.Sub = append([]wire.Object{}, rec.Sub...)
+	return &c
 }
 
 func (s *FileStore) getTally(id string) (*tallyRec, bool) {

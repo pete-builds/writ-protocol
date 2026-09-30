@@ -4,6 +4,7 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -49,9 +50,17 @@ type Executor struct {
 	// forward it to the holders of writs it issued (spec 9.1). Best effort.
 	OnRevoke func(r *writ.Revoke)
 
+	// mu guards inflight and undoLocks. Execute also holds it from a forward
+	// call's revocation check until the call is registered in flight, and
+	// Revoke while it records a revoke and collects what is in flight, so the
+	// two are atomic with respect to each other (spec 7).
 	mu        sync.Mutex
 	inflight  map[string]inflight    // call identity
 	undoLocks map[string]*sync.Mutex // target tally identity
+
+	// afterRevokeCheck, when set by a test, runs just after step 7 with mu
+	// held, which is the window a revoke must not slip through.
+	afterRevokeCheck func()
 }
 
 type inflight struct {
@@ -72,7 +81,9 @@ func New(id *keys.Identity, store *FileStore) *Executor {
 
 // Recover resolves every pending call record left by a crash to a final tally
 // with unknown_outcome (spec section 9), and drops revokes of writs that have
-// since expired. Call it once after opening the store.
+// since expired. The resolved tally carries every writ and sub-tally the
+// record holds (spec 7.5), with a used that covers those sub-tallies. Call it
+// once after opening the store.
 func (e *Executor) Recover() int {
 	_ = e.Store.purgeRevoked(e.Now())
 	e.Store.mu.Lock()
@@ -89,12 +100,15 @@ func (e *Executor) Recover() int {
 		if err != nil {
 			continue
 		}
-		t, _, err := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: r.Acc, St: "failed", ErrCode: string(writ.UnknownOutcome)})
+		wrt, sub := evidence(r, Result{})
+		t, _, err := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: r.Acc, St: "failed", ErrCode: string(writ.UnknownOutcome),
+			Used: coverSubs(k.Leaf(), nil, sub), Sub: sub, Wrt: wrt})
 		if err != nil {
 			continue
 		}
 		final := *r
 		final.Tally, final.Final = t.Raw, true
+		final.Wrt, final.Sub = nil, nil // the final tally carries them now
 		if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: chainIDs(k), Keep: k.Leaf().Exp}, &final) == nil {
 			n++
 		}
@@ -154,10 +168,26 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if leaf.Hld != e.ID.DID() {
 		return refuse(string(writ.WrongExecutor))
 	}
+	// Steps 7 to 11 are atomic with respect to recording a revoke (spec 7):
+	// mu is held from the revocation check until the call is registered in
+	// flight, and Revoke holds it while it records and collects, so a revoke
+	// either refuses this call at step 7 or finds it in flight and stops it.
+	e.mu.Lock()
+	locked := true
+	unlock := func() {
+		if locked {
+			locked = false
+			e.mu.Unlock()
+		}
+	}
+	defer unlock()
 	// Step 7, forward calls only: no writ in the chain is revoked, by
 	// identity or by a key-wide revoke of its issuer.
 	if !k.Standing() && e.IsRevoked(k.Chain) {
 		return refuse(string(writ.Revoked))
+	}
+	if e.afterRevokeCheck != nil {
+		e.afterRevokeCheck()
 	}
 	// Step 8: standing, then the forward or standing rules.
 	if k.Standing() {
@@ -198,11 +228,11 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if !admitted {
 		return refuse(string(writ.CountExhausted))
 	}
-	// Step 11: the pending record is persisted; perform.
+	// Step 11: the pending record is persisted; register in flight, then
+	// release mu before performing.
 	cctx, cancel := context.WithCancel(ctx)
-	e.mu.Lock()
 	e.inflight[k.ID] = inflight{call: k, acc: acc, cancel: cancel}
-	e.mu.Unlock()
+	unlock()
 	defer func() {
 		cancel()
 		e.mu.Lock()
@@ -225,9 +255,16 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if r.St != "ok" && r.ErrCode == "" {
 		r.ErrCode = "app/failed"
 	}
-	// Step 12: sign, persist, return.
+	// Step 12: sign, persist, return. The tally carries the evidence the
+	// operation persisted through Issued and Received as well as what it
+	// returned, and its used covers its sub-tallies' (spec 6, 7.5).
+	rec := e.Store.pendingRecord(callKey(leaf.ID, k.CID))
+	if rec == nil {
+		rec = pending
+	}
+	wrt, sub := evidence(rec, r)
 	t, res, err := writ.NewTally(e.ID, writ.TallyInput{Call: k, Acc: acc, St: r.St, ErrCode: r.ErrCode,
-		Res: r.Res, Used: r.Used, RevUntil: r.RevUntil, Sub: r.Sub, Wrt: r.Wrt})
+		Res: r.Res, Used: coverSubs(leaf, r.Used, sub), RevUntil: r.RevUntil, Sub: sub, Wrt: wrt})
 	if err != nil {
 		return nil, &writ.Error{Code: writ.Malformed, Msg: "tally: " + err.Error()}
 	}
@@ -364,6 +401,11 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	if err := writ.CheckRevoke(r); err != nil {
 		return nil, err.(*writ.Error)
 	}
+	// Record and collect under mu, which Execute holds from a forward call's
+	// revocation check until the call is in flight (spec 7): every forward
+	// call is then either refused at step 7 or collected here.
+	var hits []inflight
+	e.mu.Lock()
 	if r.Writ == "*" {
 		e.Store.revoke("*:"+r.Iss, 1<<62)
 	} else {
@@ -373,8 +415,6 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	// pending tallies, in ascending order of call identity (spec 9.1). A
 	// standing call in flight is left alone: a revoke ends forward
 	// authority, not the standing to reverse or recover (spec 8).
-	var hits []inflight
-	e.mu.Lock()
 	for _, f := range e.inflight {
 		if f.call.Standing() {
 			continue
@@ -397,6 +437,103 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 		e.OnRevoke(r)
 	}
 	return out, nil
+}
+
+// Issued durably adds w, a writ this executor issued under the leaf of the
+// running call k, to the call's pending record. Spec 7.5: a writ is persisted
+// before it is sent to anyone, so a crash cannot lose the evidence of a
+// delegation. An application that gets an error must not send w.
+func (e *Executor) Issued(k *writ.Call, w *writ.Writ) error {
+	if w.Iss != e.ID.DID() {
+		return errors.New("exec: the writ was not issued by this executor")
+	}
+	if err := writ.CheckChild(w, k.Leaf()); err != nil {
+		return err
+	}
+	return e.Store.addEvidence(callKey(k.Leaf().ID, k.CID), w.Raw, nil)
+}
+
+// Received durably adds t, a sub-tally answering a call made under a writ
+// recorded by Issued, to the running call k's pending record, replacing an
+// earlier tally for the same sub-call. Spec 7.5: a sub-tally is persisted
+// before anything acts on its contents. An application that gets an error
+// must not act on t.
+func (e *Executor) Received(k *writ.Call, t *writ.Tally) error {
+	return e.Store.addEvidence(callKey(k.Leaf().ID, k.CID), nil, t.Raw)
+}
+
+// evidence returns the writs and sub-tallies a tally for rec carries: those
+// persisted through Issued and Received, in the order persisted, then any the
+// result adds. A result tally for a sub-call already persisted replaces it,
+// as a final tally supersedes a pending one (spec 6, 7.5).
+func evidence(rec *Record, r Result) ([]*writ.Writ, []*writ.Tally) {
+	var wrt []*writ.Writ
+	seen := map[string]bool{}
+	for _, o := range rec.Wrt {
+		if w, err := writ.ParseWrit(o); err == nil && !seen[w.ID] {
+			seen[w.ID] = true
+			wrt = append(wrt, w)
+		}
+	}
+	for _, w := range r.Wrt {
+		if !seen[w.ID] {
+			seen[w.ID] = true
+			wrt = append(wrt, w)
+		}
+	}
+	hld := map[string]string{}
+	for _, w := range wrt {
+		hld[w.ID] = w.Hld
+	}
+	var sub []*writ.Tally
+	at := map[string]int{}
+	add := func(t *writ.Tally) {
+		if i, ok := at[t.Call]; ok {
+			sub[i] = t
+			return
+		}
+		at[t.Call] = len(sub)
+		sub = append(sub, t)
+	}
+	for _, o := range rec.Sub {
+		named, _ := o["writ"].(string)
+		if t, err := writ.ParseTally(o, hld[named]); err == nil {
+			add(t)
+		}
+	}
+	for _, t := range r.Sub {
+		add(t)
+	}
+	return wrt, sub
+}
+
+// coverSubs returns used raised, for every max bound of the leaf, to the sum
+// of the sub-tallies' used (spec 6: used is inclusive of the subtree). An
+// operation cannot have consumed less than the work it delegated reports, and
+// a tally resolved after a crash, whose own outcome is unknown, reports at
+// least that much.
+func coverSubs(leaf *writ.Writ, used map[string]int64, sub []*writ.Tally) map[string]int64 {
+	out, copied := used, false
+	for name, b := range leaf.Bnd {
+		if b.T != "max" {
+			continue
+		}
+		var sum int64
+		for _, s := range sub {
+			sum += s.Used[name]
+		}
+		if sum <= used[name] {
+			continue
+		}
+		if !copied {
+			out, copied = make(map[string]int64, len(used)+1), true
+			for n, v := range used {
+				out[n] = v
+			}
+		}
+		out[name] = sum
+	}
+	return out
 }
 
 // IsRevoked reports whether any writ in the chain is revoked in this

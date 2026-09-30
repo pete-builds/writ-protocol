@@ -159,6 +159,11 @@ func installBooking(e *exec.Executor, downstream string) {
 		if e.IsRevoked(k.Chain) {
 			return exec.Result{St: "canceled", ErrCode: string(writ.Revoked), Wrt: []*writ.Writ{w2}}
 		}
+		// Spec 7.5: persist the payment writ before sending it, so a crash
+		// from here on still leaves the delegation in the resolved tally.
+		if err := e.Issued(k, w2); err != nil {
+			return exec.Result{St: "failed", ErrCode: "app/store_unavailable", Wrt: []*writ.Writ{w2}}
+		}
 		tobj, res, err := client.Call(ctx, downstream+wk.Endpoint, kc)
 		if err != nil {
 			return exec.Result{St: "failed", ErrCode: string(writ.Undeliverable), Wrt: []*writ.Writ{w2}}
@@ -167,6 +172,11 @@ func installBooking(e *exec.Executor, downstream string) {
 		if v == writ.Unverifiable {
 			log.Printf("payment tally unverifiable: %v", verr)
 			return exec.Result{St: "failed", ErrCode: "app/unverified_payment", Wrt: []*writ.Writ{w2}}
+		}
+		// Spec 7.5: persist C's tally before acting on it. If the booking
+		// crashes after this, the resolved tally still shows the charge.
+		if err := e.Received(k, tc); err != nil {
+			return exec.Result{St: "failed", ErrCode: "app/store_unavailable", Sub: []*writ.Tally{tc}, Wrt: []*writ.Writ{w2}}
 		}
 		if tc.St != "ok" {
 			return exec.Result{St: "failed", ErrCode: "app/payment_" + tc.Err.Code, Sub: []*writ.Tally{tc}, Wrt: []*writ.Writ{w2}}
