@@ -316,7 +316,7 @@ docs/adoption.md has the full plan. The first users are enterprise platform team
 3. **Second transport.** Run the demo over a message queue and over files in a directory, with the same objects, to prove the protocol does not depend on HTTP. *Files are done (`filebind`, 2026-09-30); a message queue is not, since it needs a broker the reference implementation does not ship.*
 4. **Adapters.** The reverse proxy, then the MCP `_meta` binding as an MCP extension proposal, then the A2A DataPart binding as an A2A extension. Move on once one production pair runs between two organizations that are not the authors.
 5. **JWS profile.** Publish the mapping from the bare envelope to a JWS with a fixed `alg`, so IETF bodies have a familiar container without changing a single member. *Drafted 2026-09-30 as spec Appendix D and `impl/go/jws`.* Ask the UCAN community whether a JSON-only, did:key-only profile with receipt trees belongs under their umbrella, and record the answer either way.
-6. **Individual draft.** After six months of the production pair, an Internet-Draft in the OAuth or a new working group, with the corpus as the interoperability appendix and the threat model as Security Considerations. Registries for bound types and reason codes under Specification Required, with the two-implementation rule.
+6. **Individual draft.** After six months of the production pair, an Internet-Draft in the OAuth or a new working group, with the corpus as the interoperability appendix and the threat model as Security Considerations. Registries for bound types and reason codes under Specification Required, with the two-implementation rule. *The draft text is generated from the spec as `docs/ietf/draft-stergion-writ-00.md` (2026-09-30) and renders cleanly; it is not submitted.*
 7. **Standards track.** Two independent implementations that interoperate, an interop report, and a security review by people who did not write it.
 
 ## Repository map
@@ -333,6 +333,7 @@ docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
+docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               213 vectors
