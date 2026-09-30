@@ -125,7 +125,7 @@ func (s *Server) CallTool(ctx context.Context, params json.RawMessage) (map[stri
 			return nil, invalid("missing_call", "this server enforces "+Extension+": the call must carry "+CallKey)
 		}
 		body, isErr := tool(ctx, args)
-		return result(body, isErr, nil), nil
+		return unenforced(body, isErr), nil
 	}
 	obj, err := wire.Decode(raw)
 	if err != nil {
@@ -144,25 +144,55 @@ func (s *Server) CallTool(ctx context.Context, params json.RawMessage) (map[stri
 	}
 	body, _ := rep.Res.(map[string]any)
 	st, _ := rep.Tally["st"].(string)
-	return result(body, st != "ok", rep.Tally), nil
+	code := ""
+	if e, ok := rep.Tally["err"].(map[string]any); ok {
+		code, _ = e["code"].(string)
+	}
+	return Present(body, st, code, rep.Tally), nil
 }
 
-func result(body map[string]any, isErr bool, tally wire.Object) map[string]any {
+// PendingText is the content of a result whose tally is pending: the server
+// accepted the call and cannot yet say how it ended (spec section 6).
+const PendingText = "Writ: the call was accepted and its outcome is not yet known (pending). It may still run: do not treat it as failed or as done."
+
+// Present renders a tools/call result from what a tally authenticates: the
+// result body the tally's out commits to, or nil when there is none, and the
+// tally's st and err.code. isError says exactly what st says, and the text
+// content is the body in canonical form or, with no body, what st and the
+// code mean. A server sends this result and a client rebuilds it
+// (Verified), so what a client shows is never the server's own content.
+func Present(body map[string]any, st, code string, tally wire.Object) map[string]any {
 	text := "{}"
-	if body != nil {
+	switch {
+	case body != nil:
 		if b, err := jcs.Marshal(body); err == nil {
 			text = string(b)
 		}
-	} else if e, ok := tally["err"].(map[string]any); ok && isErr {
+	case st == "pending":
+		text = PendingText
+	case st != "ok":
 		// A refusal has no result body; say why, for the model reading it.
-		text = fmt.Sprintf("Writ refused this call: %v", e["code"])
+		text = fmt.Sprintf("Writ refused this call: %s", code)
 	}
-	r := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}, "isError": isErr}
+	r := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}, "isError": st != "ok"}
 	if body != nil {
 		r["structuredContent"] = body
 	}
 	if tally != nil {
 		r["_meta"] = map[string]any{TallyKey: tally}
+	}
+	return r
+}
+
+// unenforced renders the result of a tool call that carried no Writ call.
+func unenforced(body map[string]any, isErr bool) map[string]any {
+	text := "{}"
+	if b, err := jcs.Marshal(body); err == nil && body != nil {
+		text = string(b)
+	}
+	r := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}, "isError": isErr}
+	if body != nil {
+		r["structuredContent"] = body
 	}
 	return r
 }
@@ -181,6 +211,9 @@ var ErrUnenforcedServer = errors.New("unenforced_server")
 
 // ErrMissingTally: the server advertised the extension and returned no tally.
 var ErrMissingTally = errors.New("missing_tally")
+
+// ErrResultMismatch: the result says something its verified tally does not.
+var ErrResultMismatch = errors.New("result_mismatch")
 
 // Params builds tools/call params carrying k, whose op must name tool.
 func Params(tool string, k *writ.Call) map[string]any {
@@ -203,9 +236,15 @@ func Ready(k *writ.Call, advertised bool) error {
 	return nil
 }
 
-// Check verifies the tally in a tools/call result for the call k (spec 6.2),
-// with structuredContent as the result body. A result with no tally is
-// ErrMissingTally: the work does not count as done.
+// Check verifies a tools/call result for the call k and returns its tally.
+// What it authenticates is exactly this: the tally (spec 6.2); the result
+// body, structuredContent, which must be present, as an object, exactly when
+// the tally's out is not null, and must hash to it; and isError, which must
+// be true exactly when the tally's st is not ok (failed, canceled, pending).
+// A result with no tally is ErrMissingTally, and one that contradicts its
+// tally is ErrResultMismatch: the work does not count as done. Nothing signs
+// content or any other member, so Check does not read them; show the result
+// Verified returns, never the server's.
 func Check(k *writ.Call, result map[string]any) (*writ.Tally, error) {
 	meta, _ := result["_meta"].(map[string]any)
 	raw, ok := meta[TallyKey]
@@ -220,25 +259,70 @@ func Check(k *writ.Call, result map[string]any) (*writ.Tally, error) {
 	if err != nil {
 		return nil, err
 	}
-	var body any
-	if sc, ok := result["structuredContent"]; ok {
-		// A client may have decoded numbers as floats; hash the exact integers.
-		b, err := json.Marshal(sc)
-		if err != nil {
-			return nil, err
-		}
-		dec := json.NewDecoder(bytes.NewReader(b))
-		dec.UseNumber()
-		if err := dec.Decode(&body); err != nil {
-			return nil, err
-		}
+	body, err := resultBody(result)
+	if err != nil {
+		return nil, err
 	}
-	v, t, err := writ.VerifyTally(k.Leaf(), k, obj, body)
+	var res any
+	if body != nil {
+		res = body
+	}
+	v, t, err := writ.VerifyTally(k.Leaf(), k, obj, res)
 	if v != writ.Valid {
 		if err == nil {
 			err = errors.New(string(v))
 		}
 		return t, err
 	}
+	if t.Out != "" && body == nil {
+		return t, fmt.Errorf("%w: the tally commits to a result body the result does not carry", ErrResultMismatch)
+	}
+	if isErr, ok := result["isError"]; ok {
+		if _, isBool := isErr.(bool); !isBool {
+			return t, fmt.Errorf("%w: isError is not a boolean", ErrResultMismatch)
+		}
+	}
+	if isErr := result["isError"] == true; isErr != (t.St != "ok") {
+		return t, fmt.Errorf("%w: isError is %v and the tally's st is %s", ErrResultMismatch, isErr, t.St)
+	}
 	return t, nil
+}
+
+// Verified checks result with Check and returns, in its place, the result
+// rebuilt from what the tally authenticates (Present): the verified body,
+// isError from the tally's st, and the tally. Nothing else the server sent
+// survives, so content a server or anything in between rewrote is dropped.
+func Verified(k *writ.Call, result map[string]any) (map[string]any, *writ.Tally, error) {
+	t, err := Check(k, result)
+	if err != nil {
+		return nil, t, err
+	}
+	body, _ := resultBody(result)
+	code := ""
+	if t.Err != nil {
+		code = t.Err.Code
+	}
+	return Present(body, t.St, code, t.Raw), t, nil
+}
+
+// resultBody reads structuredContent as the result body with its integers
+// exact, or nil when it is absent or null. A body that is present is an
+// object, as MCP requires.
+func resultBody(result map[string]any) (map[string]any, error) {
+	sc, ok := result["structuredContent"]
+	if !ok || sc == nil {
+		return nil, nil
+	}
+	// A client may have decoded numbers as floats; hash the exact integers.
+	b, err := json.Marshal(sc)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var body map[string]any
+	if err := dec.Decode(&body); err != nil || body == nil {
+		return nil, fmt.Errorf("%w: structuredContent is not an object", ErrResultMismatch)
+	}
+	return body, nil
 }

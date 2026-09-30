@@ -7,14 +7,24 @@ Writ does not replace the protocols agents already speak. It rides inside them: 
 A client puts the Writ call in `params._meta["io.writ/call"]` on `tools/call`, with `op` set to `mcp/tools/<tool name>` and `args` equal to the tool's `arguments`. The server checks the call with the executor, runs the tool only if it passes, and returns the tally in `result._meta["io.writ/tally"]`, with the tool's `structuredContent` as the result body the tally commits to. A server advertises the extension as `io.writ/delegation`.
 
 - **Server:** `mcpbind.NewServer(executor, tools, require)` and `CallTool(ctx, params)`. It refuses, as `malformed`, a call whose `arguments` differ from the signed `args` or whose `op` names another tool, so what was signed and what runs are the same bytes. With `require`, a tool call carrying no Writ call is refused (`missing_call`); without it, the call runs unenforced and its result carries no tally.
-- **Client:** `mcpbind.Params(tool, call)` builds the request. `mcpbind.Ready(call, advertised)` refuses to send a chain with `max` or `count` bounds to a server that does not advertise the extension (`unenforced_server`). `mcpbind.Check(call, result)` verifies the tally, and treats a result with no tally as `missing_tally`: the work does not count as done.
+- **Client:** `mcpbind.Params(tool, call)` builds the request. `mcpbind.Ready(call, advertised)` refuses to send a chain with `max` or `count` bounds to a server that does not advertise the extension (`unenforced_server`). `mcpbind.Check(call, result)` verifies the result, and treats a result with no tally as `missing_tally`: the work does not count as done. `mcpbind.Verified(call, result)` checks it and returns the result to show in its place.
+
+### What a verified result authenticates
+
+A tally signs the call it answers, its outcome (`st` and `err`), and, through `out`, the hash of the result body. MCP's result carries more than that, and nothing signs the rest. So `Check` authenticates exactly three things, and refuses a result that contradicts any of them (`result_mismatch`):
+
+1. **The tally**, verified against the call (spec section 6.2).
+2. **The result body**, `structuredContent`. It must be present, and an object, exactly when the tally's `out` is not null, and must hash to `out`. A missing or null body under a non-null `out` is refused, and so is a body under a null `out` (a refusal or a pending call has none).
+3. **`isError`**, which must be `true` exactly when the tally's `st` is not `ok`: `failed`, `canceled`, or `pending`. A missing `isError` counts as `false`, as in MCP.
+
+`content`, `annotations`, and any other member are not authenticated. Rather than try to authenticate the whole envelope, which would need every server to render `content` byte for byte the same way, the client **rebuilds** the result from the authenticated parts (`mcpbind.Present`): `structuredContent` is the verified body, `isError` comes from `st`, the tally rides in `_meta`, and the one text block of `content` is the body in canonical form or, with no body, `Writ refused this call: <code>` for a refusal or failure and a fixed pending notice for a pending tally. The server renders its results with the same function, so for an honest server the rebuilt result is exactly the one it sent. Whatever a server, or anything between it and the client, writes into `content` never reaches the client as verified output.
 - **`writ-mcp`** is a minimal MCP server over stdio with one tool, `echo`, that runs only under a Writ call.
 
 Tested: the binding end to end in `mcpbind_test.go` (an enforced call, a count running out, arguments differing from what was signed, a failing tool, both client rules, a result body changed after signing), a scripted stdio session in `cmd/writ-mcp`, and Claude Code itself as the MCP client on 2026-09-30: connected straight to `writ-mcp`, it listed `echo`, called it, and received the `missing_call` refusal, because the client attached no Writ call. The proxy below closes that gap.
 
 ## The client side, for any MCP client: `cmd/writ-mcp-proxy`
 
-No MCP client attaches Writ calls, and none needs to. `writ-mcp-proxy` is an MCP server over stdio that starts the real server as a child process and relays everything, except that each `tools/call` leaves carrying a Writ call signed under a grant, and each result comes back only if its tally verifies:
+No MCP client attaches Writ calls, and none needs to. `writ-mcp-proxy` is an MCP server over stdio that starts the real server as a child process and relays everything, except that each `tools/call` leaves carrying a Writ call signed under a grant, and each result comes back only if it verifies, rebuilt from what its tally authenticates (above), never as the server sent it:
 
 ```
 writ-mcp-proxy -agent-seed-file agent.seed -grant grant.json -receipts receipts.jsonl -- <the real MCP server and its arguments>
@@ -23,6 +33,10 @@ writ-mcp-proxy -agent-seed-file agent.seed -grant grant.json -receipts receipts.
 The grant is a writ from its root to the agent key. The proxy learns the server's key from `server/discover`, where a Writ server advertises it, passes the grant on to that key unchanged, and keeps every verified tally in `-receipts`. It refuses a server that does not advertise the extension when the grant has `max` or `count` bounds, and turns a result with no tally, or one that does not verify, into an error.
 
 Run on 2026-09-30 with Claude Code as the client, through the proxy, to `writ-mcp` under a grant of two uses: the first two `echo` calls returned their results with verified tallies, the third returned "Writ refused this call: count_exhausted", and the proxy's receipts and the server's audit record both show ok, ok, count_exhausted. Unit tests cover the relay (including the server's notifications), a server that does not advertise, and a server that strips the tally.
+
+A review later that day found that the proxy checked the tally and then forwarded the server's own result: a signed `count_exhausted` refusal with its `isError` set to `false` and its text replaced by "Done: the transfer went through." reached the client as a verified success, and a result with its `structuredContent` deleted verified because there was no body to hash. `TestProxyPresentsOnlyWhatTheTallyAuthenticates` now drives each of those through the proxy: rewritten content, a refusal, a tool failure, or a pending call shown as a success, a body deleted, nulled, or changed, and the legitimate cases (a success, a failure with a body, a refusal with none, a pending call). Every forgery is refused as `missing_tally` and kept out of the receipts; every legitimate result reaches the client rebuilt from its tally.
+
+**Compatibility.** Through the proxy, a client sees only the verified body and a status line: a tool whose useful output is only in `content`, not in `structuredContent`, loses it, and should return a structured result. A result whose `isError` disagrees with its tally is now an error. A pending tally's text is the pending notice, where it used to read `Writ refused this call: pending`.
 
 ## A2A: `impl/go/a2abind`
 

@@ -10,9 +10,11 @@
 // server's key from server/discover, passes the grant on to it unchanged, and
 // signs one call per tool call. It refuses a server that does not advertise
 // the extension when the grant carries max or count bounds (unenforced_server),
-// and turns a result with no tally, or one that does not verify, into an error
-// (missing_tally): the work does not count as done. Verified tallies are
-// appended to -receipts.
+// and turns a result with no tally, or one that does not verify or that
+// contradicts its tally, into an error (missing_tally): the work does not count
+// as done. A result that verifies reaches the client rebuilt from what the
+// tally authenticates (mcpbind.Verified), never as the server sent it.
+// Verified tallies are appended to -receipts.
 package main
 
 import (
@@ -243,7 +245,10 @@ func (p *proxy) toolCall(m message) {
 		fail("malformed", "the server's result is not an object")
 		return
 	}
-	t, err := mcpbind.Check(k, result)
+	// The client is shown only what the tally authenticates: the result is
+	// rebuilt from the verified body and the tally's st, and nothing else
+	// the server sent reaches the client.
+	shown, t, err := mcpbind.Verified(k, result)
 	if err != nil {
 		fail(mcpbind.ErrMissingTally.Error(), "the result carries no tally that verifies: "+err.Error())
 		return
@@ -252,7 +257,7 @@ func (p *proxy) toolCall(m message) {
 		line, _ := json.Marshal(map[string]any{"call": k.Raw, "tally": t.Raw})
 		_, _ = p.receipts.Write(append(line, '\n'))
 	}
-	p.write(resp)
+	p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": shown})
 }
 
 // probe asks the server, once, whether it enforces the extension and which
