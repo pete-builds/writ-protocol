@@ -24,6 +24,8 @@ You need Go 1.25 or newer. The Python implementation also needs Python 3.12 or n
 
 3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 213 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 22 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open an issue naming the vector and what your implementation answered. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
 
+4. **Put your own Claude Code under a grant.** `writ-hook` checks every tool call a Claude Code session makes against a grant you sign, blocks what the grant does not cover, and signs a receipt for what ran. [docs/claude-code.md](docs/claude-code.md) has the setup and, just as plainly, what it does not protect against.
+
 ## The problem
 
 Say you ask your assistant, agent A, to book a trip and spend at most $600. A passes the booking to a travel agent, B. B passes the payment to a card processor, C. Each of the three runs a different company's software.
@@ -262,10 +264,11 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `bound` | the five bound types, narrows and satisfies | 40 comparisons in both directions |
 | `wire` | the signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
 | `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
-| `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, and the audit record | 22 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, and the unsaved key-wide revoke and audit tests from 2026-09-30 |
+| `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, the audit record, and operations performed outside the executor (`Begin` and `Complete`) | 24 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, and the unsaved key-wide revoke, audit, and `Begin`/`Complete` tests from 2026-09-30 |
 | `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
+| `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 5 tests, including parallel hook processes, a tampered receipt, and failing closed; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
 | `cmd/writ-demo` | agent A | |
 | `cmd/writ-vectors` | regenerates the vector corpus from fixed seeds | |
@@ -321,6 +324,7 @@ docs/design/                       04 six architectures, 05 threat model, 06 kil
                                    09 security review, 10 decision record
 docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
+docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               213 vectors
