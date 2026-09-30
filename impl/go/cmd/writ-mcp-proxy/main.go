@@ -15,10 +15,14 @@
 // as done. A result that verifies reaches the client rebuilt from what the
 // tally authenticates (mcpbind.Verified), never as the server sent it.
 // Verified tallies are appended to -receipts.
+//
+// The proxy reads the client and the server independently (relay.go), so a
+// server may ask the client something, such as an elicitation, in the middle
+// of a tool call, and the client may cancel a call, without either side
+// waiting on the other.
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
@@ -30,7 +34,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"strings"
-	"sync"
 
 	"writproto/keys"
 	"writproto/mcpbind"
@@ -110,97 +113,30 @@ func load(seedFile, grantFile string) (*keys.Identity, *writ.Writ, error) {
 	return agent, grant, nil
 }
 
-type proxy struct {
-	agent    *keys.Identity
-	grant    *writ.Writ
-	child    *writ.Writ // the grant passed on to the server's key
-	server   string     // the server's did:key, from server/discover
-	enforced bool
-	probed   bool
-	seq      int
-
-	upW      io.Writer
-	up       *bufio.Scanner
-	out      io.Writer
-	outMu    sync.Mutex
-	receipts io.Writer
-}
-
-func newProxy(agent *keys.Identity, grant *writ.Writ, upW io.Writer, upR io.Reader) *proxy {
-	sc := bufio.NewScanner(upR)
-	sc.Buffer(make([]byte, 1<<20), 1<<24)
-	return &proxy{agent: agent, grant: grant, upW: upW, up: sc}
-}
-
-type message struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   json.RawMessage `json:"error,omitempty"`
-}
-
-// run relays one client request at a time: it forwards the request, relays
-// anything the server sends meanwhile, and returns the matching response.
-func (p *proxy) run(in io.Reader, out io.Writer) error {
-	p.out = out
-	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 1<<20), 1<<24)
-	for sc.Scan() {
-		line := append([]byte(nil), sc.Bytes()...)
-		var m message
-		if err := json.Unmarshal(line, &m); err != nil {
-			p.send(map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32700, "message": "parse error"}})
-			continue
-		}
-		if m.Method == "tools/call" && len(m.ID) > 0 {
-			p.toolCall(m)
-			continue
-		}
-		if err := p.forward(line); err != nil {
-			return err
-		}
-		if len(m.ID) > 0 && m.Method != "" {
-			resp, err := p.await(m.ID)
-			if err != nil {
-				return err
-			}
-			p.write(resp)
-		}
-	}
-	return sc.Err()
-}
-
-func (p *proxy) toolCall(m message) {
-	fail := func(reason, msg string) {
-		p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32000, "message": "writ: " + msg, "data": map[string]any{"reason": reason}}})
-	}
+// sign learns the server's key if it has not yet, and signs the client's
+// tool call under the grant passed on to that key. It returns the call and
+// the params to send, or the reason the call cannot go.
+func (p *proxy) sign(m message) (k *writ.Call, params map[string]any, reason, msg string) {
 	if err := p.probe(); err != nil {
-		fail("unreachable_server", err.Error())
-		return
+		return nil, nil, "unreachable_server", err.Error()
 	}
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(m.Params, &in); err != nil || in == nil {
+		return nil, nil, "malformed", "tools/call params are not an object"
 	}
-	if err := json.Unmarshal(m.Params, &params); err != nil {
-		fail("malformed", "tools/call params are not an object")
-		return
-	}
+	var name string
+	_ = json.Unmarshal(in["name"], &name)
 	args := map[string]any{}
-	if len(params.Arguments) > 0 && string(params.Arguments) != "null" {
-		dec := json.NewDecoder(bytes.NewReader(params.Arguments))
+	if a := in["arguments"]; len(a) > 0 && string(a) != "null" {
+		dec := json.NewDecoder(bytes.NewReader(a))
 		dec.UseNumber()
 		if err := dec.Decode(&args); err != nil {
-			fail("malformed", "arguments are not an object")
-			return
+			return nil, nil, "malformed", "arguments are not an object"
 		}
 	}
 	if p.child == nil {
 		if p.server == "" {
-			fail("unenforced_server", "the server does not name the key it enforces under")
-			return
+			return nil, nil, "unenforced_server", "the server does not name the key it enforces under"
 		}
 		bnd := map[string]any{}
 		for name, b := range p.grant.Bnd {
@@ -208,41 +144,113 @@ func (p *proxy) toolCall(m message) {
 		}
 		child, err := writ.Issue(p.agent, p.server, bnd, p.grant.Exp, p.grant)
 		if err != nil {
-			fail("malformed", err.Error())
-			return
+			return nil, nil, "malformed", err.Error()
 		}
 		p.child = child
 	}
-	k, err := writ.NewCall(p.agent, []*writ.Writ{p.grant, p.child}, mcpbind.OpPrefix+params.Name, args)
+	k, err := writ.NewCall(p.agent, []*writ.Writ{p.grant, p.child}, mcpbind.OpPrefix+name, args)
 	if err != nil {
-		fail("malformed", "the tool call cannot be signed: "+err.Error())
-		return
+		return nil, nil, "malformed", "the tool call cannot be signed: " + err.Error()
 	}
 	if err := mcpbind.Ready(k, p.enforced); err != nil {
-		fail(err.Error(), "the server does not advertise "+mcpbind.Extension)
+		return nil, nil, err.Error(), "the server does not advertise " + mcpbind.Extension
+	}
+	// The Writ call is the proxy's; everything else the client put on the
+	// request, such as a progress token in _meta, goes on unchanged.
+	params = mcpbind.Params(name, k)
+	meta := params["_meta"].(map[string]any)
+	var clientMeta map[string]json.RawMessage
+	if json.Unmarshal(in["_meta"], &clientMeta) == nil {
+		for key, v := range clientMeta {
+			if key != mcpbind.CallKey {
+				meta[key] = v
+			}
+		}
+	}
+	for key, v := range in {
+		if key != "name" && key != "arguments" && key != "_meta" {
+			params[key] = v
+		}
+	}
+	return k, params, "", ""
+}
+
+// probe asks the server, once, whether it enforces the extension and which
+// key it executes under. Only the sequencer calls it.
+func (p *proxy) probe() error {
+	if p.probed {
+		return nil
+	}
+	r := p.openOwn()
+	if r == nil {
+		return errors.New("the server has exited")
+	}
+	req, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": r.id, "method": "server/discover"})
+	if err := p.toServer(req); err != nil {
+		p.take(r.id)
+		return err
+	}
+	line, ok := <-r.reply
+	if !ok {
+		return errors.New("the server exited before answering server/discover")
+	}
+	var resp message
+	_ = json.Unmarshal(line, &resp)
+	var result map[string]any
+	_ = json.Unmarshal(resp.Result, &result)
+	p.enforced, p.server = mcpbind.Advertised(result)
+	p.probed = true
+	return nil
+}
+
+// dispatch sends one tool call, in the order the client sent its tool calls,
+// and leaves a goroutine waiting for the result, so no reader ever waits on
+// a tool call.
+func (p *proxy) dispatch(r *request) {
+	if !p.isOpen(r.id) {
+		p.settle(r, "", "") // cancelled while queued, or the server exited
 		return
 	}
-	req, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "method": "tools/call", "params": mcpbind.Params(params.Name, k)})
-	if err := p.forward(req); err != nil {
-		fail("unreachable_server", err.Error())
+	k, params, reason, msg := p.sign(r.msg)
+	if reason != "" {
+		p.settle(r, reason, msg)
 		return
 	}
-	resp, err := p.await(m.ID)
-	if err != nil {
-		fail("unreachable_server", err.Error())
+	req, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": r.id, "method": "tools/call", "params": params})
+	if !p.isOpen(r.id) {
+		p.settle(r, "", "")
 		return
 	}
-	var r message
-	_ = json.Unmarshal(resp, &r)
-	if len(r.Error) > 0 {
-		p.write(resp) // the server refused before signing anything
+	if err := p.toServer(req); err != nil {
+		p.settle(r, "unreachable_server", err.Error())
 		return
 	}
-	dec := json.NewDecoder(bytes.NewReader(r.Result))
+	go p.finish(r, k)
+}
+
+// finish waits for a tool call's result and answers the client with it,
+// rebuilt from what its tally authenticates, or with an error.
+func (p *proxy) finish(r *request, k *writ.Call) {
+	defer p.end()
+	line, ok := <-r.reply
+	if !ok {
+		p.fail(r.client, "unreachable_server", "the server exited before answering")
+		return
+	}
+	if line == nil {
+		return // the client cancelled the call and expects no answer
+	}
+	var resp message
+	_ = json.Unmarshal(line, &resp)
+	if len(resp.Error) > 0 {
+		p.write(withID(line, r.client)) // the server refused before signing anything
+		return
+	}
+	dec := json.NewDecoder(bytes.NewReader(resp.Result))
 	dec.UseNumber()
 	var result map[string]any
 	if err := dec.Decode(&result); err != nil {
-		fail("malformed", "the server's result is not an object")
+		p.fail(r.client, "malformed", "the server's result is not an object")
 		return
 	}
 	// The client is shown only what the tally authenticates: the result is
@@ -250,70 +258,28 @@ func (p *proxy) toolCall(m message) {
 	// the server sent reaches the client.
 	shown, t, err := mcpbind.Verified(k, result)
 	if err != nil {
-		fail(mcpbind.ErrMissingTally.Error(), "the result carries no tally that verifies: "+err.Error())
+		p.fail(r.client, mcpbind.ErrMissingTally.Error(), "the result carries no tally that verifies: "+err.Error())
 		return
 	}
 	if p.receipts != nil {
 		line, _ := json.Marshal(map[string]any{"call": k.Raw, "tally": t.Raw})
+		p.recMu.Lock()
 		_, _ = p.receipts.Write(append(line, '\n'))
+		p.recMu.Unlock()
 	}
-	p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": shown})
+	p.send(map[string]any{"jsonrpc": "2.0", "id": r.client, "result": shown})
 }
 
-// probe asks the server, once, whether it enforces the extension and which
-// key it executes under.
-func (p *proxy) probe() error {
-	if p.probed {
-		return nil
-	}
-	p.seq++
-	id, _ := json.Marshal(fmt.Sprintf("writ-proxy-%d", p.seq))
-	req, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "method": "server/discover"})
-	if err := p.forward(req); err != nil {
-		return err
-	}
-	resp, err := p.await(id)
-	if err != nil {
-		return err
-	}
-	var r message
-	_ = json.Unmarshal(resp, &r)
-	var result map[string]any
-	_ = json.Unmarshal(r.Result, &result)
-	p.enforced, p.server = mcpbind.Advertised(result)
-	p.probed = true
-	return nil
-}
-
-func (p *proxy) forward(line []byte) error {
-	_, err := p.upW.Write(append(append([]byte(nil), line...), '\n'))
-	return err
-}
-
-// await reads the server until the response to id, relaying anything else
-// (notifications, the server's own requests) to the client.
-func (p *proxy) await(id json.RawMessage) ([]byte, error) {
-	for p.up.Scan() {
-		line := append([]byte(nil), p.up.Bytes()...)
-		var m message
-		if json.Unmarshal(line, &m) == nil && m.Method == "" && bytes.Equal(bytes.TrimSpace(m.ID), bytes.TrimSpace(id)) {
-			return line, nil
+// settle ends a tool call that will not get a result: the client is told
+// why, unless it cancelled the call, and a call the server's exit closed is
+// unreachable_server.
+func (p *proxy) settle(r *request, reason, msg string) {
+	defer p.end()
+	if p.take(r.id) == nil {
+		if line, ok := <-r.reply; ok && line == nil {
+			return
 		}
-		p.write(line)
+		reason, msg = "unreachable_server", "the server exited"
 	}
-	if err := p.up.Err(); err != nil {
-		return nil, err
-	}
-	return nil, io.EOF
-}
-
-func (p *proxy) send(v any) {
-	b, _ := json.Marshal(v)
-	p.write(b)
-}
-
-func (p *proxy) write(line []byte) {
-	p.outMu.Lock()
-	defer p.outMu.Unlock()
-	_, _ = p.out.Write(append(append([]byte(nil), line...), '\n'))
+	p.fail(r.client, reason, msg)
 }
