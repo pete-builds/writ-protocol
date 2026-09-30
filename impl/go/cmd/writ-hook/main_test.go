@@ -22,7 +22,7 @@ func setup(t *testing.T, tools []string, under string, uses int64) *env {
 	if err := e.initKeys(&out); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.grant(&out, tools, under, uses, time.Hour); err != nil {
+	if err := e.grant(&out, "default", tools, under, uses, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -216,7 +216,34 @@ func TestNoGrantDeniesEverything(t *testing.T) {
 	if r := pre(t, e, "Read", "toolu_1", map[string]any{"file_path": "/a"}); !strings.Contains(r, "no grant") {
 		t.Fatalf("with no grant: %q, want a deny naming the missing grant", r)
 	}
-	if err := e.grant(&out, nil, "", 0, 25*time.Hour); err == nil {
+	if err := e.grant(&out, "default", nil, "", 0, 25*time.Hour); err == nil {
 		t.Fatal("a 25-hour grant was signed")
+	}
+}
+
+// Several named grants: a call is checked under the grant that lists its
+// tool, so a folder limit on file tools no longer shuts out search tools.
+func TestNamedGrantsPerTool(t *testing.T) {
+	proj := "/work/project"
+	e := setup(t, []string{"Read", "Edit"}, proj, 0)
+	var out bytes.Buffer
+	if err := e.grant(&out, "search", []string{"Grep", "Glob"}, "", 5, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.grant(&out, "Bad Name", nil, "", 0, time.Hour); err == nil {
+		t.Fatal("a grant name with spaces and capitals was accepted")
+	}
+	if r := pre(t, e, "Grep", "toolu_1", map[string]any{"pattern": "x", "path": "/anywhere"}); r != "" {
+		t.Fatalf("Grep under the search grant: %s", r)
+	}
+	post(t, e, "PostToolUse", "Grep", "toolu_1")
+	if r := pre(t, e, "Read", "toolu_2", map[string]any{"file_path": "/etc/hosts"}); !strings.HasPrefix(r, "Writ: out_of_bounds") {
+		t.Fatalf("Read outside the folder: %q", r)
+	}
+	if r := pre(t, e, "Bash", "toolu_3", map[string]any{"command": "ls"}); !strings.HasPrefix(r, "Writ: missing_arg") {
+		t.Fatalf("Bash, which no grant lists: %q", r)
+	}
+	if ok, report := receipts(t, e); !ok || !strings.Contains(report, "1 receipt(s) verified") {
+		t.Fatalf("receipts:\n%s", report)
 	}
 }

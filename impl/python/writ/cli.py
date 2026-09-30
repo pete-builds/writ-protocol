@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 
 from . import bounds as B
 from . import canon
@@ -278,6 +279,44 @@ def cmd_scenarios(args):
     return 1 if failed else 0
 
 
+def _payment_app(ex):
+    """Agent C of the demo: charges the amount and reverses a charge on
+    sys/undo, as the Go writ-agent's payment role does."""
+    lock, charges, seq = threading.Lock(), {}, [0]
+
+    def app(op):
+        with lock:
+            if op.kind == "forward":
+                n = op.args["amount"]
+                seq[0] += 1
+                charge = f"ch_{seq[0]:04d}"
+                charges[op.call_id] = charge
+                print(f"charge {n} {op.args.get('currency')} for {op.call['from'][:20]}", file=sys.stderr, flush=True)
+                return Outcome("ok", res={"charge": charge, "amount": n}, used={"amount": n}, rev=ex.now() + 86400)
+            charge = charges.get(op.target["call"])
+            print(f"refund {charge}", file=sys.stderr, flush=True)
+            return Outcome("ok", res={"refund": f"rf_{charge}", "of": charge})
+    return app
+
+
+def cmd_serve(args):
+    """Run an executor behind the section 10 HTTP binding until killed."""
+    from . import httpbind
+    from .audit import AuditLog
+    audit = AuditLog(args.audit).record if args.audit else None
+    ex = Executor(args.seed, [a for a in args.accept.split(",") if a], args.store, audit=audit)
+    if args.role != "payment":
+        print(f"unknown role {args.role!r}; this implementation serves the payment role", file=sys.stderr)
+        return 2
+    ex.app = _payment_app(ex)
+    wk = {"v": 1, "did": ex.did, "endpoint": "/writ", "act": ["travel/charge"]}
+    server = httpbind.serve(ex, wk, port=args.port)
+    print(f"payment agent {ex.did} listening on :{server.server_address[1]} (Python)", file=sys.stderr, flush=True)
+    print("ready", file=sys.stderr, flush=True)
+    threading.Event().wait()
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python3 -m writ.cli", description="Writ v0.1 verifier")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -312,6 +351,15 @@ def main(argv=None):
     sc = sub.add_parser("scenarios", help="run every section 14.1 executor scenario in a directory")
     sc.add_argument("dir")
     sc.set_defaults(fn=cmd_scenarios)
+
+    sv = sub.add_parser("serve", help="run an executor behind the HTTP binding (section 10)")
+    sv.add_argument("--role", default="payment")
+    sv.add_argument("--seed", required=True)
+    sv.add_argument("--port", type=int, default=8082)
+    sv.add_argument("--store", required=True, help="directory of the durable stores")
+    sv.add_argument("--accept", default="", help="comma-separated root issuer keys")
+    sv.add_argument("--audit", help="path of the append-only audit record")
+    sv.set_defaults(fn=cmd_serve)
 
     args = p.parse_args(argv)
     return args.fn(args)

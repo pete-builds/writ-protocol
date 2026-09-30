@@ -379,6 +379,8 @@ func RunScenarioDir(dir string) (int, int, string) {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
+			fail++
+			fmt.Fprintf(&sb, "FAIL %s: unreadable: %v\n", filepath.Base(f), err)
 			continue
 		}
 		var sc Scenario

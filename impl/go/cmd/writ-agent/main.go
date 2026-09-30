@@ -28,6 +28,7 @@ func main() {
 	store := flag.String("store", "", "path of the durable store (empty for memory)")
 	accept := flag.String("accept", "", "comma-separated did:key roots this agent acts under")
 	downstream := flag.String("downstream", "", "base URL of the payment agent (booking role)")
+	perMinute := flag.Int("per-minute", 0, "requests accepted per minute from each peer or host (0 for no limit)")
 	audit := flag.String("audit", "", "path of the append-only audit record, one JSON line per call or revoke (empty for none)")
 	flag.Parse()
 
@@ -77,7 +78,7 @@ func main() {
 	wk := httpbind.WellKnown{V: 1, DID: id.DID(), Endpoint: "/writ", Act: act}
 	log.Printf("%s agent %s listening on :%d", *role, id.DID(), *port)
 	fmt.Fprintln(os.Stderr, "ready")
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", *port), httpbind.Handler(e, wk)))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", *port), httpbind.NewHandler(e, wk, httpbind.Options{PerMinute: *perMinute})))
 }
 
 // installPayment: agent C. It charges within the leaf bounds and can refund.

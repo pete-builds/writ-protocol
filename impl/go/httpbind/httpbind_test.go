@@ -105,7 +105,7 @@ func TestPeerAndUnsavedRevoke(t *testing.T) {
 		p := r.Header.Get("X-Test-Peer")
 		return p, p != ""
 	}
-	srv := httptest.NewServer(HandlerWithPeer(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, peerOf))
+	srv := httptest.NewServer(NewHandler(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, Options{PeerOf: peerOf}))
 	defer srv.Close()
 	post := func(peer string, obj any) (int, map[string]any) {
 		body, _ := json.Marshal(obj)
@@ -155,7 +155,7 @@ func TestBindingAudits(t *testing.T) {
 	var got []exec.AuditEntry
 	e.Audit = func(a exec.AuditEntry) { got = append(got, a) }
 	peerOf := func(r *http.Request) (string, bool) { return "spiffe://a.example/agent", true }
-	srv := httptest.NewServer(HandlerWithPeer(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, peerOf))
+	srv := httptest.NewServer(NewHandler(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, Options{PeerOf: peerOf}))
 	defer srv.Close()
 	post := func(body []byte) {
 		resp, err := http.Post(srv.URL+"/writ", ContentType, bytes.NewReader(body))
@@ -182,5 +182,37 @@ func TestBindingAudits(t *testing.T) {
 	}
 	if got[2].From != A.DID() || got[2].Leaf != "*" {
 		t.Errorf("revoke entry does not name its signer and target: %+v", got[2])
+	}
+}
+
+// Spec 12: requests beyond the per-peer rate are refused before the executor
+// or its audit record sees them; another peer is unaffected.
+func TestRateLimitPerPeer(t *testing.T) {
+	B, _ := keys.FromSeed(bytes.Repeat([]byte{2}, 32))
+	e := exec.New(B, nil)
+	audited := 0
+	e.Audit = func(exec.AuditEntry) { audited++ }
+	peerOf := func(r *http.Request) (string, bool) { return r.Header.Get("X-Test-Peer"), true }
+	srv := httptest.NewServer(NewHandler(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, Options{PeerOf: peerOf, PerMinute: 2}))
+	defer srv.Close()
+	post := func(peer string) int {
+		req, _ := http.NewRequest("POST", srv.URL+"/writ", strings.NewReader(`{"v":1,"typ":"note"}`))
+		req.Header.Set("X-Test-Peer", peer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	got := []int{post("a"), post("a"), post("a"), post("b")}
+	want := []int{400, 400, 429, 400}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("statuses %v, want %v", got, want)
+		}
+	}
+	if audited != 3 {
+		t.Fatalf("%d audit entries, want 3: the refused request is not recorded", audited)
 	}
 }

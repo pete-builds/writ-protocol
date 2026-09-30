@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"writproto/exec"
@@ -32,16 +34,29 @@ type WellKnown struct {
 // maxRequestBytes is the larger of the call and revoke limits of spec 1.6.
 const maxRequestBytes = max(writ.MaxCallBytes, writ.MaxRevokeBytes)
 
-// Handler serves an executor over a transport that authenticates no peer.
+// Handler serves an executor over a transport that authenticates no peer,
+// with no rate limit.
 func Handler(e *exec.Executor, wk WellKnown) http.Handler {
-	return HandlerWithPeer(e, wk, nil)
+	return NewHandler(e, wk, Options{})
 }
 
-// HandlerWithPeer serves an executor and passes it the identity the transport
-// authenticated for each request, as peerOf reports it, so the executor can
-// check that peer against the call's from (spec sections 7.6 and 10). peerOf
-// returns false when the request carries no authenticated identity.
-func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) (string, bool)) http.Handler {
+// Options configure NewHandler.
+type Options struct {
+	// PeerOf reports the identity the transport authenticated for a request,
+	// passed to the executor for peer binding and the audit record (spec
+	// sections 7.6, 9.3, and 10).
+	PeerOf func(*http.Request) (string, bool)
+	// PerMinute, when above zero, bounds the requests accepted from each
+	// peer, or from each remote host when there is no peer, and refuses the
+	// rest with status 429 before they reach the executor or its audit
+	// record (spec section 12).
+	PerMinute int
+}
+
+// NewHandler serves an executor.
+func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
+	limit := newLimiter(o.PerMinute)
+	peerOf := o.PeerOf
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/writ", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -49,10 +64,16 @@ func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) 
 	})
 	mux.HandleFunc("POST /writ", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		source := "host:" + remoteHost(r)
 		if peerOf != nil {
 			if p, ok := peerOf(r); ok {
 				ctx = exec.WithPeer(ctx, p)
+				source = "peer:" + p
 			}
+		}
+		if !limit.allow(source, time.Now()) {
+			fail(w, http.StatusTooManyRequests, RateLimited)
+			return
 		}
 		// An object rejected here never reaches the executor's own checks,
 		// so the binding records it in the audit record itself (spec 9.3).
@@ -103,6 +124,56 @@ func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) 
 		}
 	})
 	return mux
+}
+
+// RateLimited is the implementation code of a request refused by PerMinute.
+const RateLimited = writ.Reason("httpbind/rate_limited")
+
+func remoteHost(r *http.Request) string {
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
+	}
+	return r.RemoteAddr
+}
+
+// limiter is a token bucket per source: PerMinute tokens, refilled evenly.
+type limiter struct {
+	mu      sync.Mutex
+	rate    float64 // tokens per second
+	burst   float64
+	buckets map[string]*bucket
+}
+
+type bucket struct {
+	tokens float64
+	last   time.Time
+}
+
+func newLimiter(perMinute int) *limiter {
+	if perMinute <= 0 {
+		return nil
+	}
+	return &limiter{rate: float64(perMinute) / 60, burst: float64(perMinute), buckets: map[string]*bucket{}}
+}
+
+func (l *limiter) allow(source string, now time.Time) bool {
+	if l == nil {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.buckets[source]
+	if b == nil {
+		b = &bucket{tokens: l.burst, last: now}
+		l.buckets[source] = b
+	}
+	b.tokens = min(l.burst, b.tokens+now.Sub(b.last).Seconds()*l.rate)
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }
 
 func reject(w http.ResponseWriter, code writ.Reason) { fail(w, http.StatusBadRequest, code) }

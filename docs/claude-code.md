@@ -9,7 +9,7 @@ The model never holds a key and never writes a receipt. The checks run in this p
 | Writ | Here |
 |---|---|
 | root issuer | your grantor key, `~/.writ/root.seed` |
-| the grant | a writ from you to the session's agent key, `~/.writ/claude/grant.json` |
+| a grant | a writ from you to the session's agent key, `~/.writ/claude/grants/<name>.json`; you can hold several |
 | a call | one tool call: `op` is `claude/<tool name>`, `args` is the tool input plus `tool`, the tool's name |
 | the executor | the gate key, which enforces the grant and signs every receipt |
 | a tally | the receipt for one tool call, committing to the tool's response by SHA-256 |
@@ -24,15 +24,19 @@ Build it (Go 1.25 or newer):
 cd impl/go && go build -o ~/bin/writ-hook ./cmd/writ-hook
 ```
 
-Create the keys once, then grant a session:
+Create the keys once, then grant a session. Each grant has a name, and a tool call is checked under the grant that lists its tool, so file tools can be held to one folder while search tools are not:
 
 ```
 writ-hook init
-writ-hook grant -tools Read,Edit,Write -under /Users/you/project -uses 200 -ttl 8h
+writ-hook grant -name files  -tools Read,Edit,Write -under /Users/you/project -uses 200 -ttl 8h
+writ-hook grant -name search -tools Grep,Glob -uses 200 -ttl 8h
 ```
+
+A tool no grant lists is checked under the first grant without a `-tools` list, or failing that the first grant by name, which refuses it with its reason.
 
 | Flag | Bound it signs | Meaning |
 |---|---|---|
+| `-name` | none | the grant's name, lowercase letters, digits, and dashes; granting the same name again replaces it |
 | `-tools` | `tool`, a `set` | the tools the session may call; empty for any |
 | `-under` | `file_path`, a `prefix` | every call must carry a `file_path` under this folder |
 | `-uses` | `uses`, a `count` | the most tool calls the grant allows |
@@ -73,7 +77,7 @@ This was run against Claude Code on 2026-09-30: an allowed Read ran and was rece
 
 ## What it does not do
 
-- **A bound applies to every call.** `-under` adds a `file_path` bound, so a tool whose input has no `file_path` is refused: Bash, Grep and Glob (which use `path`), and NotebookEdit (which uses `notebook_path`). Pair `-under` with a `-tools` list of file tools.
+- **A bound applies to every call under its grant.** `-under` adds a `file_path` bound, so a tool whose input has no `file_path` is refused under that grant: Bash, Grep and Glob (which use `path`), and NotebookEdit (which uses `notebook_path`). Give those tools their own named grant.
 - **Bash defeats it.** The gate refuses any input that names `~/.writ`, so an allowed tool cannot read the keys or rewrite the grant, but that is a text match, and a shell command can build the path at run time. A grant that must hold does not include Bash.
 - **The keys live on the same machine as the tools.** A receipt proves what the gate admitted and what Claude Code reported back, signed by a key the model cannot reach through an allowed tool. It does not prove the tool's effect in the world, and anyone with access to `~/.writ` can do anything.
 - **Paths are checked as text.** Inputs with `.` or `..` segments are refused, but a symlink inside the granted folder can still point outside it.

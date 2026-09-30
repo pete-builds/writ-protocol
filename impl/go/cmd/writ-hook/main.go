@@ -9,7 +9,7 @@
 //	root.seed, root.did    the grantor, who signs grants
 //	claude/agent.seed      signs each call on the session's behalf
 //	claude/gate.seed       enforces the grant and signs every receipt
-//	claude/grant.json      the grant, root to agent
+//	claude/grants/*.json   the grants, root to agent, one per name
 //	claude/store.json      the executor's stores; claude/audit.jsonl the audit record
 //
 // The model never holds a key and never writes a receipt: this program does,
@@ -90,8 +90,9 @@ func main() {
 		under := fs.String("under", "", "absolute directory every file_path argument must be under")
 		uses := fs.Int64("uses", 0, "most tool calls the grant allows (0 for no limit)")
 		ttl := fs.Duration("ttl", 8*time.Hour, "how long the grant lasts, at most 24h")
+		name := fs.String("name", "default", "the grant's name; a tool call is checked under the grant that lists its tool")
 		_ = fs.Parse(os.Args[2:])
-		err = e.grant(os.Stdout, splitList(*tools), *under, *uses, *ttl)
+		err = e.grant(os.Stdout, *name, splitList(*tools), *under, *uses, *ttl)
 	case "pre":
 		err = e.hook(os.Stdin, os.Stdout, e.pre)
 	case "post":
@@ -186,7 +187,12 @@ func (e *env) initKeys(out io.Writer) error {
 
 // ---------------------------------------------------------------- grant
 
-func (e *env) grant(out io.Writer, tools []string, under string, uses int64, ttl time.Duration) error {
+var grantName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+func (e *env) grant(out io.Writer, name string, tools []string, under string, uses int64, ttl time.Duration) error {
+	if !grantName.MatchString(name) {
+		return fmt.Errorf("-name must be lowercase letters, digits, and dashes")
+	}
 	if ttl <= 0 || ttl > maxGrant {
 		return fmt.Errorf("-ttl must be more than 0 and at most %s", maxGrant)
 	}
@@ -224,14 +230,13 @@ func (e *env) grant(out io.Writer, tools []string, under string, uses int64, ttl
 		return err
 	}
 	defer unlock()
-	if err := writeJSON(e.path("grant.json"), w.Raw); err != nil {
+	if err := os.MkdirAll(e.path("grants"), 0o700); err != nil {
 		return err
 	}
-	// A new grant needs a new delegation to the gate.
-	if err := os.Remove(e.path("child.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := writeJSON(filepath.Join(e.path("grants"), name+".json"), w.Raw); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "granted %s until %s\n", w.ID, time.Unix(w.Exp, 0).Format(time.RFC3339))
+	fmt.Fprintf(out, "granted %q %s until %s\n", name, w.ID, time.Unix(w.Exp, 0).Format(time.RFC3339))
 	return nil
 }
 
@@ -280,17 +285,17 @@ func (e *env) lock() (func(), error) {
 
 type gate struct {
 	e      *exec.Executor
+	env    *env
+	id     *keys.Identity
 	agent  *keys.Identity
-	chain  []*writ.Writ
 	rootID string
 	audit  *exec.AuditLog
 }
 
 func (g *gate) close() { g.audit.Close() }
 
-// openGate loads the keys, the grant, and the delegation from agent to gate,
-// issuing the delegation on first use, and opens the executor over the store.
-// It must run under lock.
+// openGate loads the keys and opens the executor over the store. It must run
+// under lock.
 func (e *env) openGate() (*gate, error) {
 	gateID, err := loadKey(e.path("gate.seed"))
 	if err != nil {
@@ -303,25 +308,6 @@ func (e *env) openGate() (*gate, error) {
 	rootDID, err := os.ReadFile(filepath.Join(e.home, "root.did"))
 	if err != nil {
 		return nil, fmt.Errorf("no trusted grantor; run writ-hook init (%v)", err)
-	}
-	grant, err := readWrit(e.path("grant.json"))
-	if err != nil {
-		return nil, fmt.Errorf("no grant; run writ-hook grant (%v)", err)
-	}
-	child, err := readWrit(e.path("child.json"))
-	if err != nil || child.Prv != grant.ID || child.Hld != gateID.DID() {
-		// The agent passes the grant on to the gate unchanged: the same
-		// bounds, the same expiry. Narrowing can never widen (spec 4).
-		bnd := map[string]any{}
-		for name, b := range grant.Bnd {
-			bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
-		}
-		if child, err = writ.Issue(agent, gateID.DID(), bnd, grant.Exp, grant); err != nil {
-			return nil, err
-		}
-		if err := writeJSON(e.path("child.json"), child.Raw); err != nil {
-			return nil, err
-		}
 	}
 	st, err := exec.OpenFileStore(e.path("store.json"))
 	if err != nil {
@@ -340,7 +326,71 @@ func (e *env) openGate() (*gate, error) {
 			fmt.Fprintf(os.Stderr, "writ-hook: audit record not written: %v\n", err)
 		}
 	}
-	return &gate{e: x, agent: agent, chain: []*writ.Writ{grant, child}, rootID: root, audit: al}, nil
+	return &gate{e: x, env: e, id: gateID, agent: agent, rootID: root, audit: al}, nil
+}
+
+// chainFor picks the grant a call to tool is checked under: the first, by
+// name, whose tool set lists it, else the first with no tool set, else the
+// first of all, which the executor then refuses with its reason. It returns
+// the chain root, agent, gate, issuing the agent's delegation to the gate on
+// first use: the same bounds and expiry, since narrowing never widens (spec 4).
+func (g *gate) chainFor(tool string) ([]*writ.Writ, error) {
+	files, _ := filepath.Glob(filepath.Join(g.env.path("grants"), "*.json"))
+	sort.Strings(files)
+	var pick, open, first string
+	for _, f := range files {
+		w, err := readWrit(f)
+		if err != nil {
+			continue
+		}
+		if first == "" {
+			first = f
+		}
+		b, listed := w.Bnd["tool"]
+		if !listed || b.T != "set" {
+			if open == "" {
+				open = f
+			}
+			continue
+		}
+		for _, v := range b.Set {
+			if strings.Trim(fmt.Sprint(v), `"`) == tool {
+				pick = f
+				break
+			}
+		}
+		if pick != "" {
+			break
+		}
+	}
+	for _, f := range []string{pick, open, first} {
+		if f == "" {
+			continue
+		}
+		grant, err := readWrit(f)
+		if err != nil {
+			return nil, err
+		}
+		childPath := filepath.Join(g.env.path("children"), filepath.Base(f))
+		child, err := readWrit(childPath)
+		if err != nil || child.Prv != grant.ID || child.Hld != g.id.DID() {
+			bnd := map[string]any{}
+			for name, b := range grant.Bnd {
+				bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
+			}
+			if child, err = writ.Issue(g.agent, g.id.DID(), bnd, grant.Exp, grant); err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(g.env.path("children"), 0o700); err != nil {
+				return nil, err
+			}
+			if err := writeJSON(childPath, child.Raw); err != nil {
+				return nil, err
+			}
+		}
+		return []*writ.Writ{grant, child}, nil
+	}
+	return nil, errors.New("no grant; run writ-hook grant")
 }
 
 // ---------------------------------------------------------------- hooks
@@ -411,7 +461,11 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err := os.MkdirAll(filepath.Join(e.dir, "pending"), 0o700); err != nil {
 		return nil, err
 	}
-	k, err := writ.NewCall(g.agent, g.chain, "claude/"+h.ToolName, args)
+	chain, err := g.chainFor(h.ToolName)
+	if err != nil {
+		return deny(err.Error()), nil
+	}
+	k, err := writ.NewCall(g.agent, chain, "claude/"+h.ToolName, args)
 	if err != nil {
 		return deny("the tool input cannot be carried in a call: " + err.Error()), nil
 	}
@@ -424,7 +478,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 		if errObj, ok := rep.Tally["err"].(map[string]any); ok {
 			code, _ = errObj["code"].(string)
 		}
-		return deny(explain(code, h.ToolName, g.chain[0], args)), nil
+		return deny(explain(code, h.ToolName, chain[0], args)), nil
 	}
 	if err := writeJSON(e.pendingPath(h.ToolUseID), k.Raw); err != nil {
 		return nil, err
