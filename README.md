@@ -22,7 +22,7 @@ You need Go 1.25 or newer, or none at all for the programs themselves: every rel
 
 2. **Try to break it, an afternoon.** Read the specification, `docs/spec/writ-v0.1.md`, starting with section 12, and the threat model, `docs/design/05-threat-model.md`. If you find a way to widen authority, forge or hide a receipt, replay a call, or make two careful readers disagree, open an issue with the steps. An operator's objection counts as much as an attack: the peer binding and the audit record in section 7.6 and 9.3 came from one.
 
-3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 213 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 22 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open an issue naming the vector and what your implementation answered. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
+3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 213 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 22 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open a *stranger test* issue (the template asks for what matters) naming each vector and what your implementation answered. CONTRIBUTING.md has the rest, and SECURITY.md says how to report a vulnerability privately. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
 
 4. **Put your own Claude Code under a grant.** `writ-hook` checks every tool call a Claude Code session makes against a grant you sign, blocks what the grant does not cover, and signs a receipt for what ran. [docs/claude-code.md](docs/claude-code.md) has the setup and, just as plainly, what it does not protect against.
 
@@ -324,7 +324,7 @@ README.md                          this file
 docs/research/                     01 history, 02 prior art, 03 skeptic opening
 docs/design/                       04 six architectures, 05 threat model, 06 kill round,
                                    07 distributed systems review, 08 builder review,
-                                   09 security review, 10 decision record
+                                   09 security review, 10 decision record, 11 open decisions
 docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
 docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
