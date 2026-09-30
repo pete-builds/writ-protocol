@@ -8,7 +8,7 @@ In one line, next to the protocols it sits beside: TCP/IP moves packets between 
 
 ## Three ways in
 
-You need Go 1.25 or newer. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
+You need Go 1.25 or newer, or none at all for the programs themselves: every release on the repository's Releases page carries them built for Linux and macOS, amd64 and arm64, with SHA-256 checksums. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
 
 1. **Watch it run, about ten minutes.**
 
@@ -337,6 +337,7 @@ conformance/vectors/               213 vectors
 conformance/scenarios/             22 executor scenarios
 conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
 demo/run.sh                        three-process demo; transcript in demo/out/ (generated)
+scripts/build-release.sh           builds the release archives; .github/workflows/release.yml publishes them on a v* tag
 .github/workflows/ci.yml           CI: tests, cross-conformance, scenarios, fuzz, regeneration, demo
 .github/workflows/fuzz-weekly.yml  differential fuzz on a fresh seed each week
 ```
