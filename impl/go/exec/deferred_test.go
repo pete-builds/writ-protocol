@@ -81,3 +81,42 @@ func TestBeginRefusesAndCounts(t *testing.T) {
 		t.Fatalf("Complete of a refused call: %v %v, want %s", rep, rej, NotAdmitted)
 	}
 }
+
+// Spec 9.1: a revoke answers for every forward call not yet final under the
+// revoked writ, including one Begin admitted whose operation runs elsewhere,
+// which it reports as pending because it cannot stop it.
+func TestRevokeAnswersForDeferredCalls(t *testing.T) {
+	A := id(1)
+	e := newC(t, filepath.Join(t.TempDir(), "store.json"), A, nil)
+	w, _ := writ.Issue(A, e.ID.DID(), bnd("act", "prefix", "tools"), now+3600, nil)
+	k, _ := writ.NewCall(A, []*writ.Writ{w}, "tools/read", map[string]any{})
+	if rep, rej := e.Begin(context.Background(), k.Raw); rep != nil || rej != nil {
+		t.Fatalf("not admitted: %v %v", rep, rej)
+	}
+	rv, _ := writ.NewRevoke(A, []*writ.Writ{w})
+	tallies, rej := e.Revoke(rv.Raw)
+	if rej != nil || len(tallies) != 1 || tallies[0]["st"] != "pending" || tallies[0]["call"] != k.ID {
+		t.Fatalf("revoke answered %v %v, want one pending tally for the deferred call", tallies, rej)
+	}
+	if rep, _ := e.Complete(context.Background(), k.Raw, Result{}); tallyCode(rep) != "ok" {
+		t.Fatalf("the operation had already run; its receipt still stands: %s", tallyCode(rep))
+	}
+	k2, _ := writ.NewCall(A, []*writ.Writ{w}, "tools/read", map[string]any{})
+	if rep, _ := e.Begin(context.Background(), k2.Raw); tallyCode(rep) != "failed:revoked" {
+		t.Fatalf("a later call: %s, want revoked", tallyCode(rep))
+	}
+}
+
+// Undo locks are dropped once no reversal holds or waits for them.
+func TestUndoLocksAreReleased(t *testing.T) {
+	f := newStandingFixture(t)
+	for i := 0; i < 3; i++ {
+		u := f.undoCall(f.A, []*writ.Writ{f.w1, f.w2})
+		if _, rej := f.e.Execute(context.Background(), u.Raw); rej != nil {
+			t.Fatal(rej)
+		}
+	}
+	if n := len(f.e.undoLocks); n != 0 {
+		t.Fatalf("%d undo locks left after every reversal finished", n)
+	}
+}

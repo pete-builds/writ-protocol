@@ -272,6 +272,20 @@ func (s *FileStore) addEvidence(key string, w, t wire.Object) error {
 	return nil
 }
 
+// pendingRecords returns copies of every record not yet final.
+func (s *FileStore) pendingRecords() []*Record {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*Record
+	for _, rec := range s.Calls {
+		if rec.Tally == nil && rec.Call != nil {
+			c := *rec
+			out = append(out, &c)
+		}
+	}
+	return out
+}
+
 // record returns a copy of the record at key, pending or final, or nil.
 func (s *FileStore) record(key string) *Record {
 	s.mu.Lock()

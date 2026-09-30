@@ -62,8 +62,8 @@ type Executor struct {
 	// Revoke while it records a revoke and collects what is in flight, so the
 	// two are atomic with respect to each other (spec 7).
 	mu        sync.Mutex
-	inflight  map[string]inflight    // call identity
-	undoLocks map[string]*sync.Mutex // target tally identity
+	inflight  map[string]inflight // call identity
+	undoLocks map[string]*undoRef // target tally identity
 
 	// afterRevokeCheck, when set by a test, runs just after step 7 with mu
 	// held, which is the window a revoke must not slip through.
@@ -84,7 +84,7 @@ func New(id *keys.Identity, store *FileStore) *Executor {
 	return &Executor{ID: id, Store: store, Now: func() int64 { return time.Now().Unix() },
 		AcceptRoot: func(string) bool { return false }, PeerBinds: func(string, string) bool { return false },
 		inflight:  map[string]inflight{},
-		undoLocks: map[string]*sync.Mutex{}}
+		undoLocks: map[string]*undoRef{}}
 }
 
 // Recover resolves every pending call record left by a crash to a final tally
@@ -341,15 +341,32 @@ func (e *Executor) resFor(t wire.Object) any {
 	return nil
 }
 
-func (e *Executor) undoLock(target string) *sync.Mutex {
+// undoRef serializes the reversals of one target and counts who holds or
+// waits for it, so the entry is dropped when the last one is done.
+type undoRef struct {
+	mu sync.Mutex
+	n  int
+}
+
+// lockUndo takes the lock for reversals of target and returns its release.
+func (e *Executor) lockUndo(target string) func() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	m, ok := e.undoLocks[target]
-	if !ok {
-		m = &sync.Mutex{}
-		e.undoLocks[target] = m
+	r := e.undoLocks[target]
+	if r == nil {
+		r = &undoRef{}
+		e.undoLocks[target] = r
 	}
-	return m
+	r.n++
+	e.mu.Unlock()
+	r.mu.Lock()
+	return func() {
+		r.mu.Unlock()
+		e.mu.Lock()
+		if r.n--; r.n == 0 {
+			delete(e.undoLocks, target)
+		}
+		e.mu.Unlock()
+	}
 }
 
 // undo implements spec 8.1. By the time it runs, Execute has established
@@ -378,9 +395,7 @@ func (e *Executor) undo(ctx context.Context, k *writ.Call) Result {
 	if !ok {
 		return fail(writ.NotReversible)
 	}
-	lk := e.undoLock(target.ID)
-	lk.Lock()
-	defer lk.Unlock()
+	defer e.lockUndo(target.ID)()
 	done, res, claimed := e.Store.undoState(rec)
 	if done {
 		// Idempotent: a later undo for the same tally performs nothing and
@@ -464,22 +479,37 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	// pending tallies, in ascending order of call identity (spec 9.1). A
 	// standing call in flight is left alone: a revoke ends forward
 	// authority, not the standing to reverse or recover (spec 8).
+	under := func(k *writ.Call) bool {
+		for _, w := range k.Chain {
+			if w.ID == r.Writ || (r.Writ == "*" && w.Iss == r.Iss) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, f := range e.inflight {
-		if f.call.Standing() {
+		if !f.call.Standing() && under(f.call) {
+			hits = append(hits, f)
+		}
+	}
+	// A call Begin admitted runs outside this executor: it is answered as
+	// pending, which is true, and cannot be stopped from here (spec 9.1).
+	for _, rec := range e.Store.pendingRecords() {
+		k, err := writ.ParseCall(rec.Call)
+		if err != nil || k.Standing() || !under(k) {
 			continue
 		}
-		for _, w := range f.call.Chain {
-			if w.ID == r.Writ || (r.Writ == "*" && w.Iss == r.Iss) {
-				hits = append(hits, f)
-				break
-			}
+		if _, running := e.inflight[k.ID]; !running {
+			hits = append(hits, inflight{call: k, acc: rec.Acc})
 		}
 	}
 	e.mu.Unlock()
 	sort.Slice(hits, func(i, j int) bool { return hits[i].call.ID < hits[j].call.ID })
 	out := []wire.Object{}
 	for _, f := range hits {
-		f.cancel()
+		if f.cancel != nil {
+			f.cancel()
+		}
 		out = append(out, e.pendingReply(f.call, f.acc).Tally)
 	}
 	if e.OnRevoke != nil {

@@ -1,6 +1,8 @@
 #!/bin/sh
 # Runs the three-agent Writ demo on localhost. Portable sh: macOS and NixOS.
 # A (writ-demo) delegates to B (booking), B delegates to C (payment).
+# WRIT_C=python runs C from the Python implementation instead of Go, so the
+# two implementations talk to each other over the HTTP binding.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -9,6 +11,7 @@ bin="$here/bin"
 out="$here/out"
 mkdir -p "$bin" "$out"
 rm -f "$out"/*.json "$out"/store-*.json "$out"/*.log "$out"/audit-*.jsonl  # stale output must never pass a check
+rm -rf "$out/store-C"
 
 ( cd "$gosrc" && go build -o "$bin/writ-agent" ./cmd/writ-agent && go build -o "$bin/writ-demo" ./cmd/writ-demo )
 
@@ -18,7 +21,11 @@ SEED_C=0303030303030303030303030303030303030303030303030303030303030303
 ( cd "$gosrc" && go build -o "$bin/writ" ./cmd/writ )
 DID_A=$("$bin/writ" keygen -seed $SEED_A)
 
-"$bin/writ-agent" -role payment -seed $SEED_C -port 8082 -store "$out/store-C.json" -audit "$out/audit-C.jsonl" -accept "$DID_A" > "$out/C.log" 2>&1 &
+if [ "${WRIT_C:-go}" = python ]; then
+  ( cd "$root/impl/python" && exec python3 -m writ.cli serve --role payment --seed $SEED_C --port 8082 --store "$out/store-C" --accept "$DID_A" --audit "$out/audit-C.jsonl" ) > "$out/C.log" 2>&1 &
+else
+  "$bin/writ-agent" -role payment -seed $SEED_C -port 8082 -store "$out/store-C.json" -audit "$out/audit-C.jsonl" -accept "$DID_A" > "$out/C.log" 2>&1 &
+fi
 PC=$!
 "$bin/writ-agent" -role booking -seed $SEED_B -port 8081 -store "$out/store-B.json" -audit "$out/audit-B.jsonl" -accept "$DID_A" -downstream http://127.0.0.1:8082 > "$out/B.log" 2>&1 &
 PB=$!
