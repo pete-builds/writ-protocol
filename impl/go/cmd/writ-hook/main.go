@@ -77,11 +77,35 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ-hook init | grant [flags] | pre | post | recover | receipts")
+		die("usage: writ-hook init | grant [flags] | serve -socket PATH | pre | post | recover | receipts")
 	}
 	e := newEnv()
 	var err error
+	// With WRIT_HOOK_SOCKET set, the hook commands go to a gate running as
+	// its own process (writ-hook serve) instead of opening the state here.
+	if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
+		switch os.Args[1] {
+		case "pre", "post", "recover", "receipts":
+			ok, err := remote(socket, os.Args[1], os.Stdin, os.Stdout)
+			if err != nil {
+				die("writ-hook: %v", err)
+			}
+			if os.Args[1] == "receipts" && !ok {
+				os.Exit(1)
+			}
+			return
+		}
+	}
 	switch os.Args[1] {
+	case "serve":
+		fs := flag.NewFlagSet("serve", flag.ExitOnError)
+		socket := fs.String("socket", "", "Unix socket to listen on; the hook commands find it through WRIT_HOOK_SOCKET")
+		mode := fs.Uint("mode", 0o666, "permission of the socket file, which the Claude Code user must be able to connect to")
+		_ = fs.Parse(os.Args[2:])
+		if *socket == "" {
+			die("writ-hook serve: -socket is required")
+		}
+		err = e.serve(*socket, os.FileMode(*mode), func() { fmt.Fprintln(os.Stderr, "writ-hook gate listening on", *socket) })
 	case "init":
 		err = e.initKeys(os.Stdout)
 	case "grant":
@@ -442,10 +466,12 @@ func (e *env) pre(h *hookInput) (any, error) {
 
 func (e *env) admit(h *hookInput) (any, error) {
 	if !toolUseID.MatchString(h.ToolUseID) {
+		e.auditRefusal(h, "claude/no_tool_use_id")
 		return deny("the hook input has no usable tool_use_id"), nil
 	}
 	args, why := e.args(h.ToolName, h.ToolInput)
 	if why != "" {
+		e.auditRefusal(h, adapterCode(why))
 		return deny(why), nil
 	}
 	unlock, err := e.lock()
@@ -526,6 +552,35 @@ func explain(code, tool string, grant *writ.Writ, args map[string]any) string {
 		return code
 	}
 	return code + ": " + why
+}
+
+// auditRefusal records a call this program refuses before it reaches the
+// executor, such as one that names Writ's own keys, so the audit record holds
+// every refusal (spec 9.3). The call is refused whether or not this lands.
+func (e *env) auditRefusal(h *hookInput, code string) {
+	unlock, err := e.lock()
+	if err != nil {
+		return
+	}
+	defer unlock()
+	al, err := exec.OpenAuditLog(e.path("audit.jsonl"))
+	if err != nil {
+		return
+	}
+	defer al.Close()
+	_ = al.Record(exec.AuditEntry{At: e.now(), Kind: "call", Op: "claude/" + h.ToolName, Outcome: "rejected", Reason: code})
+}
+
+func adapterCode(why string) string {
+	switch {
+	case strings.Contains(why, "Writ's own keys"):
+		return "claude/protected_state"
+	case strings.Contains(why, "not a clean path"):
+		return "claude/unclean_path"
+	case strings.Contains(why, `own "tool" member`):
+		return "claude/tool_member"
+	}
+	return "claude/unreadable_input"
 }
 
 func (e *env) pendingPath(toolUse string) string {
