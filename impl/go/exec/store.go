@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"writproto/wire"
+	"writproto/writ"
 )
 
 // Record is a call-store entry (spec section 9).
@@ -32,8 +33,12 @@ type Record struct {
 type tallyRec struct {
 	Tally wire.Object `json:"tally"`
 	Chain []string    `json:"chain"` // writ identities root to leaf
-	Res   any         `json:"res,omitempty"`
-	Keep  int64       `json:"keep"`
+	// Iss is the issuer of each writ in Chain, so an ack of a key-wide
+	// revoke can list the tallies under that key (spec 9.4). Nil in a record
+	// written before acks existed.
+	Iss  []string `json:"iss,omitempty"`
+	Res  any      `json:"res,omitempty"`
+	Keep int64    `json:"keep"`
 	// Undo state for a reversible tally (spec 8.1). Undoing is the call key
 	// of a reversal in progress, persisted before the reversal runs, so a
 	// crash mid-reversal is never mistaken for "nothing happened". Undone is
@@ -284,6 +289,45 @@ func (s *FileStore) pendingRecords() []*Record {
 		}
 	}
 	return out
+}
+
+// revokeView returns, in one read, what an answer to a revoke of writID (or,
+// when writID is "*", of every writ iss issued) is built from: every pending
+// call record, and for the ack's held list every tally in the tally store
+// under the revoked writ with the call it answers (spec 9.1, 9.4). One read
+// under one lock means a call that finishes concurrently is seen either
+// pending or held, never neither. A record from before acks existed carries
+// no issuers and is listed under every key-wide revoke: an extra entry in
+// held accounts only for a tally that exists, so it can hide nothing.
+func (s *FileStore) revokeView(writID, iss string) ([]*Record, []writ.AckHeld) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var pending []*Record
+	for _, rec := range s.Calls {
+		if rec.Tally == nil && rec.Call != nil {
+			c := *rec
+			pending = append(pending, &c)
+		}
+	}
+	var held []writ.AckHeld
+	for tid, r := range s.Tallies {
+		under := false
+		if writID == "*" {
+			under = r.Iss == nil
+			for _, k := range r.Iss {
+				under = under || k == iss
+			}
+		} else {
+			for _, id := range r.Chain {
+				under = under || id == writID
+			}
+		}
+		if under {
+			call, _ := r.Tally["call"].(string)
+			held = append(held, writ.AckHeld{Call: call, Tally: tid})
+		}
+	}
+	return pending, held
 }
 
 // record returns a copy of the record at key, pending or final, or nil.

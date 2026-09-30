@@ -1,5 +1,5 @@
 // Package writ implements the Writ protocol v0.1 objects: writ, call, tally,
-// revoke, their parsing, chain attenuation, tally-tree verification, and
+// revoke, ack, their parsing, chain attenuation, tally-tree verification, and
 // issuance. It depends only on the jcs, keys, bound, and wire packages.
 package writ
 
@@ -37,6 +37,7 @@ var known = map[string]map[string]bool{
 	"call":   set("v", "typ", "id", "chain", "from", "op", "args", "crit", "sig"),
 	"tally":  set("v", "typ", "call", "writ", "op", "acc", "st", "err", "out", "used", "rev", "sub", "wrt", "crit", "sig"),
 	"revoke": set("v", "typ", "writ", "iss", "chain", "crit", "sig"),
+	"ack":    set("v", "typ", "revoke", "iss", "rcv", "out", "crit", "sig"),
 }
 
 func set(names ...string) map[string]bool {
@@ -171,6 +172,7 @@ var binaryMembers = map[string][]string{
 	"call":   {"id", "sig"},
 	"tally":  {"call", "writ", "out", "sig"},
 	"revoke": {"writ", "sig"},
+	"ack":    {"revoke", "out", "sig"},
 }
 
 // checkBinary runs the rule 5 part of spec 6.1 step 2: every binary member of

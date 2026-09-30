@@ -564,6 +564,22 @@ func main() {
 		b.call(now+30, call(B, []*writ.Writ{v1, v2}, "travel/y", map[string]any{}), ok(map[string]any{"n": 1}), "ok", "a writ A issued separately is untouched")
 		b.write()
 	}
+	// Added 2026-09-30: the ack of a revoke (section 9.4). Its held list is
+	// every tally in the tally store under the revoked writ, a standing
+	// call's included, and its open list every call its answer stops.
+	{
+		b := scenario("an ack holds what finished and lists what runs", A)
+		w1, w2 := plainChain("travel")
+		ch := []*writ.Writ{w1, w2}
+		b.call(now+10, call(B, ch, "travel/a", map[string]any{}), ok(map[string]any{"n": 1}), "ok", "finished before the revoke, so held")
+		b.call(now+11, call(B, ch, "sys/tallies", map[string]any{"writ": w2.ID}), nil, "ok with 1", "a standing call's tally is in the tally store too, so held")
+		kr := call(B, ch, "travel/b", map[string]any{})
+		b.call(now+12, kr, &conformance.App{Hold: true}, "inflight", "running when the revoke arrives, so open")
+		b.revoke(now+20, must(writ.NewRevoke(A, []*writ.Writ{w1})).Raw, "tallies:1", "the ack holds two tallies and lists one open call")
+		b.finish(kr, &conformance.App{St: "canceled", Code: "revoked"}, true, "canceled:revoked", "the open call was told to stop, and stopped")
+		b.call(now+30, call(B, ch, "travel/c", map[string]any{}), nil, "failed:revoked", "new work is refused, so no later tally can contradict the ack")
+		b.write()
+	}
 
 	fmt.Printf("wrote %d scenarios to %s\n", count, dir)
 }

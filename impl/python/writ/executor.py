@@ -221,6 +221,7 @@ class Executor:
         self._running = {}      # call identity -> Operation
         self._waiting = {}      # target tally identity -> [Operation], queued undos
         self._revoked_mem = []  # revokes the revoke store could not persist
+        self._kept = {}         # revoke identity -> {ack identity: {"ack", "res"}} (section 9.4)
         self.stores = Stores(store_dir)
         self.resolved_at_open = self._recover()
 
@@ -604,7 +605,7 @@ class Executor:
         except OSError:
             return {"tally": self._pending_tally(rec)}
         try:
-            self.stores.tallies.add(O.identity(tally), tally, rec["chain"])
+            self.stores.tallies.add(O.identity(tally), tally, rec["chain"], rec["iss"])
         except OSError:
             pass  # re-added from the call store at the next open
         return self._stored_answer(final)
@@ -693,9 +694,11 @@ class Executor:
 
     def receive_revoke(self, data, peer=None):
         """Section 9.1: verify, record, and answer with the tallies of every
-        forward call under the revoked writ that is not yet final. ``peer``
-        is recorded in the audit record only; any key may revoke its own
-        writs (section 7.6)."""
+        forward call under the revoked writ that is not yet final, this
+        executor's ack of the revoke and its body (section 9.4), and in fwd
+        the acks it keeps from executors it forwarded the revoke to.
+        ``peer`` is recorded in the audit record only; any key may revoke
+        its own writs (section 7.6)."""
         answer = self._receive_revoke(data)
         if self.audit is not None:
             entry = {"at": self.now(), "kind": "revoke", "peer": peer, "outcome": "recorded"}
@@ -747,15 +750,68 @@ class Executor:
                 if op is not None:
                     op._signal()
                 tallies.append(self._pending_tally(rec))
+            # Section 9.4: rcv, held, and open are true of this one moment,
+            # under the lock that admission also holds, so every forward
+            # call under the revoked writ is either refused later or here.
+            rcv = self.now()
+            held = self._held_under(r)
+            open_calls = [rec["call"] for rec in hit]
             holders = self._issued_under(r) if self.forward_revoke is not None else []
         for holder in holders:
             try:
-                self.forward_revoke(data, holder)
+                answer = self.forward_revoke(data, holder)
             except Exception:  # noqa: BLE001, forwarding is a SHOULD and never fails the revoke
-                pass
+                continue
+            if isinstance(answer, dict) and "ack" in answer:
+                self.keep_acks(r, answer)
         if unsaved:
+            # No ack: it would say the revoke was recorded, and it is not durable.
             return {"error": STORE_WRITE_FAILED}
-        return {"tallies": tallies}
+        body = I.ack_body(held, open_calls)
+        answer = {"tallies": tallies, "ack": I.make_ack(self.key, O.identity(r), rcv, body), "res": body}
+        fwd = self._kept_acks(O.identity(r))
+        if fwd:
+            answer["fwd"] = fwd
+        return answer
+
+    def _held_under(self, r):
+        """Section 9.4 held, as (call, tally) pairs: every tally in the
+        tally store under the revoked writ, and any final call record whose
+        tally the tally store missed because its write failed (_recover
+        repairs that at the next open; until then the call store has it)."""
+        held = self.stores.tallies.held_under(r["writ"], r["iss"])
+        for _, rec in self.stores.calls.items():
+            if rec["state"] != FINAL:
+                continue
+            under = r["iss"] in rec["iss"] if r["writ"] == "*" else r["writ"] in rec["chain"]
+            if under:
+                held.setdefault(O.identity(rec["tally"]), rec["call"])
+        return [(call, tid) for tid, call in held.items()]
+
+    def keep_acks(self, revoke, answer):
+        """Section 9.4: keep the acks in ``answer``, what an executor below
+        returned when this one forwarded ``revoke`` to it, fwd included, so
+        later answers to the revoke relay them. Keeps only an ack that
+        passes section 9.4 steps 2 to 4 for the revoke; returns the first
+        WritError it refused, or None."""
+        pairs = [{"ack": answer.get("ack"), "res": answer.get("res")}] + list(answer.get("fwd") or [])
+        first = None
+        rid = O.identity(revoke)
+        for p in pairs:
+            try:
+                a = V.verify_ack(revoke, p.get("ack"), p.get("res"))
+            except WritError as e:
+                first = first or e
+                continue
+            with self._lock:
+                self._kept.setdefault(rid, {})[O.identity(a)] = {"ack": a, "res": p.get("res")}
+        return first
+
+    def _kept_acks(self, revoke_id):
+        """Kept acks for a revoke, in ascending order of ack identity (section 10)."""
+        with self._lock:
+            kept = self._kept.get(revoke_id, {})
+            return [kept[k] for k in sorted(kept, key=lambda k: k.encode("ascii"))]
 
     def _issued_under(self, r):
         """Holders of every writ this executor issued under the revoked writ,
@@ -796,7 +852,7 @@ class Executor:
             if rec["state"] == FINAL:
                 tid = O.identity(rec["tally"])
                 if not tallies.holds(tid):
-                    tallies.add(tid, rec["tally"], rec["chain"])
+                    tallies.add(tid, rec["tally"], rec["chain"], rec["iss"])
         # A reversal that began and never reported has an unknown outcome.
         self.stores.reversals.mark_unknown()
         n = 0

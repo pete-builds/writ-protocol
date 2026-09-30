@@ -45,8 +45,10 @@ class HTTPBindingTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["tally"]["st"], "ok")
         self.assertTrue(V.verify_tally(self.w, call, body["tally"], res=body["res"]).ok)
-        status, body = httpbind.post(self.url + "/writ", issue.make_revoke(A, self.w, chain=[self.w]))
-        self.assertEqual((status, body), (200, {"tallies": []}))
+        rv = issue.make_revoke(A, self.w, chain=[self.w])
+        status, body = httpbind.post(self.url + "/writ", rv)
+        self.assertEqual((status, body["tallies"]), (200, []))
+        V.verify_ack(V.verify_revoke(rv), body["ack"], body["res"])  # section 9.4, over the wire
         status, body = httpbind.post(self.url + "/writ", issue.make_call(A, [self.w], "tools/y", {}))
         self.assertEqual((status, body["tally"]["err"]), (200, {"code": "revoked"}))
 

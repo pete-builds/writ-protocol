@@ -122,7 +122,7 @@ func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
 			}
 			respond(w, rep)
 		case "revoke":
-			tallies, rej := e.RevokeContext(ctx, obj)
+			rep, rej := e.RevokeContext(ctx, obj)
 			if rej != nil && rej.Code == writ.Reason(exec.StoreUnavailable) {
 				fail(w, http.StatusServiceUnavailable, rej.Code)
 				return
@@ -131,10 +131,7 @@ func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
 				reject(w, rej.Code)
 				return
 			}
-			if tallies == nil {
-				tallies = []wire.Object{}
-			}
-			respond(w, map[string]any{"tallies": tallies})
+			respond(w, rep)
 		default:
 			unreadable(writ.WrongType)
 		}
@@ -273,17 +270,28 @@ func (c *Client) Call(ctx context.Context, endpoint string, k *writ.Call) (wire.
 	return tally, rep["res"], nil
 }
 
-// Revoke sends a revoke and returns the affected pending tallies.
-func (c *Client) Revoke(ctx context.Context, endpoint string, r *writ.Revoke) ([]wire.Object, error) {
+// Revoke sends a revoke and returns the answer: the tallies of the forward
+// calls it stopped, the executor's ack with its body, and any acks it relays
+// (spec 10). The acks are returned as received; writ.VerifyAck checks one.
+func (c *Client) Revoke(ctx context.Context, endpoint string, r *writ.Revoke) (*exec.RevokeReply, error) {
 	rep, err := c.post(ctx, endpoint, r.Raw)
 	if err != nil {
 		return nil, err
 	}
-	var out []wire.Object
+	out := &exec.RevokeReply{Tallies: []wire.Object{}, Res: rep["res"]}
 	if arr, ok := rep["tallies"].([]any); ok {
 		for _, t := range arr {
 			if o, ok := t.(map[string]any); ok {
-				out = append(out, o)
+				out.Tallies = append(out.Tallies, o)
+			}
+		}
+	}
+	out.Ack, _ = rep["ack"].(map[string]any)
+	if arr, ok := rep["fwd"].([]any); ok {
+		for _, f := range arr {
+			if m, ok := f.(map[string]any); ok {
+				a, _ := m["ack"].(map[string]any)
+				out.Fwd = append(out.Fwd, exec.AckPair{Ack: a, Res: m["res"]})
 			}
 		}
 	}

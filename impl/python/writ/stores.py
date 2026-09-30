@@ -215,9 +215,29 @@ class TallyStore(FileStore):
         for w in chain:
             self._index.setdefault(w, set()).add(tid)
 
-    def add(self, tally_id, tally, chain):
-        self.put(tally_id, {"tally": tally, "chain": list(chain)})
+    def add(self, tally_id, tally, chain, iss=None):
+        """``iss`` is the issuer of each writ in ``chain``, so an ack of a
+        key-wide revoke can list the tallies under that key (section 9.4)."""
+        rec = {"tally": tally, "chain": list(chain)}
+        if iss is not None:
+            rec["iss"] = list(iss)
+        self.put(tally_id, rec)
         self._add_index(tally_id, chain)
+
+    def held_under(self, writ_id, key=None):
+        """Section 9.4 held: {tally identity: call identity} for every tally
+        under writ_id or, when writ_id is "*", under a writ ``key`` issued.
+        A record written before issuers were kept is listed under every
+        key-wide revoke: an extra entry accounts only for a tally that
+        exists, so it can hide nothing."""
+        if writ_id != "*":
+            return {tid: self.tally(tid)["call"] for tid in self._index.get(writ_id, ())
+                    if self.tally(tid) is not None}
+        held = {}
+        for tid, rec in self.items():
+            if "iss" not in rec or key in rec["iss"]:
+                held[tid] = rec["tally"]["call"]
+        return held
 
     def holds(self, tally_id):
         return tally_id in self._ids

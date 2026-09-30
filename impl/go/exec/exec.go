@@ -57,13 +57,18 @@ type Executor struct {
 	// executor answers, refusals included (spec 9.3). No check consults it.
 	Audit func(AuditEntry)
 
-	// mu guards inflight and undoLocks. Execute also holds it from a forward
+	// mu guards inflight, undoLocks, and kept. Execute also holds it from a forward
 	// call's revocation check until the call is registered in flight, and
 	// Revoke while it records a revoke and collects what is in flight, so the
 	// two are atomic with respect to each other (spec 7).
 	mu        sync.Mutex
 	inflight  map[string]inflight // call identity
 	undoLocks map[string]*undoRef // target tally identity
+	// kept holds, per revoke identity, the acks executors below returned
+	// when this one forwarded the revoke, by ack identity (spec 9.4). It is
+	// held in memory: a revoke forwarded again after a restart is answered
+	// with fresh acks.
+	kept map[string]map[string]AckPair
 
 	// afterRevokeCheck, when set by a test, runs just after step 7 with mu
 	// held, which is the window a revoke must not slip through.
@@ -117,11 +122,19 @@ func (e *Executor) Recover() int {
 		final := *r
 		final.Tally, final.Final = t.Raw, true
 		final.Wrt, final.Sub = nil, nil // the final tally carries them now
-		if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: chainIDs(k), Keep: k.Leaf().Exp}, &final) == nil {
+		if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: chainIDs(k), Iss: chainIssuers(k), Keep: k.Leaf().Exp}, &final) == nil {
 			n++
 		}
 	}
 	return n
+}
+
+func chainIssuers(k *writ.Call) []string {
+	iss := make([]string, 0, len(k.Chain))
+	for _, w := range k.Chain {
+		iss = append(iss, w.Iss)
+	}
+	return iss
 }
 
 func chainIDs(k *writ.Call) []string {
@@ -356,7 +369,7 @@ func (e *Executor) seal(k *writ.Call, acc int64, pending *Record, r Result) (*Re
 	}
 	final := *pending
 	final.Tally, final.Final = t.Raw, true
-	if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: ids, Res: res, Keep: keep}, &final) != nil {
+	if e.Store.finish(t.ID, &tallyRec{Tally: t.Raw, Chain: ids, Iss: chainIssuers(k), Res: res, Keep: keep}, &final) != nil {
 		// The operation ran but its outcome is not durable. Claiming it
 		// would be a lie after a restart, when the record resolves to
 		// unknown_outcome; a pending tally is the true statement.
@@ -488,9 +501,26 @@ func (e *Executor) tallies(k *writ.Call) Result {
 	return Result{St: "ok", Res: map[string]any{"tallies": arr}}
 }
 
-// revoke runs spec 9.1 on a decoded revoke object and returns the tallies of
-// affected non-final forward calls.
-func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
+// RevokeReply is the HTTP-binding response body for a revoke (spec 10): the
+// tallies of the forward calls it stopped, this executor's ack of the revoke
+// with its body (spec 9.4), and the acks it relays from executors below it.
+type RevokeReply struct {
+	Tallies []wire.Object `json:"tallies"`
+	Ack     wire.Object   `json:"ack"`
+	Res     any           `json:"res"`
+	Fwd     []AckPair     `json:"fwd,omitempty"`
+}
+
+// AckPair is an ack with its body.
+type AckPair struct {
+	Ack wire.Object `json:"ack"`
+	Res any         `json:"res"`
+}
+
+// revoke runs spec 9.1 on a decoded revoke object: it records the revoke,
+// stops the forward calls under it, and answers with their tallies and an
+// ack that says when it was recorded and which work it held (spec 9.4).
+func (e *Executor) revoke(obj wire.Object) (*RevokeReply, *writ.Error) {
 	r, err := writ.ParseRevoke(obj)
 	if err != nil {
 		return nil, err.(*writ.Error)
@@ -500,7 +530,8 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	}
 	// Record and collect under mu, which Execute holds from a forward call's
 	// revocation check until the call is in flight (spec 7): every forward
-	// call is then either refused at step 7 or collected here.
+	// call is then either refused at step 7 or collected here, and the ack's
+	// rcv, held, and open are true of one moment.
 	var hits []inflight
 	e.mu.Lock()
 	// A revoke MUST survive restart (spec 9). One that cannot be written is
@@ -513,6 +544,7 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	} else {
 		unsaved = e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
 	}
+	rcv := e.Now()
 	// Cancel in-flight forward work under the revoked writ and answer with
 	// pending tallies, in ascending order of call identity (spec 9.1). A
 	// standing call in flight is left alone: a revoke ends forward
@@ -532,7 +564,8 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	}
 	// A call Begin admitted runs outside this executor: it is answered as
 	// pending, which is true, and cannot be stopped from here (spec 9.1).
-	for _, rec := range e.Store.pendingRecords() {
+	pending, held := e.Store.revokeView(r.Writ, r.Iss)
+	for _, rec := range pending {
 		k, err := writ.ParseCall(rec.Call)
 		if err != nil || k.Standing() || !under(k) {
 			continue
@@ -543,20 +576,76 @@ func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	}
 	e.mu.Unlock()
 	sort.Slice(hits, func(i, j int) bool { return hits[i].call.ID < hits[j].call.ID })
-	out := []wire.Object{}
+	rep := &RevokeReply{Tallies: []wire.Object{}}
+	open := []string{}
 	for _, f := range hits {
 		if f.cancel != nil {
 			f.cancel()
 		}
-		out = append(out, e.pendingReply(f.call, f.acc).Tally)
+		rep.Tallies = append(rep.Tallies, e.pendingReply(f.call, f.acc).Tally)
+		open = append(open, f.call.ID)
 	}
 	if e.OnRevoke != nil {
 		e.OnRevoke(r)
 	}
 	if unsaved != nil {
+		// No ack: it would say the revoke was recorded, and it is not durable.
 		return nil, &writ.Error{Code: writ.Reason(StoreUnavailable), Msg: unsaved.Error()}
 	}
-	return out, nil
+	body := writ.AckBody(held, open)
+	a, aerr := writ.NewAck(e.ID, r.ID, rcv, body)
+	if aerr != nil {
+		return nil, &writ.Error{Code: writ.Malformed, Msg: "ack: " + aerr.Error()}
+	}
+	rep.Ack, rep.Res = a.Raw, body
+	rep.Fwd = e.keptAcks(r.ID)
+	return rep, nil
+}
+
+// KeepAcks keeps the acks in rep, the answer an executor below returned when
+// this executor forwarded the revoke r to it, those it relays in fwd included,
+// so every later answer to r relays them in its own fwd (spec 9.4). It keeps
+// only an ack that passes spec 9.4 steps 2 to 4 for r, and reports the first
+// it refused.
+func (e *Executor) KeepAcks(r *writ.Revoke, rep *RevokeReply) error {
+	pairs := append([]AckPair{{Ack: rep.Ack, Res: rep.Res}}, rep.Fwd...)
+	var first error
+	for _, p := range pairs {
+		a, err := writ.VerifyAck(r, p.Ack, p.Res)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		e.mu.Lock()
+		if e.kept == nil {
+			e.kept = map[string]map[string]AckPair{}
+		}
+		if e.kept[r.ID] == nil {
+			e.kept[r.ID] = map[string]AckPair{}
+		}
+		e.kept[r.ID][a.ID] = p
+		e.mu.Unlock()
+	}
+	return first
+}
+
+// keptAcks returns the acks kept for a revoke, in ascending order of ack
+// identity (spec 10), or nil.
+func (e *Executor) keptAcks(revokeID string) []AckPair {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ids := make([]string, 0, len(e.kept[revokeID]))
+	for id := range e.kept[revokeID] {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []AckPair
+	for _, id := range ids {
+		out = append(out, e.kept[revokeID][id])
+	}
+	return out
 }
 
 // Issued durably adds w, a writ this executor issued under the leaf of the

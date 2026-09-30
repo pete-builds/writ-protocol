@@ -102,14 +102,11 @@ func answer(ctx context.Context, e *exec.Executor, claimed, outPath string) {
 			reply = m
 		}
 	case obj["typ"] == "revoke":
-		tallies, rej := e.Revoke(obj)
+		rep, rej := e.Revoke(obj)
 		if rej != nil {
 			reply = map[string]any{"error": string(rej.Code)}
 		} else {
-			if tallies == nil {
-				tallies = []wire.Object{}
-			}
-			reply = map[string]any{"tallies": tallies}
+			reply = rep
 		}
 	default:
 		reply = map[string]any{"error": string(writ.WrongType)}

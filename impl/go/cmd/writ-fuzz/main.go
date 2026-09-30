@@ -48,7 +48,12 @@ var (
 		resC, resB              any
 		rv1, rv2, rvStar        wire.Object
 		exps                    []int64
-		boundsSeen              []any
+		// Section 9.4: C's ack of rv1, and tallies for check_ack to judge.
+		ack          wire.Object
+		ackBody      map[string]any
+		ackTallies   []wire.Object
+		kOpen, kLate *writ.Call
+		boundsSeen   []any
 	}
 )
 
@@ -141,6 +146,18 @@ func setup() {
 	base.rv2 = must(writ.NewRevoke(B, []*writ.Writ{base.w1, base.w2})).Raw
 	base.rvStar = must(writ.NewRevoke(A, nil)).Raw
 	base.exps = []int64{now, base.w2.Exp - 1, base.w2.Exp, base.w1.Exp, base.v3.Exp, now + 1790}
+	base.kOpen = must(writ.NewCall(B, []*writ.Writ{base.w1, base.w2}, "travel/charge", args))
+	base.kLate = must(writ.NewCall(B, []*writ.Writ{base.w1, base.w2}, "travel/charge", args))
+	rv1ID, _ := wire.Hash(base.rv1)
+	base.ackBody = writ.AckBody([]writ.AckHeld{{Call: base.kFwd.ID, Tally: tC.ID}}, []string{base.kOpen.ID})
+	base.ack = must(writ.NewAck(C, rv1ID, now+20, base.ackBody)).Raw
+	tally := func(k *writ.Call, acc int64, st, code string) wire.Object {
+		t, _, _ := writ.NewTally(C, writ.TallyInput{Call: k, Acc: acc, St: st, ErrCode: code})
+		return t.Raw
+	}
+	base.ackTallies = []wire.Object{base.tC, tally(base.kFwd, now+15, "pending", "pending"), tally(base.kOpen, now+18, "pending", "pending"),
+		tally(base.kLate, now+30, "ok", ""), tally(base.kLate, now+5, "ok", ""), tally(base.kLate, now+30, "failed", "revoked"),
+		tally(base.kTal, now+30, "ok", "")}
 	for _, w := range []*writ.Writ{base.w1, base.w2, base.v3} {
 		for _, b := range w.Raw["bnd"].(map[string]any) {
 			base.boundsSeen = append(base.boundsSeen, b)
@@ -564,7 +581,7 @@ func resign(o any, fallback *keys.Identity) {
 	}
 	signer := fallback
 	typ, _ := m["typ"].(string)
-	member := map[string]string{"writ": "iss", "call": "from", "revoke": "iss"}[typ]
+	member := map[string]string{"writ": "iss", "call": "from", "revoke": "iss", "ack": "iss"}[typ]
 	if s, ok := m[member].(string); ok && ids[s] != nil {
 		signer = ids[s]
 	}
@@ -722,7 +739,9 @@ func maybeNow(p float64) *int64 {
 }
 
 func gen() vec {
-	switch k := r.IntN(100); {
+	switch k := r.IntN(108); {
+	case k >= 100:
+		return genCheckAck()
 	case k < 14:
 		raw, d := rawText()
 		return vec{op: "canonicalize", input: map[string]any{"raw": raw}, desc: []string{d}}
@@ -885,6 +904,92 @@ func gen() vec {
 		}
 		return vec{op: "verify_revoke", input: map[string]any{"revoke": o}, desc: desc}
 	}
+}
+
+// genCheckAck mutates one input of a section 9.4 check: the revoke, the ack,
+// its body, the chain, or the tally. A changed body is usually re-committed
+// by re-signing the ack over it, so the input reaches steps 5 to 7.
+func genCheckAck() vec {
+	ack := clone(base.ack).(map[string]any)
+	var body any = clone(base.ackBody)
+	chain := chainOf(base.w1, base.w2)
+	rv := clone(pick(base.rv1, base.rv1, base.rv1, base.rv2, base.rvStar))
+	tally := clone(pick(base.ackTallies...))
+	var desc []string
+	recommit := func() {
+		if h, err := writ.HashResult(body); err == nil {
+			ack["out"] = h
+		}
+		resign(ack, C)
+	}
+	switch pick("ack", "ack", "body", "body", "chain", "tally", "tally", "revoke", "none") {
+	case "ack":
+		if chance(0.5) {
+			member := pick("revoke", "iss", "rcv", "out", "typ", "v")
+			switch member {
+			case "rcv":
+				ack["rcv"] = pick[any](n(now), n(now+1799), n(now+1800), n(now+40), "soon")
+			case "iss":
+				ack["iss"] = pick(C.DID(), D.DID(), B.DID(), "did:key:z6MkBad")
+			default:
+				ack[member] = interesting()
+			}
+			desc = []string{"ack." + member}
+		} else {
+			var v any
+			v, desc = mutateN(ack, false)
+			ack, _ = v.(map[string]any)
+		}
+		if chance(0.8) {
+			resign(ack, C)
+		}
+	case "body":
+		b, _ := body.(map[string]any)
+		switch r.IntN(4) {
+		case 0:
+			b["open"] = append(b["open"].([]any), pick[any](base.kLate.ID, base.kFwd.ID, 7))
+			desc = []string{"body.open gains an entry"}
+		case 1:
+			b["held"] = []any{}
+			desc = []string{"body.held emptied"}
+		case 2:
+			b["held"] = append(b["held"].([]any), map[string]any{"call": base.kLate.ID, "tally": pick[any](someHash(), nil)})
+			desc = []string{"body.held gains a call"}
+		default:
+			var v any
+			v, desc = mutateN(b, false)
+			body = v
+		}
+		if chance(0.7) {
+			recommit()
+			desc = append(desc, "ack re-signed over it")
+		}
+	case "chain":
+		chain, desc = mutateChain(chain)
+	case "tally":
+		var v any
+		v, desc = mutateN(tally, false)
+		tally = v
+		if chance(0.8) {
+			resign(tally, C)
+		}
+	case "revoke":
+		var v any
+		v, desc = mutateN(rv, false)
+		rv = v
+		if chance(0.8) {
+			resign(rv, A)
+		}
+	default:
+		desc = []string{"unmutated"}
+	}
+	in := map[string]any{"revoke": rv, "ack": ack, "chain": chain, "tally": tally}
+	if !chance(0.05) {
+		in["res"] = body
+	} else {
+		desc = append(desc, "no body")
+	}
+	return vec{op: "check_ack", input: in, desc: desc}
 }
 
 func main() {

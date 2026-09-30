@@ -1,0 +1,226 @@
+{
+ "expect": "accept",
+ "input": {
+  "ack": {
+   "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+   "out": "Ci_b3v2PN8UX_APZhAd__zYl1vB-r1fZ_oTcyyKvxuw",
+   "rcv": 1788400010,
+   "revoke": "3VSlbwdtPzgFg6oZFzWlFnxuoWCQamoq4L3uOuVZCdU",
+   "sig": "H6eHYICz9e6sCFOMA6qIF-63eNbsoVjwdSTK_UN3XGTbrKypzVqCp-Yf41YzShASj4pe8M9CrE9DhHtMXdn3AQ",
+   "typ": "ack",
+   "v": 1
+  },
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "amount": {
+      "t": "max",
+      "v": 60000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+    "prv": null,
+    "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+    "typ": "writ",
+    "v": 1
+   },
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 58900
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261015
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788401800,
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+    "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+    "sig": "yVka3FzI2TbD42_qnZgVOit6pshRr4xfpnsn83jpNOFLAxX9u89KDUcluGExTD2UUXrS2Ugnm6tGRzsAxQSqDQ",
+    "typ": "writ",
+    "v": 1
+   }
+  ],
+  "res": {
+   "held": [
+    {
+     "call": "I3cezgDhA39dEE8XyVbN6hXTgqJuPFjMZKF2R0RPM9Q",
+     "tally": "CZ-nPlK_iG7spIPZYYPbxbiGMsr-aP9_mMPwLGPchmE"
+    }
+   ],
+   "open": [
+    "HHYcRbBx0Ut6dzzMvoLU2Sm7Aq-9UgUvHPYO19vv2sg"
+   ]
+  },
+  "revoke": {
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    },
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDA5Mw",
+     "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+     "sig": "yKNNPyaBAmWdxFL5rtxoWuGObBMep8MKThkC_Fdhh6AmHI_gm8Htvy_pZp40NCl2WaenwXf-ETnBhR5HDSNACw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "sig": "X8MamZaug1u3G2wcNYK_Yvd62IuskCu-qJLNmZyqSjQ9xD49ympZBwAi_yAXAUjA2dG7CnFrR5G5dlABqFGwAA",
+   "typ": "revoke",
+   "v": 1,
+   "writ": "xwmpR9tMC-cpVvaFOOv-DVBtYOxGWDD7n42i6eFp2CM"
+  },
+  "tally": {
+   "acc": 1788400020,
+   "call": "-oXAZY4ipu4b91jtE3yaW4nwyH96aVizycK_HnRukRA",
+   "err": null,
+   "op": "travel/charge",
+   "out": null,
+   "rev": null,
+   "sig": "22IWLv1Qz4fm_3uT-eKJbT6apkbgM1ad6gdkum-Ij3Myu2O_T3WT30Jjz_ywbAEJbFb0xn4MJNgltuulnUCkAA",
+   "st": "ok",
+   "sub": [],
+   "typ": "tally",
+   "used": {},
+   "v": 1,
+   "writ": "Wjxqd7hNCOyVKynHaMFi9AeTkZTsgY8xB7pUfW3UwHA",
+   "wrt": []
+  }
+ },
+ "name": "a revoke of a sibling writ does not cover the chain",
+ "op": "check_ack"
+}

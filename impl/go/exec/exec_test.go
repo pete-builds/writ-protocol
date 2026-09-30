@@ -159,8 +159,8 @@ func TestRevokeCancelsInflightAndRestartRecovers(t *testing.T) {
 	<-started
 	rv, _ := writ.NewRevoke(A, []*writ.Writ{w1})
 	pend, rej := e.Revoke(rv.Raw)
-	if rej != nil || len(pend) != 1 {
-		t.Fatalf("revoke: %v pending=%d", rej, len(pend))
+	if rej != nil || len(pend.Tallies) != 1 {
+		t.Fatalf("revoke: %v pending=%v", rej, pend)
 	}
 	rep := <-done
 	_, tl, _ := writ.VerifyTally(w2, k, rep.Tally, nil)

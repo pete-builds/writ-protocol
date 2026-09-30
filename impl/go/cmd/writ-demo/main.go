@@ -205,13 +205,36 @@ func main() {
 	time.Sleep(1 * time.Second)
 	rv, _ := writ.NewRevoke(A, []*writ.Writ{w1b})
 	save("revoke_1b", rv.Raw)
-	pending, err := client.Revoke(ctx, *bURL+bwk.Endpoint, rv)
-	expect(err == nil && len(pending) == 1, "B answered the revoke with %d pending tally(ies)", len(pending))
+	rrep, err := client.Revoke(ctx, *bURL+bwk.Endpoint, rv)
+	if err != nil {
+		panic(err)
+	}
+	expect(len(rrep.Tallies) == 1, "B answered the revoke with %d pending tally(ies)", len(rrep.Tallies))
+	if bAck, aerr := writ.VerifyAck(rv, rrep.Ack, rrep.Res); aerr != nil {
+		expect(false, "B signed an ack of the revoke: %v", aerr)
+	} else {
+		expect(bAck.Iss == bwk.DID, "B signed an ack of the revoke, recorded at %d", bAck.Rcv)
+	}
+	save("ack_B", rrep.Ack)
+	expect(len(rrep.Fwd) == 1, "B relayed %d ack from the executor it forwarded to", len(rrep.Fwd))
+	if len(rrep.Fwd) > 0 {
+		cAck, cerr := writ.VerifyAck(rv, rrep.Fwd[0].Ack, rrep.Fwd[0].Res)
+		expect(cerr == nil && cAck.Iss == cwk.DID, "the relayed ack is C's own, signed by C: A holds proof the revoke reached C without calling C")
+		if cerr != nil {
+			line("     %v", cerr)
+		}
+		save("ack_C", rrep.Fwd[0].Ack)
+	}
 	rep := <-done
 	expect(rep.err == nil, "the in-flight call returned")
 	_, tcan, _ := writ.VerifyTally(w1b, kslow, rep.t, rep.res)
 	expect(tcan != nil && tcan.St == "canceled", "the in-flight call's final tally is st=%s", tcan.St)
 	save("tally_B_canceled", rep.t)
+	cerr := writ.CheckAck(rv.Raw, rrep.Ack, rrep.Res, []any{w1b.Raw}, rep.t)
+	expect(cerr == nil, "B's canceled tally is accounted for by B's ack: the call was in flight when the revoke was recorded")
+	if cerr != nil {
+		line("     %v", cerr)
+	}
 	k, _ = writ.NewCall(A, []*writ.Writ{w1b}, "travel/book", args)
 	try("a new call under the revoked writ", *bURL+bwk.Endpoint, k, w1b, writ.Revoked)
 

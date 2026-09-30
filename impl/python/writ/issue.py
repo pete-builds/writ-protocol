@@ -113,6 +113,22 @@ def make_revoke(key, target, chain=None):
     return O.verify_object(_sign(body, key), "revoke")
 
 
+def ack_body(held, open_calls):
+    """Section 9.4: the body an ack commits to. ``held`` is (call identity,
+    tally identity) pairs, listed in ascending order of call identity
+    compared as ASCII bytes; ``open_calls`` keeps the revoke answer's order."""
+    held = sorted(held, key=lambda p: p[0].encode("ascii"))
+    return {"held": [{"call": c, "tally": t} for c, t in held], "open": list(open_calls)}
+
+
+def make_ack(key, revoke_id, rcv, body):
+    """Sign an ack of the revoke whose identity is ``revoke_id``, recorded
+    at ``rcv``, committing to ``body`` (see ack_body)."""
+    ack = _sign({"v": 1, "typ": "ack", "revoke": revoke_id, "iss": key.did, "rcv": rcv,
+                 "out": O.hash_body(body)}, key)
+    return O.verify_object(ack, "ack")
+
+
 def to_bytes(obj):
     """Canonical bytes of an object, for sending or storing."""
     return canonicalize(obj)
