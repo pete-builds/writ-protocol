@@ -47,8 +47,11 @@ type Options struct {
 	// sections 7.6, 9.3, and 10).
 	PeerOf func(*http.Request) (string, bool)
 	// MTLS reads the peer and the keys it speaks for from the verified
-	// client certificate (ClientCert), ahead of PeerOf. The server's TLS
-	// configuration must require and verify client certificates.
+	// client certificate (ClientCert), and only from there: PeerOf is not
+	// consulted. A request without a verified certificate naming exactly one
+	// peer fails closed, every call over it refused as peer_mismatch before
+	// replay (exec.WithUnidentifiedPeer). The server's TLS configuration
+	// must require and verify client certificates.
 	MTLS bool
 	// PerMinute, when above zero, bounds the requests accepted from each
 	// peer, or from each remote host when there is no peer, and refuses the
@@ -69,9 +72,15 @@ func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
 	mux.HandleFunc("POST /writ", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		source := "host:" + remoteHost(r)
-		if p, keys, ok := ClientCert(r); o.MTLS && ok {
-			ctx = exec.WithAttestedKeys(exec.WithPeer(ctx, p), keys)
-			source = "peer:" + p
+		if o.MTLS {
+			if p, keys, ok := ClientCert(r); ok {
+				ctx = exec.WithAttestedKeys(exec.WithPeer(ctx, p), keys)
+				source = "peer:" + p
+			} else {
+				label := unidentifiedLabel(r)
+				ctx = exec.WithUnidentifiedPeer(ctx, label)
+				source = "peer:" + label
+			}
 		} else if peerOf != nil {
 			if p, ok := peerOf(r); ok {
 				ctx = exec.WithPeer(ctx, p)

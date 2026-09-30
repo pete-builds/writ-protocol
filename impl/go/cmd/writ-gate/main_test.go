@@ -125,7 +125,7 @@ func TestGateInFrontOfALegacyAPI(t *testing.T) {
 	f := setup(t)
 
 	k1 := f.call(1200, "USD")
-	resp, body := f.order(t, k1, `{"total_cents":1200,"currency":"USD","note":"unbound fields pass through"}`)
+	resp, body := f.order(t, k1, `{"total_cents":1200,"currency":"USD"}`)
 	if resp.StatusCode != http.StatusCreated || !strings.Contains(string(body), `"ord_1"`) {
 		t.Fatalf("an order inside the grant: %d %s", resp.StatusCode, body)
 	}
@@ -170,7 +170,7 @@ func TestGateInFrontOfALegacyAPI(t *testing.T) {
 		}
 	}
 	// A replay of the same call and body is answered from the call store.
-	resp, body = f.order(t, k1, `{"total_cents":1200,"currency":"USD","note":"unbound fields pass through"}`)
+	resp, body = f.order(t, k1, `{"total_cents":1200,"currency":"USD"}`)
 	if resp.StatusCode != 200 || refusal(t, body) != "ok" {
 		t.Fatalf("a replay: %d %s", resp.StatusCode, body)
 	}

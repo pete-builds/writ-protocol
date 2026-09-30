@@ -80,6 +80,14 @@ count store could not be written at section 7 steps 9 and 10 (section 9)."""
 OUTCOME_STATES = ("ok", "failed", "canceled")
 
 
+class UnidentifiedPeer(str):
+    """A peer the transport authenticated but cannot name, such as a verified
+    client certificate carrying no usable identity, under a label for the
+    audit record. It is not "no peer": no binding matches it, whatever
+    ``peers`` holds, so every call it delivers fails peer binding before
+    replay (section 7.6)."""
+
+
 def _max_names(writ):
     """Names of the writ's max bounds, in canonical order."""
     bnd = writ["bnd"]
@@ -230,7 +238,8 @@ class Executor:
     def receive_call(self, data, peer=None):
         """Section 7 for one call (bytes, text, or a parsed object). ``peer``
         is the identity the transport authenticated for the party that
-        delivered it, or None when the transport authenticated none."""
+        delivered it, an UnidentifiedPeer when it authenticated one it cannot
+        name, or None when it authenticated none."""
         with self._lock:
             answer, op = self._admit(data, peer)
         if op is None:
@@ -306,7 +315,8 @@ class Executor:
                 for i, w in zip(ids, writs):
                     if self._is_revoked(i, w["iss"]):
                         raise WritError("revoked", f"writ {i} is revoked")
-            if peer is not None and call["from"] not in self.peers.get(peer, ()):  # step 8
+            if peer is not None and (isinstance(peer, UnidentifiedPeer)  # step 8
+                                     or call["from"] not in self.peers.get(peer, ())):
                 raise WritError("peer_mismatch", "the authenticated peer is not bound to from")
             if standing:
                 self._check_standing(call, writs)
