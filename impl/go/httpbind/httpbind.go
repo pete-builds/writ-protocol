@@ -32,8 +32,16 @@ type WellKnown struct {
 // maxRequestBytes is the larger of the call and revoke limits of spec 1.6.
 const maxRequestBytes = max(writ.MaxCallBytes, writ.MaxRevokeBytes)
 
-// Handler serves an executor.
+// Handler serves an executor over a transport that authenticates no peer.
 func Handler(e *exec.Executor, wk WellKnown) http.Handler {
+	return HandlerWithPeer(e, wk, nil)
+}
+
+// HandlerWithPeer serves an executor and passes it the identity the transport
+// authenticated for each request, as peerOf reports it, so the executor can
+// check that peer against the call's from (spec sections 7.6 and 10). peerOf
+// returns false when the request carries no authenticated identity.
+func HandlerWithPeer(e *exec.Executor, wk WellKnown, peerOf func(*http.Request) (string, bool)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/writ", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -58,7 +66,13 @@ func Handler(e *exec.Executor, wk WellKnown) http.Handler {
 		}
 		switch obj["typ"] {
 		case "call":
-			rep, rej := e.Execute(r.Context(), obj)
+			ctx := r.Context()
+			if peerOf != nil {
+				if p, ok := peerOf(r); ok {
+					ctx = exec.WithPeer(ctx, p)
+				}
+			}
+			rep, rej := e.Execute(ctx, obj)
 			if rej != nil {
 				reject(w, rej.Code)
 				return
@@ -66,6 +80,10 @@ func Handler(e *exec.Executor, wk WellKnown) http.Handler {
 			respond(w, rep)
 		case "revoke":
 			tallies, rej := e.Revoke(obj)
+			if rej != nil && rej.Code == writ.Reason(exec.StoreUnavailable) {
+				fail(w, http.StatusServiceUnavailable, rej.Code)
+				return
+			}
 			if rej != nil {
 				reject(w, rej.Code)
 				return
@@ -81,9 +99,11 @@ func Handler(e *exec.Executor, wk WellKnown) http.Handler {
 	return mux
 }
 
-func reject(w http.ResponseWriter, code writ.Reason) {
+func reject(w http.ResponseWriter, code writ.Reason) { fail(w, http.StatusBadRequest, code) }
+
+func fail(w http.ResponseWriter, status int, code writ.Reason) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": string(code)})
 }
 

@@ -43,9 +43,13 @@ type Executor struct {
 	ID         *keys.Identity
 	Store      *FileStore
 	AcceptRoot func(did string) bool
-	Now        func() int64
-	Handle     Handler
-	Undo       Undoer
+	// PeerBinds reports whether a transport-authenticated peer speaks for a
+	// key (spec 7.6). It is consulted only for calls whose context carries a
+	// peer (WithPeer), and fails closed by default.
+	PeerBinds func(peer, did string) bool
+	Now       func() int64
+	Handle    Handler
+	Undo      Undoer
 	// OnRevoke is called after a revoke is recorded so the application can
 	// forward it to the holders of writs it issued (spec 9.1). Best effort.
 	OnRevoke func(r *writ.Revoke)
@@ -75,7 +79,8 @@ func New(id *keys.Identity, store *FileStore) *Executor {
 		store, _ = OpenFileStore("")
 	}
 	return &Executor{ID: id, Store: store, Now: func() int64 { return time.Now().Unix() },
-		AcceptRoot: func(string) bool { return false }, inflight: map[string]inflight{},
+		AcceptRoot: func(string) bool { return false }, PeerBinds: func(string, string) bool { return false },
+		inflight:  map[string]inflight{},
 		undoLocks: map[string]*sync.Mutex{}}
 }
 
@@ -122,6 +127,20 @@ func chainIDs(k *writ.Call) []string {
 		ids = append(ids, w.ID)
 	}
 	return ids
+}
+
+type peerKey struct{}
+
+// WithPeer returns ctx carrying the identity the transport authenticated for
+// the party that delivered a call. Without it, Execute treats the transport as
+// having authenticated no peer and skips the peer binding check (spec 7.6).
+func WithPeer(ctx context.Context, peer string) context.Context {
+	return context.WithValue(ctx, peerKey{}, peer)
+}
+
+func peerOf(ctx context.Context) (string, bool) {
+	p, ok := ctx.Value(peerKey{}).(string)
+	return p, ok
 }
 
 // Reply is the HTTP-binding response body for a call.
@@ -189,7 +208,12 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 	if e.afterRevokeCheck != nil {
 		e.afterRevokeCheck()
 	}
-	// Step 8: standing, then the forward or standing rules.
+	// Step 8 opens with peer binding, before replay, so a captured call
+	// presented over another connection cannot fetch the stored result.
+	if peer, ok := peerOf(ctx); ok && !e.PeerBinds(peer, k.From) {
+		return refuse(string(writ.PeerMismatch))
+	}
+	// Step 8, continued: standing, then the forward or standing rules.
 	if k.Standing() {
 		if err := writ.CheckStanding(k); err != nil {
 			return refuse(string(writ.CodeOf(err)))
@@ -406,10 +430,14 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	// call is then either refused at step 7 or collected here.
 	var hits []inflight
 	e.mu.Lock()
+	// A key-wide revoke MUST survive restart (spec 9). One that cannot be
+	// written is still honored below, and answered as an error so the sender
+	// retries. A writ's revoke is SHOULD-durable and bounded by its exp.
+	var unsaved error
 	if r.Writ == "*" {
-		e.Store.revoke("*:"+r.Iss, 1<<62)
+		unsaved = e.Store.revoke("*:"+r.Iss, 1<<62)
 	} else {
-		e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
+		_ = e.Store.revoke(r.Writ, r.Chain[len(r.Chain)-1].Exp)
 	}
 	// Cancel in-flight forward work under the revoked writ and answer with
 	// pending tallies, in ascending order of call identity (spec 9.1). A
@@ -435,6 +463,9 @@ func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	}
 	if e.OnRevoke != nil {
 		e.OnRevoke(r)
+	}
+	if unsaved != nil {
+		return nil, &writ.Error{Code: writ.Reason(StoreUnavailable), Msg: unsaved.Error()}
 	}
 	return out, nil
 }

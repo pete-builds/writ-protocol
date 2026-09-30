@@ -216,7 +216,7 @@ def run_scenario(sc, store_dir):
             return HELD
         return Outcome.from_json(a)
 
-    ex = Executor(conf["seed"], conf["accept"], store_dir, app=app)
+    ex = Executor(conf["seed"], conf["accept"], store_dir, app=app, peers=conf.get("peers"))
     for i, step in enumerate(sc["steps"]):
         do = step["do"]
         where = f"step {i} ({do}{': ' + step['note'] if 'note' in step else ''})"
@@ -224,7 +224,7 @@ def run_scenario(sc, store_dir):
         if do == "call":
             script["app"] = step.get("app")
             ex.set_time(step["now"])
-            got = ex.receive_call(step["call"])
+            got = ex.receive_call(step["call"], peer=step.get("peer"))
             if "app" not in step and script["invoked"]:
                 raise ScenarioFailure(f"{where}: the application was invoked, and the step has no app")
         elif do == "revoke":
