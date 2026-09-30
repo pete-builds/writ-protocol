@@ -22,7 +22,7 @@ You need Go 1.25 or newer, or none at all for the programs themselves: every rel
 
 2. **Try to break it, an afternoon.** Read the specification, `docs/spec/writ-v0.1.md`, starting with section 12, and the threat model, `docs/design/05-threat-model.md`. If you find a way to widen authority, forge or hide a receipt, replay a call, or make two careful readers disagree, open an issue with the steps. An operator's objection counts as much as an attack: the peer binding and the audit record in section 7.6 and 9.3 came from one.
 
-3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 213 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 22 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open a *stranger test* issue (the template asks for what matters) naming each vector and what your implementation answered. CONTRIBUTING.md has the rest, and SECURITY.md says how to report a vulnerability privately. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
+3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 241 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 24 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open a *stranger test* issue (the template asks for what matters) naming each vector and what your implementation answered. CONTRIBUTING.md has the rest, and SECURITY.md says how to report a vulnerability privately. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
 
 4. **Put your own Claude Code under a grant.** `writ-hook` checks every tool call a Claude Code session makes against a grant you sign, blocks what the grant does not cover, and signs a receipt for what ran. [docs/claude-code.md](docs/claude-code.md) has the setup and, just as plainly, what it does not protect against.
 
@@ -47,7 +47,7 @@ Writ defines four kinds of signed JSON object.
 - **A writ is a signed permission slip.** "A lets B do `travel`, spend at most 60000 cents on any one call, one call at each agent that runs it, until 3 pm." B can write C a slip that is narrower (`travel/charge`, at most 58900 cents, one call, until 2:30) but never wider. Each slip names the one before it by hash, so C receives the whole chain and checks every step itself. The limits hold at each agent that does the work, not as a total across agents: if B split the job between two payment processors, each could charge up to its own limit, and the receipts are how the total gets audited afterward (see "Limits no design here removes").
 - **A call asks for work** under a chain of writs, signed by whoever issued the last writ in the chain.
 - **A tally is the receipt.** The agent that did the work signs what it did, when, how much of each limit it used, and under exactly which writ. If it passed part of the job on, it attaches the receipts it got back, unchanged, so you can check the whole tree yourself.
-- **A revoke withdraws a writ**, which stops new work under it wherever the revoke reaches.
+- **A revoke withdraws a writ**, which stops new work under it wherever the revoke reaches. Each executor that records a revoke answers with a signed **ack** listing the work under that writ it held at that moment, so any later tally it signs for other work under the writ contradicts its own ack, however that tally is dated.
 
 Limits, called bounds, come in five types, each with a mechanical rule for "is this narrower?" and "does this argument fit?": a maximum, a count of uses, a name prefix, a set of allowed values, and a numeric window. A bound that a verifier does not understand is rejected, never ignored.
 
@@ -115,7 +115,7 @@ A writ is a written command that grants authority to act. The receipt is a **tal
 
 - **A specification**, docs/spec/writ-v0.1.md: fourteen sections and three appendices, about 11,000 words, covering the objects, the bounds, how narrowing is checked, the order of every check, the state an executor keeps and for how long, the standing operations, an HTTP binding, the reason codes, security considerations, how Writ relates to other protocols, and conformance.
 - **Two implementations that check each other.** The Go reference and a Python second implementation of both the verifier and the executor agree on every test.
-- **A shared test suite**: 213 test vectors for checking objects, 22 scenarios for executor behavior that needs memory, and a fuzzer that compares the two implementations on tens of thousands of generated inputs.
+- **A shared test suite**: 241 test vectors for checking objects, 24 scenarios for executor behavior that needs memory, and a fuzzer that compares the two implementations on tens of thousands of generated inputs.
 - **A runnable demo** of three agents in three processes.
 - **CI** that fails on any disagreement between the two implementations.
 
@@ -131,7 +131,7 @@ The demo builds the binaries, starts B (booking, port 8081) and C (payment, port
 sh demo/run.sh
 ```
 
-It runs eight steps with nineteen checked expectations: discovery, issuing, the two-hop call, checking the tally tree offline, A reversing C's charge directly without B, an undo that is safe to repeat, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels work in flight at B and is forwarded to C, and recovery through `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON, with the transcript in `demo/out/demo.log`. That directory is generated on each run and not committed. Each agent also keeps its audit record (spec section 9.3), one JSON line per call or revoke, refusals included, in `demo/out/audit-B.jsonl` and `demo/out/audit-C.jsonl`; the script checks that B's holds the seven refusals. `WRIT_C=python sh demo/run.sh` runs C from the Python implementation instead, so the two implementations talk to each other over the HTTP binding; CI runs both. The script exits non-zero if any expectation fails, and CI runs it.
+It runs eight steps with twenty-three checked expectations: discovery, issuing, the two-hop call, checking the tally tree offline, A reversing C's charge directly without B, an undo that is safe to repeat, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels work in flight at B and is forwarded to C, and recovery through `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON, with the transcript in `demo/out/demo.log`. That directory is generated on each run and not committed. Each agent also keeps its audit record (spec section 9.3), one JSON line per call or revoke, refusals included, in `demo/out/audit-B.jsonl` and `demo/out/audit-C.jsonl`; the script checks that B's holds the seven refusals. `WRIT_C=python sh demo/run.sh` runs C from the Python implementation instead, so the two implementations talk to each other over the HTTP binding; CI runs both. The script exits non-zero if any expectation fails, and CI runs it.
 
 The tests and the shared suite:
 
@@ -283,7 +283,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 
 ### Python, the second implementation
 
-`impl/python` has a verifier, an executor, and the HTTP binding (`writ.httpbind`, served by `python3 -m writ.cli serve`), 136 unit tests, runners for vectors and scenarios, and 26 vectors of its own. Both halves were written from the spec text without consulting the Go code, but by the same author's tooling, so they check that one text reads the same way twice rather than standing as an independent implementation. The roadmap's stranger test is still open.
+`impl/python` has a verifier, an executor, and the HTTP binding (`writ.httpbind`, served by `python3 -m writ.cli serve`), 140 unit tests, runners for vectors and scenarios, and 28 vectors of its own. Both halves were written from the spec text without consulting the Go code, but by the same author's tooling, so they check that one text reads the same way twice rather than standing as an independent implementation. The roadmap's stranger test is still open.
 
 Writing them found real gaps. The verifier surfaced 35 spec ambiguities, listed in its README. The executor, written by an agent from the spec alone on 2026-09-28, logged ten more places where the text left it to guess, plus one real disagreement with the Go executor that no scenario had caught (`impl/python/DIVERGENCES.md`). Every one is now answered in the spec text, and the disagreement is pinned by a scenario.
 
@@ -293,17 +293,17 @@ The cross-runs, which CI repeats on every push:
 
 | Direction | Result |
 |---|---|
-| Python verifier on the 213 Go-generated vectors | 213 passed, 0 failed |
-| Go verifier on the 26 Python-generated vectors | 26 passed, 0 failed |
-| Go and Python executors on the 22 scenarios | 22 passed, 0 failed, each |
+| Python verifier on the 241 Go-generated vectors | 241 passed, 0 failed |
+| Go verifier on the 28 Python-generated vectors | 28 passed, 0 failed |
+| Go and Python executors on the 24 scenarios | 24 passed, 0 failed, each |
 | Python verifier on 20,000 inputs the Go verifier judged (fuzz, seed 1) | 20,000 passed, 0 failed |
 
-So the consistency claim rests on two implementations in two languages, written by one author from the same text without the second consulting the first. They agree on all 239 vectors, including the reason code for every rejection, on 22 executor scenarios byte for byte, and on 80,000 fuzzed inputs, and CI fails on any divergence. It is not yet a claim that unaffiliated implementers interoperate.
+So the consistency claim rests on two implementations in two languages, written by one author from the same text without the second consulting the first. They agree on all 269 vectors, including the reason code for every rejection, on 24 executor scenarios byte for byte, and on 80,000 fuzzed inputs, and CI fails on any divergence. It is not yet a claim that unaffiliated implementers interoperate.
 
 ## The test suite
 
-- **Vectors,** `conformance/vectors/`: 213 of them, regenerated byte for byte from fixed seeds and fixed nonces, 50 that must be accepted and 163 that must be rejected, each rejection naming its reason code. They cover canonicalization, every bound type in both directions, every chain rule, signatures, expiry, size, depth, and nesting limits, forward and standing calls (including standing calls after expiry), tally trees with sub-tally accounting, and revokes. Most of the 42 added on 2026-09-28 carry two faults each, which pins the reason a verifier must report first (spec section 12 makes that order normative); the rest pin the nesting limit, the full shape of a pending tally, and `depth` on delegated writs. The four added on 2026-09-29 pin tally-tree accounting two levels deep, including the review's reproduction, which both verifiers accepted before the fix.
-- **Scenarios,** `conformance/scenarios/`: 22 of them, 140 steps in all, for executor behavior that needs memory: count, replay, undo and how reversals are serialized, `sys/tallies`, revoke with in-flight cancel, crash recovery, binding the transport's authenticated peer to the caller's key, and a key-wide revoke that outlives a restart. Each step is a call, a revoke, the end of a held operation, or a restart, and the expected tally is compared byte for byte (spec section 14.1).
+- **Vectors,** `conformance/vectors/`: 241 of them, regenerated byte for byte from fixed seeds and fixed nonces, 60 that must be accepted and 181 that must be rejected, each rejection naming its reason code. They cover canonicalization, every bound type in both directions, every chain rule, signatures, expiry, size, depth, and nesting limits, forward and standing calls (including standing calls after expiry), tally trees with sub-tally accounting, and revokes. Most of the 42 added on 2026-09-28 carry two faults each, which pins the reason a verifier must report first (spec section 12 makes that order normative); the rest pin the nesting limit, the full shape of a pending tally, and `depth` on delegated writs. The four added on 2026-09-29 pin tally-tree accounting two levels deep, including the review's reproduction, which both verifiers accepted before the fix. The 28 added on 2026-09-30 pin section 9.4, checking a tally against its signer's ack of a revoke: work the ack holds or lists is accounted for, and work accepted after the revoke is caught, including a tally whose `acc` is dated before it.
+- **Scenarios,** `conformance/scenarios/`: 24 of them, 150 steps in all, for executor behavior that needs memory: count, replay, undo and how reversals are serialized, `sys/tallies`, revoke with in-flight cancel, crash recovery, binding the transport's authenticated peer to the caller's key, revokes of a key and of one writ that outlive a restart, and the ack a revoke is answered with, byte for byte. Each step is a call, a revoke, the end of a held operation, or a restart, and the expected tally is compared byte for byte (spec section 14.1).
 - **The fuzzer,** `cmd/writ-fuzz`, goes beyond hand-written cases. It mutates valid objects one to three faults at a time, records the Go verifier's verdict on each as a vector, and lets another implementation run the directory. Before the 2026-09-28 revision pinned every open ordering question, 60,000 inputs produced about 2,470 disagreements between Go and Python. After it, seeds 1 to 4 at 20,000 inputs each produce none, revokes included.
 
 ## How it could be adopted
@@ -312,7 +312,7 @@ docs/adoption.md has the full plan. The first users are enterprise platform team
 
 ## Roadmap to an IETF-quality standard
 
-1. **Now.** The v0.1 spec, the Go reference, a Python second implementation of both the verifier and the executor, a 213-vector corpus and 22 executor scenarios, a differential fuzzer, the demo, and CI. The ambiguities the Python port found are fixed, and so is the standing-operation rule: expiry and revocation now end forward authority only, so `sys/undo` and `sys/tallies` still work after a writ expires or is revoked.
+1. **Now.** The v0.1 spec, the Go reference, a Python second implementation of both the verifier and the executor, a 241-vector corpus and 24 executor scenarios, a differential fuzzer, the demo, and CI. The ambiguities the Python port found are fixed, and so is the standing-operation rule: expiry and revocation now end forward authority only, so `sys/undo` and `sys/tallies` still work after a writ expires or is revoked.
 2. **Stranger test.** One engineer who has seen neither implementation builds a verifier from the spec and runs the corpus. Every divergence becomes a spec fix and a vector. Move on after zero divergences from two strangers in a row.
 3. **Second transport.** Run the demo over a message queue and over files in a directory, with the same objects, to prove the protocol does not depend on HTTP. *Files are done (`filebind`, 2026-09-30); a message queue is not, since it needs a broker the reference implementation does not ship.*
 4. **Adapters.** The reverse proxy, then the MCP `_meta` binding as an MCP extension proposal, then the A2A DataPart binding as an A2A extension. Move on once one production pair runs between two organizations that are not the authors.
@@ -337,8 +337,8 @@ docs/writ-gate.md                  writ-gate: Writ in front of an existing API
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
-conformance/vectors/               213 vectors
-conformance/scenarios/             22 executor scenarios
+conformance/vectors/               241 vectors
+conformance/scenarios/             24 executor scenarios
 conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
 demo/run.sh                        three-process demo; transcript in demo/out/ (generated)
 scripts/build-release.sh           builds the release archives; .github/workflows/release.yml publishes them on a v* tag
