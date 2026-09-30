@@ -6,6 +6,24 @@ Writ is a draft protocol, not a product. This repository holds its specification
 
 In one line, next to the protocols it sits beside: TCP/IP moves packets between networks, HTTP fetches resources, DNS resolves names, and Writ delegates bounded authority and returns evidence.
 
+## Three ways in
+
+You need Go 1.25 or newer. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
+
+1. **Watch it run, about ten minutes.**
+
+   ```
+   git clone https://github.com/pete-builds/writ-protocol.git
+   cd writ-protocol
+   sh demo/run.sh
+   ```
+
+   Three small programs start on your machine and act out the travel example below. A hands B a booking, B hands C the payment, C charges, A checks every receipt, reverses the charge directly with C, and tries seven things it is not allowed to do, each refused with a reason. No AI model runs anywhere: the three agents are plain Go programs with scripted behavior and fake charges, talking over localhost, because the protocol is about what passes between agents, not how they decide. Afterwards `demo/out/` holds every object exchanged, the transcript, and each agent's audit record. [Try it](#try-it) has the details.
+
+2. **Try to break it, an afternoon.** Read the specification, `docs/spec/writ-v0.1.md`, starting with section 12, and the threat model, `docs/design/05-threat-model.md`. If you find a way to widen authority, forge or hide a receipt, replay a call, or make two careful readers disagree, open an issue with the steps. An operator's objection counts as much as an attack: the peer binding and the audit record in section 7.6 and 9.3 came from one.
+
+3. **Build your own from the spec, the test that matters most.** Without reading `impl/`, write a verifier in any language from the specification alone, then run it against the corpus. `conformance/vectors/` holds 213 objects, each with the answer a verifier must give and, for a rejection, the reason it must name (section 14 gives the format). If you also build an executor, `conformance/scenarios/` holds 22 multi-step cases whose answers are compared byte for byte (section 14.1). Every disagreement is either a place the spec is unclear or a bug in these implementations, and finding those is the point. Open an issue naming the vector and what your implementation answered. Until someone outside the project has done this, Writ is one author's reading of one text; see the [roadmap](#roadmap-to-an-ietf-quality-standard).
+
 ## The problem
 
 Say you ask your assistant, agent A, to book a trip and spend at most $600. A passes the booking to a travel agent, B. B passes the payment to a card processor, C. Each of the three runs a different company's software.
