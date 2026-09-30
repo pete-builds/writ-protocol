@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"writproto/exec"
+	"writproto/filebind"
 	"writproto/httpbind"
 	"writproto/keys"
 	"writproto/writ"
@@ -34,6 +35,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "server private key (PEM)")
 	clientCA := flag.String("client-ca", "", "CA bundle (PEM) that client certificates must chain to; peers come from them")
 	bindings := flag.String("bindings", "", "JSON file mapping each peer to the did:keys it speaks for, exported from a directory")
+	filesDir := flag.String("files", "", "serve calls and revokes as files in this directory (in/, work/, out/) instead of HTTP")
 	perMinute := flag.Int("per-minute", 0, "requests accepted per minute from each peer or host (0 for no limit)")
 	audit := flag.String("audit", "", "path of the append-only audit record, one JSON line per call or revoke (empty for none)")
 	flag.Parse()
@@ -91,6 +93,10 @@ func main() {
 	wk := httpbind.WellKnown{V: 1, DID: id.DID(), Endpoint: "/writ", Act: act}
 	log.Printf("%s agent %s listening on :%d", *role, id.DID(), *port)
 	fmt.Fprintln(os.Stderr, "ready")
+	if *filesDir != "" {
+		log.Printf("serving files in %s", *filesDir)
+		log.Fatal(filebind.Serve(context.Background(), e, *filesDir, 50*time.Millisecond))
+	}
 	opts := httpbind.Options{PerMinute: *perMinute}
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	if *clientCA == "" {
