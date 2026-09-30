@@ -113,9 +113,9 @@ On each request, the proxy:
 5. looks up `(leaf writ identity, call.id)` in the call store;
 6. consumes `count` against every writ in the chain that carries one.
 
-A failure before the call's signature verifies is a `400` with `{"error": <reason>}`. Every later failure is a `200` carrying a signed `failed` tally, and the request never reaches the API. On success, the proxy strips the Writ material, so the legacy API sees a request identical to what it saw yesterday, and forwards it. On the response, it computes `used` from the mapping, signs the tally with its own key, and fills `rev.until` from the template. The legacy API changes zero lines.
+A failure before the call's signature verifies is a `400` with `{"error": <reason>}`. Every later failure is a `200` carrying a signed `failed` tally, and the request never reaches the API. On success, the proxy forwards a request rebuilt from the signed values alone, so the legacy API sees the request it saw yesterday, minus anything the call did not sign. Forwarding the caller's own bytes would let the proxy check one reading of a body while the API executes another (a case-folded duplicate member, trailing JSON, a query parameter that overrides the body). On the response, it computes `used` from the mapping, signs the tally with its own key, and fills `rev.until` from the template. The legacy API changes zero lines.
 
-*Built 2026-09-30 as `cmd/writ-gate` (docs/writ-gate.md), with a JSON mapping and the reference file store in place of YAML and SQLite, and the call in the `Writ-Call` header only.*
+*Built 2026-09-30 as `cmd/writ-gate` (docs/writ-gate.md), with a JSON mapping and the reference file store in place of YAML and SQLite, and the call in the `Writ-Call` header only. Each route is a strict request contract: the body holds exactly the bound members, every path parameter is bound, and there is no query string.*
 
 It is the adapter that matters most, for three reasons:
 
