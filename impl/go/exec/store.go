@@ -62,6 +62,7 @@ type FileStore struct {
 	Counts  map[string]int64     `json:"counts"`  // writ identity
 	Tallies map[string]*tallyRec `json:"tallies"` // tally identity
 	Revoked map[string]int64     `json:"-"`       // writ identity, or "*:" and a key, to exp
+	unsaved map[string]bool      // revokes held in memory whose log write failed
 }
 
 // revokeEntry is one line of the revoke log.
@@ -361,29 +362,44 @@ func (s *FileStore) settleUndo(rec *tallyRec, by string, ok bool, res any) {
 
 // revoke records a revoke by appending one line to the revoke log and syncing
 // it. A revoke that cannot be written still holds in memory, which only
-// narrows authority; the revoke store is SHOULD-durable (spec 9).
-func (s *FileStore) revoke(writID string, exp int64) {
+// narrows authority, and the error is returned; a later call for the same
+// revoke tries the write again.
+func (s *FileStore) revoke(writID string, exp int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.Revoked[writID]; ok {
-		return
+	if _, ok := s.Revoked[writID]; ok && !s.unsaved[writID] {
+		return nil
 	}
 	s.Revoked[writID] = exp
 	if s.path == "" {
-		return
+		return nil
 	}
+	err := s.appendRevoke(writID, exp)
+	if err != nil {
+		if s.unsaved == nil {
+			s.unsaved = map[string]bool{}
+		}
+		s.unsaved[writID] = true
+		return err
+	}
+	delete(s.unsaved, writID)
+	return nil
+}
+
+func (s *FileStore) appendRevoke(writID string, exp int64) error {
 	line, err := json.Marshal(revokeEntry{Writ: writID, Exp: exp})
 	if err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(s.revokeLog(), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(append(line, '\n')); err == nil {
-		_ = f.Sync()
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		return err
 	}
+	return f.Sync()
 }
 
 // purgeRevoked drops per-writ revokes whose writ has expired, since no call

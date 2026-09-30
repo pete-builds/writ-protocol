@@ -24,8 +24,9 @@ import (
 type Scenario struct {
 	Name     string `json:"name"`
 	Executor struct {
-		Seed   string   `json:"seed"`
-		Accept []string `json:"accept"`
+		Seed   string              `json:"seed"`
+		Accept []string            `json:"accept"`
+		Peers  map[string][]string `json:"peers,omitempty"`
 	} `json:"executor"`
 	Steps []Step `json:"steps"`
 }
@@ -36,6 +37,7 @@ type Step struct {
 	Do       string          `json:"do"`
 	Note     string          `json:"note,omitempty"`
 	Now      int64           `json:"now,omitempty"`
+	Peer     string          `json:"peer,omitempty"`
 	Call     json.RawMessage `json:"call,omitempty"`
 	Revoke   json.RawMessage `json:"revoke,omitempty"`
 	App      *App            `json:"app,omitempty"`
@@ -78,6 +80,7 @@ type Driver struct {
 	dir    string
 	id     *keys.Identity
 	accept map[string]bool
+	peers  map[string][]string
 	e      *exec.Executor
 
 	mu      sync.Mutex
@@ -91,8 +94,10 @@ type Driver struct {
 // the step instead of the run.
 const timeout = 10 * time.Second
 
-// NewDriver starts an executor with empty stores in a fresh directory.
-func NewDriver(seedHex string, accept []string) (*Driver, error) {
+// NewDriver starts an executor with empty stores in a fresh directory. peers
+// maps each transport identity the executor holds a binding for to the keys
+// that peer speaks for (spec 7.6).
+func NewDriver(seedHex string, accept []string, peers map[string][]string) (*Driver, error) {
 	seed, err := hex.DecodeString(seedHex)
 	if err != nil || len(seed) != 32 {
 		return nil, fmt.Errorf("executor seed must be 64 hex digits")
@@ -105,7 +110,7 @@ func NewDriver(seedHex string, accept []string) (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Driver{dir: dir, id: id, accept: map[string]bool{}, holds: map[string]*hold{}}
+	d := &Driver{dir: dir, id: id, accept: map[string]bool{}, peers: peers, holds: map[string]*hold{}}
 	for _, a := range accept {
 		d.accept[a] = true
 	}
@@ -125,6 +130,14 @@ func (d *Driver) open() error {
 	}
 	e := exec.New(d.id, st)
 	e.AcceptRoot = func(did string) bool { return d.accept[did] }
+	e.PeerBinds = func(peer, did string) bool {
+		for _, k := range d.peers[peer] {
+			if k == did {
+				return true
+			}
+		}
+		return false
+	}
 	e.Now = func() int64 {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -180,6 +193,9 @@ func (d *Driver) Run(s *Step) (any, error) {
 		}
 		cid, _ := wire.Hash(obj)
 		ctx := context.WithValue(context.Background(), ctxKey{}, cid)
+		if s.Peer != "" {
+			ctx = exec.WithPeer(ctx, s.Peer)
+		}
 		var out any
 		if s.App != nil && s.App.Hold {
 			h := &hold{started: make(chan struct{}), outcome: make(chan *App, 1), done: make(chan reply, 1)}
@@ -295,7 +311,7 @@ func Canon(v any) ([]byte, error) {
 // RunScenario runs every step and returns the index of the first failing
 // step (-1 when all pass) with a description.
 func RunScenario(sc *Scenario) (int, string) {
-	d, err := NewDriver(sc.Executor.Seed, sc.Executor.Accept)
+	d, err := NewDriver(sc.Executor.Seed, sc.Executor.Accept, sc.Executor.Peers)
 	if err != nil {
 		return 0, err.Error()
 	}

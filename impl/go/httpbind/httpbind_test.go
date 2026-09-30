@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -83,5 +84,64 @@ func TestRequestLimits(t *testing.T) {
 	deep := []byte(`{"v":1,"typ":"call","args":` + strings.Repeat("[", 70) + strings.Repeat("]", 70) + `}`)
 	if code, reason := post(deep); code != http.StatusBadRequest || reason != string(writ.TooLarge) {
 		t.Errorf("70-level call: got %d %q, want 400 too_large", code, reason)
+	}
+}
+
+// Spec 7.6 and 10: the binding passes the transport-authenticated peer to the
+// executor, and a key-wide revoke it could not persist is a 503.
+func TestPeerAndUnsavedRevoke(t *testing.T) {
+	A, _ := keys.FromSeed(bytes.Repeat([]byte{1}, 32))
+	B, _ := keys.FromSeed(bytes.Repeat([]byte{2}, 32))
+	dir := t.TempDir()
+	st, err := exec.OpenFileStore(dir + "/store.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := exec.New(B, st)
+	e.AcceptRoot = func(d string) bool { return d == A.DID() }
+	e.PeerBinds = func(peer, did string) bool { return peer == "spiffe://a.example/agent" && did == A.DID() }
+	e.Handle = func(ctx context.Context, k *writ.Call) exec.Result { return exec.Result{} }
+	peerOf := func(r *http.Request) (string, bool) {
+		p := r.Header.Get("X-Test-Peer")
+		return p, p != ""
+	}
+	srv := httptest.NewServer(HandlerWithPeer(e, WellKnown{V: 1, DID: B.DID(), Endpoint: "/writ"}, peerOf))
+	defer srv.Close()
+	post := func(peer string, obj any) (int, map[string]any) {
+		body, _ := json.Marshal(obj)
+		req, _ := http.NewRequest("POST", srv.URL+"/writ", bytes.NewReader(body))
+		req.Header.Set("Content-Type", ContentType)
+		if peer != "" {
+			req.Header.Set("X-Test-Peer", peer)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	code := func(out map[string]any) string {
+		tl, _ := out["tally"].(map[string]any)
+		e, _ := tl["err"].(map[string]any)
+		c, _ := e["code"].(string)
+		return c
+	}
+	w1, _ := writ.Issue(A, B.DID(), map[string]any{"act": map[string]any{"t": "prefix", "v": "echo"}}, 1<<40, nil)
+	k, _ := writ.NewCall(A, []*writ.Writ{w1}, "echo/hi", nil)
+	if status, out := post("spiffe://s.example/other", k.Raw); status != 200 || code(out) != string(writ.PeerMismatch) {
+		t.Fatalf("unbound peer: %d %v, want 200 and a peer_mismatch tally", status, out)
+	}
+	if status, out := post("spiffe://a.example/agent", k.Raw); status != 200 || code(out) != "" {
+		t.Fatalf("bound peer: %d %v, want 200 and an ok tally", status, out)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	rv, _ := writ.NewRevoke(A, nil)
+	if status, out := post("", rv.Raw); status != http.StatusServiceUnavailable || out["error"] != exec.StoreUnavailable {
+		t.Fatalf("unsaved key-wide revoke: %d %v, want 503 %s", status, out, exec.StoreUnavailable)
 	}
 }

@@ -572,6 +572,56 @@ class StoreFailureTest(Base):
         self.assertEqual(t["st"], "pending")
         self.assertEqual(self.ex.restart(), 1)
 
+    def test_unsaved_key_wide_revoke_is_an_error_and_still_honored(self):
+        ch = chain()
+        real = self.ex.stores.revokes.add
+
+        def broken(revoke, exp=None):
+            raise OSError("disk full")
+        self.ex.stores.revokes.add = broken
+        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, "*")), {"error": STORE_WRITE_FAILED})
+        self.assertRefused(self.ex.receive_call(fwd(ch, 1)), "revoked")
+        self.ex.stores.revokes.add = real
+        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, "*")), {"tallies": []})
+        self.assertEqual(self.ex.restart(), 0)
+        self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
+
+    def test_unsaved_writ_revoke_is_answered_as_recorded(self):
+        ch = chain()
+
+        def broken(revoke, exp=None):
+            raise OSError("disk full")
+        self.ex.stores.revokes.add = broken
+        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]])), {"tallies": []})
+        self.assertRefused(self.ex.receive_call(fwd(ch, 1)), "revoked")
+
+
+# ------------------------------------------------------------ peer binding
+
+class PeerBindingTest(Base):
+    PEER = "spiffe://b.example/booking"
+
+    def setUp(self):
+        super().setUp()
+        self.ex = Executor(EK, [A.did], self.dir, app=self.app,
+                           peers={self.PEER: [BK.did], "spiffe://gw.example/relay": [A.did, BK.did]})
+        self.ex.set_time(T0 + 10)
+
+    def test_a_captured_call_is_useless_from_another_peer(self):
+        ch = chain()
+        self.app.push(Outcome("ok", res={"charge": "ch_1"}))
+        k = fwd(ch, 1)
+        self.assertEqual(self.ex.receive_call(k, peer=self.PEER)["tally"]["st"], "ok")
+        self.assertRefused(self.ex.receive_call(k, peer="spiffe://s.example/other"), "peer_mismatch")
+        self.assertRefused(self.ex.receive_call(k, peer=""), "peer_mismatch")
+        again = self.ex.receive_call(k, peer="spiffe://gw.example/relay")
+        self.assertEqual(again["res"], {"charge": "ch_1"})
+        self.assertEqual(len(self.app.calls), 1)
+
+    def test_no_peer_skips_the_check(self):
+        self.app.push(Outcome("ok"))
+        self.assertEqual(self.ex.receive_call(fwd(chain(), 1))["tally"]["st"], "ok")
+
 
 # ------------------------------------------------------- delegating onward
 
@@ -743,7 +793,7 @@ class ScenarioRunnerTest(unittest.TestCase):
 
     def test_corpus_scenarios_pass(self):
         names = sorted(n for n in os.listdir(SCENARIOS) if n.endswith(".json"))
-        self.assertEqual(len(names), 20)
+        self.assertEqual(len(names), 22)
         for name in names:
             with self.subTest(name=name):
                 self.run_one(self.load(name))

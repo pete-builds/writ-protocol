@@ -87,13 +87,27 @@ var (
 )
 
 func scenario(name string, accept ...*keys.Identity) *builder {
+	return scenarioWithPeers(name, nil, accept...)
+}
+
+// scenarioWithPeers is scenario with the transport identities the executor
+// holds bindings for, each mapped to the keys it speaks for (spec 7.6).
+func scenarioWithPeers(name string, peers map[string][]*keys.Identity, accept ...*keys.Identity) *builder {
 	b := &builder{}
 	b.sc.Name = name
 	b.sc.Executor.Seed = seedHex(3)
 	for _, a := range accept {
 		b.sc.Executor.Accept = append(b.sc.Executor.Accept, a.DID())
 	}
-	b.d = must(conformance.NewDriver(b.sc.Executor.Seed, b.sc.Executor.Accept))
+	if peers != nil {
+		b.sc.Executor.Peers = map[string][]string{}
+		for p, ids := range peers {
+			for _, i := range ids {
+				b.sc.Executor.Peers[p] = append(b.sc.Executor.Peers[p], i.DID())
+			}
+		}
+	}
+	b.d = must(conformance.NewDriver(b.sc.Executor.Seed, b.sc.Executor.Accept, b.sc.Executor.Peers))
 	return b
 }
 
@@ -145,6 +159,11 @@ func tallyOf(v any) wire.Object {
 
 func (b *builder) call(at int64, k *writ.Call, app *conformance.App, want, note string) wire.Object {
 	return tallyOf(b.run(conformance.Step{Do: "call", Note: note, Now: at, Call: must(json.Marshal(k.Raw)), App: app}, want))
+}
+
+// callFrom is call delivered by a transport-authenticated peer.
+func (b *builder) callFrom(at int64, peer string, k *writ.Call, app *conformance.App, want, note string) wire.Object {
+	return tallyOf(b.run(conformance.Step{Do: "call", Note: note, Now: at, Peer: peer, Call: must(json.Marshal(k.Raw)), App: app}, want))
 }
 
 func (b *builder) callObj(at int64, obj wire.Object, app *conformance.App, want, note string) {
@@ -486,6 +505,48 @@ func main() {
 		b.call(now+20, call(B, ch, "sys/tallies", map[string]any{"writ": w1.ID}), nil, "failed:tally_mismatch", "B did not issue w1, whose index also covers A's other delegations")
 		b.call(now+30, call(B, ch, "sys/tallies", map[string]any{"writ": w2.ID}), nil, "ok with 2", "B issued w2: the work and the failed query")
 		b.call(now+40, call(A, ch, "sys/tallies", map[string]any{"writ": w2.ID}), nil, "ok with 3", "A issued w1, so w2 below it is A's to ask about")
+		b.write()
+	}
+
+	// Added 2026-09-30: a call over an authenticated transport is checked
+	// against a binding of that peer to from, at step 8, before replay.
+	{
+		const (
+			agentB  = "spiffe://b.example/booking"
+			gateway = "spiffe://gw.example/relay"
+			other   = "spiffe://s.example/agent"
+			unknown = "spiffe://unknown.example/agent"
+		)
+		b := scenarioWithPeers("peer binding", map[string][]*keys.Identity{
+			agentB: {B}, gateway: {A, B}, other: {S},
+		}, A)
+		w1, w2 := chargeChain()
+		ch := []*writ.Writ{w1, w2}
+		k := call(B, ch, "travel/charge", map[string]any{"amount": 58900})
+		b.callFrom(now+10, agentB, k, charge, "ok", "B's own workload identity delivers B's call")
+		b.callFrom(now+20, other, k, nil, "failed:peer_mismatch", "the same bytes from a peer bound to another key get a refusal, not the stored result")
+		b.callFrom(now+30, unknown, k, nil, "failed:peer_mismatch", "a peer the executor holds no binding for fails closed")
+		b.callFrom(now+40, gateway, k, nil, "ok", "a gateway bound to several keys, B's among them, gets the stored tally")
+		b.call(now+50, k, nil, "ok", "a transport that authenticated no peer skips the check")
+		b.callFrom(now+60, agentB, call(A, ch, "travel/charge", map[string]any{"amount": 1}), nil, "failed:peer_mismatch", "the peer is checked before from's standing, both at step 8")
+		ws := issue(S, C, bnd("act", "prefix", "travel"), now+3600, nil)
+		b.callFrom(now+70, agentB, call(S, []*writ.Writ{ws}, "travel/x", map[string]any{}), nil, "failed:root_not_accepted", "root acceptance at step 5 comes first")
+		kt := call(A, ch, "sys/tallies", map[string]any{"writ": w1.ID})
+		b.callFrom(now+80, agentB, kt, nil, "failed:peer_mismatch", "a standing call is bound too")
+		b.callFrom(now+90, gateway, kt, nil, "ok with 1", "and passes from a peer that speaks for A")
+		b.write()
+	}
+	// Added 2026-09-30: a key-wide revoke MUST survive restart (section 9).
+	{
+		b := scenario("a key-wide revoke survives restart", A)
+		w1, w2 := plainChain("travel")
+		ch := []*writ.Writ{w1, w2}
+		b.revoke(now+10, must(writ.NewRevoke(B, nil)).Raw, "tallies:0", "B withdraws its key")
+		b.restart("resolved:0", "the executor restarts")
+		b.call(now+20, call(B, ch, "travel/x", map[string]any{}), nil, "failed:revoked", "B's key is still withdrawn")
+		v1 := issue(A, B, bnd("act", "prefix", "travel"), now+3600, nil)
+		v2 := issue(B, C, bnd("act", "prefix", "travel"), now+3600, v1)
+		b.call(now+30, call(B, []*writ.Writ{v1, v2}, "travel/y", map[string]any{}), nil, "failed:revoked", "including writs B signs after the restart")
 		b.write()
 	}
 

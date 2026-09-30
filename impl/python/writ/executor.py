@@ -183,6 +183,8 @@ class Executor:
     fixes the clock instead. ``resolver(record)`` may return an Outcome for a
     pending record found after a restart, when the application can tell
     what happened; otherwise the record resolves to ``unknown_outcome``.
+    ``peers`` maps each transport identity the executor holds a binding for
+    to the keys that peer speaks for (section 7.6).
 
     Opening an executor over a directory that holds pending records is a
     restart: they are resolved at once, and ``resolved_at_open`` says how
@@ -190,10 +192,11 @@ class Executor:
     """
 
     def __init__(self, key, accept, store_dir, app=None, clock=None, resolver=None,
-                 forward_revoke=None):
+                 forward_revoke=None, peers=None):
         self.key = key if isinstance(key, Key) else Key.from_seed(key)
         self.did = self.key.did
         self.accept = frozenset(accept)
+        self.peers = {p: frozenset(ks) for p, ks in (peers or {}).items()}
         self.store_dir = store_dir
         self.app = app
         self.resolver = resolver
@@ -218,15 +221,17 @@ class Executor:
 
     # ------------------------------------------------------------ calls
 
-    def receive_call(self, data):
-        """Section 7 for one call (bytes, text, or a parsed object)."""
+    def receive_call(self, data, peer=None):
+        """Section 7 for one call (bytes, text, or a parsed object). ``peer``
+        is the identity the transport authenticated for the party that
+        delivered it, or None when the transport authenticated none."""
         with self._lock:
-            answer, op = self._admit(data)
+            answer, op = self._admit(data, peer)
         if op is None:
             return answer
         return self._perform(op)
 
-    def _admit(self, data):
+    def _admit(self, data, peer=None):
         """Steps 1 to 10 and the pending record of step 11.
 
         Returns (answer, None) when the call is answered without performing
@@ -259,7 +264,9 @@ class Executor:
                 for i, w in zip(ids, writs):
                     if self._is_revoked(i, w["iss"]):
                         raise WritError("revoked", f"writ {i} is revoked")
-            if standing:                                            # step 8
+            if peer is not None and call["from"] not in self.peers.get(peer, ()):  # step 8
+                raise WritError("peer_mismatch", "the authenticated peer is not bound to from")
+            if standing:
                 self._check_standing(call, writs)
             else:
                 self._check_forward(call, writs[-1])
@@ -637,10 +644,15 @@ class Executor:
             except WritError as e:
                 return {"error": e.reason}
             exp = None if r["writ"] == "*" else r["chain"][-1]["exp"]
+            unsaved = False
             try:
                 self.stores.revokes.add(r, exp)
             except OSError:
-                self._revoked_mem.append(r)  # SHOULD survive restart; this one cannot
+                # Honored in memory either way. A writ's revoke is SHOULD-durable;
+                # a key-wide one MUST survive restart, so it is answered as an
+                # error and the sender retries (section 9).
+                self._revoked_mem.append(r)
+                unsaved = r["writ"] == "*"
             hit = []
             for rec in self.stores.calls.pending():
                 if rec["standing"]:
@@ -666,6 +678,8 @@ class Executor:
                 self.forward_revoke(data, holder)
             except Exception:  # noqa: BLE001, forwarding is a SHOULD and never fails the revoke
                 pass
+        if unsaved:
+            return {"error": STORE_WRITE_FAILED}
         return {"tallies": tallies}
 
     def _issued_under(self, r):

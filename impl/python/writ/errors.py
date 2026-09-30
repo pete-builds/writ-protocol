@@ -30,6 +30,7 @@ REASONS = (
     "expired",
     "root_not_accepted",
     "wrong_executor",
+    "peer_mismatch",
     "revoked",
     "no_standing",
     "forbidden_op",

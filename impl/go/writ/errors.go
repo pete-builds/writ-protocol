@@ -20,6 +20,7 @@ const (
 	Expired             Reason = "expired"
 	RootNotAccepted     Reason = "root_not_accepted"
 	WrongExecutor       Reason = "wrong_executor"
+	PeerMismatch        Reason = "peer_mismatch"
 	Revoked             Reason = "revoked"
 	NoStanding          Reason = "no_standing"
 	ForbiddenOp         Reason = "forbidden_op"
