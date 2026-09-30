@@ -1,0 +1,37 @@
+# Writ releases. Pushing a tag v* runs the Go tests, builds the command-line
+# programs for Linux and macOS on amd64 and arm64, and publishes them with
+# SHA-256 checksums as a GitHub release, so trying Writ does not need a Go
+# toolchain. Windows is not built: writ-hook serializes its hook processes
+# with flock. A tag with a hyphen (v0.2.0-rc1) is marked a pre-release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: test before building anything
+        working-directory: impl/go
+        run: go test -count=1 ./...
+      - name: build
+        run: sh scripts/build-release.sh "$GITHUB_REF_NAME" dist
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* $pre \
+            --title "Writ $GITHUB_REF_NAME" \
+            --notes "Binaries for Linux and macOS, amd64 and arm64: writ (the CLI), writ-agent and writ-demo (the three-agent demo), writ-hook (Claude Code), writ-mcp (MCP), writ-gate (reverse proxy). Check a download against SHA256SUMS. The spec is docs/spec/writ-v0.1.md; README.md has three ways in."
