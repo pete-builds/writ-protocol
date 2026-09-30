@@ -111,7 +111,7 @@ The demo builds the binaries, starts B (booking, port 8081) and C (payment, port
 sh demo/run.sh
 ```
 
-It runs eight steps with nineteen checked expectations: discovery, issuing, the two-hop call, checking the tally tree offline, A reversing C's charge directly without B, an undo that is safe to repeat, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels work in flight at B and is forwarded to C, and recovery through `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON, with the transcript in `demo/out/demo.log`. That directory is generated on each run and not committed. The script exits non-zero if any expectation fails, and CI runs it.
+It runs eight steps with nineteen checked expectations: discovery, issuing, the two-hop call, checking the tally tree offline, A reversing C's charge directly without B, an undo that is safe to repeat, seven rejected attempts each answered with a signed refusal and its reason code, a revoke that cancels work in flight at B and is forwarded to C, and recovery through `sys/tallies`. Every object exchanged is written to `demo/out/` as JSON, with the transcript in `demo/out/demo.log`. That directory is generated on each run and not committed. Each agent also keeps its audit record (spec section 9.3), one JSON line per call or revoke, refusals included, in `demo/out/audit-B.jsonl` and `demo/out/audit-C.jsonl`; the script checks that B's holds the seven refusals. The script exits non-zero if any expectation fails, and CI runs it.
 
 The tests and the shared suite:
 
@@ -244,8 +244,8 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `bound` | the five bound types, narrows and satisfies | 40 comparisons in both directions |
 | `wire` | the signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
 | `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
-| `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation | 19 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, and the crash, revoke-race, and accounting regressions from the 2026-09-29 review |
-| `httpbind` | one POST endpoint, the well-known document, a client | round trip, request size and nesting limits |
+| `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, and the audit record | 22 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, and the unsaved key-wide revoke and audit tests from 2026-09-30 |
+| `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries |
 | `conformance` | vector and scenario runners | |
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
@@ -256,7 +256,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 
 ### Python, the second implementation
 
-`impl/python` has a verifier and an executor, 126 unit tests, runners for vectors and scenarios, and 26 vectors of its own. Both halves were written from the spec text without consulting the Go code, but by the same author's tooling, so they check that one text reads the same way twice rather than standing as an independent implementation. The roadmap's stranger test is still open.
+`impl/python` has a verifier and an executor, 133 unit tests, runners for vectors and scenarios, and 26 vectors of its own. Both halves were written from the spec text without consulting the Go code, but by the same author's tooling, so they check that one text reads the same way twice rather than standing as an independent implementation. The roadmap's stranger test is still open.
 
 Writing them found real gaps. The verifier surfaced 35 spec ambiguities, listed in its README. The executor, written by an agent from the spec alone on 2026-09-28, logged ten more places where the text left it to guess, plus one real disagreement with the Go executor that no scenario had caught (`impl/python/DIVERGENCES.md`). Every one is now answered in the spec text, and the disagreement is pinned by a scenario.
 

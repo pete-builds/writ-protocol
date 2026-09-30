@@ -623,6 +623,66 @@ class PeerBindingTest(Base):
         self.assertEqual(self.ex.receive_call(fwd(chain(), 1))["tally"]["st"], "ok")
 
 
+# ------------------------------------------------------------ audit record
+
+class AuditTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.entries = []
+        self.ex = Executor(EK, [A.did], self.dir, app=self.app, audit=self.entries.append,
+                           peers={"spiffe://b/agent": [BK.did]})
+        self.ex.set_time(T0 + 10)
+
+    def rows(self):
+        return [(e["kind"], e["outcome"], e.get("reason"), e.get("from"), e["peer"]) for e in self.entries]
+
+    def test_every_answer_is_recorded_once(self):
+        ch = chain()
+        self.app.push(Outcome("ok", res={"charge": "c"}))
+        k = fwd(ch, 1)
+        ok = self.ex.receive_call(k, peer="spiffe://b/agent")
+        self.ex.receive_call(k, peer="spiffe://s/other")
+        stranger_root = issue.issue_root(STRANGER, EK.did, {"act": {"t": "prefix", "v": "travel"}}, EXP_ROOT, nnc=nnc(90))
+        self.ex.receive_call(issue.make_call(STRANGER, [stranger_root], "travel/x", {}, call_id=cid(9)))
+        forged = copy.deepcopy(fwd(ch, 2))
+        forged["from"] = STRANGER.did
+        self.ex.receive_call(forged)
+        self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]]))
+        self.ex.receive_revoke({"v": 1, "typ": "revoke"}, peer="spiffe://s/other")
+        self.assertEqual(self.rows(), [
+            ("call", "ok", None, BK.did, "spiffe://b/agent"),
+            ("call", "failed", "peer_mismatch", BK.did, "spiffe://s/other"),
+            ("call", "failed", "root_not_accepted", STRANGER.did, None),
+            ("call", "rejected", "bad_signature", None, None),
+            ("revoke", "recorded", None, A.did, None),
+            ("revoke", "rejected", "malformed", None, "spiffe://s/other"),
+        ])
+        first = self.entries[0]
+        self.assertEqual((first["id"], first["root"], first["leaf"], first["op"], first["tally"]),
+                         (O.identity(k), A.did, O.identity(ch[-1]), "travel/charge", O.identity(ok["tally"])))
+        self.assertNotIn("tally", self.entries[3])
+
+    def test_a_held_call_is_recorded_when_it_finishes(self):
+        self.app.push(HELD)
+        k = fwd(chain(), 1)
+        self.assertEqual(self.ex.receive_call(k, peer="spiffe://b/agent"), {"inflight": True})
+        self.assertEqual(self.entries, [])
+        self.ex.complete(O.identity(k), Outcome("ok", res={"charge": "c"}))
+        self.assertEqual(self.rows(), [("call", "ok", None, BK.did, "spiffe://b/agent")])
+
+    def test_audit_log_appends_json_lines(self):
+        from writ.audit import AuditLog
+        path = os.path.join(self.dir, "audit.jsonl")
+        for i in range(2):
+            log = AuditLog(path)
+            log.record({"at": i, "kind": "call", "peer": None, "outcome": "ok"})
+            log.close()
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[1]), {"at": 1, "kind": "call", "peer": None, "outcome": "ok"})
+
+
 # ------------------------------------------------------- delegating onward
 
 class DelegationTest(Base):

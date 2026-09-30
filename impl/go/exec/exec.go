@@ -53,6 +53,9 @@ type Executor struct {
 	// OnRevoke is called after a revoke is recorded so the application can
 	// forward it to the holders of writs it issued (spec 9.1). Best effort.
 	OnRevoke func(r *writ.Revoke)
+	// Audit, when set, receives one entry for every call and revoke the
+	// executor answers, refusals included (spec 9.3). No check consults it.
+	Audit func(AuditEntry)
 
 	// mu guards inflight and undoLocks. Execute also holds it from a forward
 	// call's revocation check until the call is registered in flight, and
@@ -149,10 +152,10 @@ type Reply struct {
 	Res   any         `json:"res,omitempty"`
 }
 
-// Execute runs spec section 7 on a decoded call object. It returns either a
+// execute runs spec section 7 on a decoded call object. It returns either a
 // reply (always carrying a signed tally) or an unsigned rejection for failures
 // before the call's signature could be verified (steps 1 and 2).
-func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.Error) {
+func (e *Executor) execute(ctx context.Context, obj wire.Object) (*Reply, *writ.Error) {
 	k, err := writ.ParseCall(obj)
 	if err != nil {
 		return nil, err.(*writ.Error)
@@ -415,9 +418,9 @@ func (e *Executor) tallies(k *writ.Call) Result {
 	return Result{St: "ok", Res: map[string]any{"tallies": arr}}
 }
 
-// Revoke runs spec 9.1 on a decoded revoke object and returns the tallies of
+// revoke runs spec 9.1 on a decoded revoke object and returns the tallies of
 // affected non-final forward calls.
-func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
+func (e *Executor) revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
 	r, err := writ.ParseRevoke(obj)
 	if err != nil {
 		return nil, err.(*writ.Error)
