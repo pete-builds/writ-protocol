@@ -353,6 +353,7 @@ docs/directories.md                connecting a directory: mTLS certificates and
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
 docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
+docs/aims-audit-mapping.md         a receipt tree mapped to the WIMSE AIMS audit requirements, gaps included
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
