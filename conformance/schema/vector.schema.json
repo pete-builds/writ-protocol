@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pete-builds/writ-protocol/conformance/schema/vector.schema.json",
+  "title": "Writ conformance vector",
+  "description": "The shape of one vector, spec section 14. It checks the harness, not the protocol: the objects under input are left unconstrained, because many vectors are deliberately malformed.",
+  "type": "object",
+  "required": ["name", "op", "input", "expect"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "op": {"enum": ["canonicalize", "narrows", "satisfies", "verify_writ", "verify_chain", "verify_call", "verify_tally", "verify_revoke"]},
+    "input": {"type": "object"},
+    "expect": {"enum": ["accept", "reject"]},
+    "reason": {"$ref": "#/$defs/reason"},
+    "now": {"type": "integer"}
+  },
+  "allOf": [
+    {"if": {"properties": {"expect": {"const": "reject"}}}, "then": {"required": ["reason"]}, "else": {"not": {"required": ["reason"]}}},
+    {"if": {"properties": {"op": {"const": "canonicalize"}}}, "then": {"properties": {"input": {
+      "required": ["raw"], "additionalProperties": false,
+      "properties": {"raw": {"type": "string"}, "canonical": {"type": "string"}}}}}},
+    {"if": {"properties": {"op": {"const": "canonicalize"}, "expect": {"const": "accept"}}}, "then": {"properties": {"input": {"required": ["canonical"]}}}},
+    {"if": {"properties": {"op": {"const": "narrows"}}}, "then": {"properties": {"input": {
+      "required": ["child", "parent"], "additionalProperties": false, "properties": {"child": true, "parent": true}}}}},
+    {"if": {"properties": {"op": {"const": "satisfies"}}}, "then": {"properties": {"input": {
+      "required": ["bound", "arg"], "additionalProperties": false, "properties": {"bound": true, "arg": true}}}}},
+    {"if": {"properties": {"op": {"const": "verify_writ"}}}, "then": {"properties": {"input": {
+      "required": ["writ"], "additionalProperties": false, "properties": {"writ": true}}}}},
+    {"if": {"properties": {"op": {"const": "verify_chain"}}}, "then": {"properties": {"input": {
+      "required": ["chain"], "additionalProperties": false, "properties": {"chain": {"type": "array"}}}}}},
+    {"if": {"properties": {"op": {"const": "verify_call"}}}, "then": {"properties": {"input": {
+      "required": ["call"], "additionalProperties": false, "properties": {"call": true}}}}},
+    {"if": {"properties": {"op": {"const": "verify_tally"}}}, "then": {"properties": {"input": {
+      "required": ["writ", "call", "tally"], "additionalProperties": false,
+      "properties": {"writ": true, "call": true, "tally": true, "res": true}}}}},
+    {"if": {"properties": {"op": {"const": "verify_revoke"}}}, "then": {"properties": {"input": {
+      "required": ["revoke"], "additionalProperties": false, "properties": {"revoke": true}}}}}
+  ],
+  "$defs": {
+    "reason": {
+      "description": "A rejection reason: every code of spec section 11 except pending, which is not a rejection. scripts/check-schemas.py fails when this list and the spec's table differ.",
+      "enum": ["too_large", "noncanonical", "unsupported_version", "wrong_type", "unsupported_critical", "malformed", "bad_key", "bad_signature", "chain_broken", "not_narrowed", "unknown_bound", "expired", "root_not_accepted", "wrong_executor", "peer_mismatch", "revoked", "no_standing", "forbidden_op", "missing_arg", "out_of_bounds", "count_exhausted", "tally_mismatch", "sub_unmatched", "not_reversible", "undeliverable", "unknown_outcome"]
+    }
+  }
+}

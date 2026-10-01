@@ -20,6 +20,7 @@ permissions:
 
 env:
   PYTHON_CRYPTOGRAPHY: "cryptography>=42,<47"
+  PYTHON_JSONSCHEMA: "jsonschema>=4.18,<5"
 
 jobs:
   go:
@@ -118,6 +119,42 @@ jobs:
             exit 1
           fi
           tail -1 "$RUNNER_TEMP/fuzz.log"
+
+  native-fuzz:
+    name: native Go fuzz targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      # testing.F targets for canonicalization, object decoding, and the
+      # tally checker, seeded from the conformance corpus. Go fuzzes one
+      # target per run; a failing input is written under testdata/fuzz.
+      - name: jcs canonicalization
+        working-directory: impl/go
+        run: go test -run '^$' -fuzz '^FuzzCanonicalize$' -fuzztime 30s ./jcs
+      - name: wire decoding
+        working-directory: impl/go
+        run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s ./wire
+      - name: tally checker
+        working-directory: impl/go
+        run: go test -run '^$' -fuzz '^FuzzVerifyTally$' -fuzztime 30s ./writ
+
+  schemas:
+    name: vector and scenario schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "$PYTHON_JSONSCHEMA"
+      # Every vector and scenario against conformance/schema, the schema's
+      # reasons against spec section 11, and broken copies that must fail.
+      - name: check schemas, with controls
+        run: python scripts/check-schemas.py --control
 
   vectors:
     name: deterministic vector regeneration

@@ -48,3 +48,29 @@ jobs:
           fi
           echo "seed $SEED"
           tail -1 "$RUNNER_TEMP/fuzz.log"
+
+  native-fuzz:
+    name: native Go fuzz targets, ten minutes each
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {name: FuzzCanonicalize, pkg: ./jcs}
+          - {name: FuzzDecode, pkg: ./wire}
+          - {name: FuzzVerifyTally, pkg: ./writ}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: fuzz ${{ matrix.target.name }}
+        working-directory: impl/go
+        run: go test -run '^$' -fuzz "^${{ matrix.target.name }}\$" -fuzztime 10m ${{ matrix.target.pkg }}
+      - name: keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target.name }}
+          path: impl/go/**/testdata/fuzz/
