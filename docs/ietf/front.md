@@ -23,6 +23,7 @@ normative:
   RFC6838:
 informative:
   RFC7515:
+  RFC7942:
   RFC9396:
   DID-KEY:
     title: "The did:key Method"

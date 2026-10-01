@@ -14,6 +14,7 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = open(os.path.join(root, "docs/spec/writ-v0.1.md"), encoding="utf-8").read()
 front = open(os.path.join(root, "docs/ietf/front.md"), encoding="utf-8").read()
 iana = open(os.path.join(root, "docs/ietf/iana.md"), encoding="utf-8").read()
+status = open(os.path.join(root, "docs/ietf/implementation-status.md"), encoding="utf-8").read()
 
 abstract_start = spec.index("## Abstract\n")
 conventions = spec.index("## 1. Conventions\n")
@@ -58,7 +59,7 @@ body = cite(headings(body)).replace(
     "{::boilerplate bcp14-tagged}",
 )
 draft = (front.replace("@@ABSTRACT@@", cite(abstract))
-         + "\n" + body.rstrip() + "\n" + iana + "\n--- back\n\n" + cite(headings(back)).strip() + "\n")
+         + "\n" + body.rstrip() + "\n" + status + "\n" + iana + "\n--- back\n\n" + cite(headings(back)).strip() + "\n")
 if "@@" in draft:
     sys.exit("a placeholder was left unfilled")
 out = os.path.join(root, "docs/ietf/draft-stergion-writ-00.md")
