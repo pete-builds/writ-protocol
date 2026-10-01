@@ -62,7 +62,13 @@
           "properties": {"do": true, "note": {"$ref": "#/$defs/note"}, "now": {"type": "integer"}, "revoke": {"type": "object"},
             "expect": {"oneOf": [
               {"type": "object", "required": ["error"], "additionalProperties": false, "properties": {"error": {"$ref": "#/$defs/reason"}}},
-              {"type": "object", "required": ["tallies"], "additionalProperties": false, "properties": {"tallies": {"type": "array", "items": {"type": "object"}}}}
+              {"type": "object", "required": ["tallies", "ack", "res"], "additionalProperties": false, "properties": {
+                "tallies": {"type": "array", "items": {"type": "object"}},
+                "ack": {"type": "object"},
+                "res": {"type": "object", "required": ["held", "open"], "additionalProperties": false, "properties": {
+                  "held": {"type": "array", "items": {"type": "object", "required": ["call", "tally"], "additionalProperties": false,
+                    "properties": {"call": {"type": "string"}, "tally": {"type": "string"}}}},
+                  "open": {"type": "array", "items": {"type": "string"}}}}}}
             ]}}}},
         {"if": {"properties": {"do": {"const": "finish"}}}, "then": {
           "required": ["call", "app", "signaled"], "additionalProperties": false,

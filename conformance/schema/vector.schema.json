@@ -8,7 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "name": {"type": "string", "minLength": 1},
-    "op": {"enum": ["canonicalize", "narrows", "satisfies", "verify_writ", "verify_chain", "verify_call", "verify_tally", "verify_revoke"]},
+    "op": {"enum": ["canonicalize", "narrows", "satisfies", "verify_writ", "verify_chain", "verify_call", "verify_tally", "verify_revoke", "check_ack"]},
     "input": {"type": "object"},
     "expect": {"enum": ["accept", "reject"]},
     "reason": {"$ref": "#/$defs/reason"},
@@ -34,12 +34,15 @@
       "required": ["writ", "call", "tally"], "additionalProperties": false,
       "properties": {"writ": true, "call": true, "tally": true, "res": true}}}}},
     {"if": {"properties": {"op": {"const": "verify_revoke"}}}, "then": {"properties": {"input": {
-      "required": ["revoke"], "additionalProperties": false, "properties": {"revoke": true}}}}}
+      "required": ["revoke"], "additionalProperties": false, "properties": {"revoke": true}}}}},
+    {"if": {"properties": {"op": {"const": "check_ack"}}}, "then": {"properties": {"input": {
+      "required": ["revoke", "ack", "chain", "tally"], "additionalProperties": false,
+      "properties": {"revoke": true, "ack": true, "res": true, "chain": true, "tally": true}}}}}
   ],
   "$defs": {
     "reason": {
       "description": "A rejection reason: every code of spec section 11 except pending, which is not a rejection. scripts/check-schemas.py fails when this list and the spec's table differ.",
-      "enum": ["too_large", "noncanonical", "unsupported_version", "wrong_type", "unsupported_critical", "malformed", "bad_key", "bad_signature", "chain_broken", "not_narrowed", "unknown_bound", "expired", "root_not_accepted", "wrong_executor", "peer_mismatch", "revoked", "no_standing", "forbidden_op", "missing_arg", "out_of_bounds", "count_exhausted", "tally_mismatch", "sub_unmatched", "not_reversible", "undeliverable", "unknown_outcome"]
+      "enum": ["too_large", "noncanonical", "unsupported_version", "wrong_type", "unsupported_critical", "malformed", "bad_key", "bad_signature", "chain_broken", "not_narrowed", "unknown_bound", "expired", "root_not_accepted", "wrong_executor", "peer_mismatch", "revoked", "no_standing", "forbidden_op", "missing_arg", "out_of_bounds", "count_exhausted", "tally_mismatch", "sub_unmatched", "ack_mismatch", "not_reversible", "undeliverable", "unknown_outcome"]
     }
   }
 }

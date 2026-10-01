@@ -83,6 +83,10 @@ def controls(vec, scen):
     r = next(load(p) for p in sorted(ROOT.glob("conformance/vectors/*.json")) if load(p)["expect"] == "reject")
     t = next(load(p) for p in sorted(ROOT.glob("conformance/vectors/*.json")) if load(p)["op"] == "verify_tally")
     s = load(sorted(ROOT.glob("conformance/scenarios/*.json"))[0])
+    a = next(load(p) for p in sorted(ROOT.glob("conformance/vectors/*.json")) if load(p)["op"] == "check_ack")
+    rs = next(load(p) for p in sorted(ROOT.glob("conformance/scenarios/*.json"))
+              if any(x["do"] == "revoke" and "tallies" in x["expect"] for x in load(p)["steps"]))
+    ri = next(i for i, x in enumerate(rs["steps"]) if x["do"] == "revoke" and "tallies" in x["expect"])
 
     def edit(doc, fn):
         d = copy.deepcopy(doc)
@@ -108,6 +112,10 @@ def controls(vec, scen):
         (scen, "app ok with a code", edit(s, lambda d: d["steps"][first_call].update(app={"st": "ok", "code": "x"}))),
         (scen, "held app with a status", edit(s, lambda d: d["steps"][first_call].update(app={"st": "ok", "hold": True}))),
         (scen, "no steps", edit(s, lambda d: d.update(steps=[]))),
+        (vec, "check_ack without its tally", edit(a, lambda d: d["input"].pop("tally"))),
+        (scen, "a revoke answer with no ack", edit(rs, lambda d: d["steps"][ri]["expect"].pop("ack"))),
+        (scen, "an ack body missing open", edit(rs, lambda d: d["steps"][ri]["expect"]["res"].pop("open"))),
+        (scen, "a single executor relaying acks", edit(rs, lambda d: d["steps"][ri]["expect"].update(fwd=[]))),
     ]
     survived = 0
     for validator, name, doc in cases:
