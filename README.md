@@ -8,7 +8,7 @@ In one line, next to the protocols it sits beside: TCP/IP moves packets between 
 
 ## Three ways in
 
-You need Go 1.25 or newer, or none at all for the programs themselves: every release on the repository's Releases page carries them built for Linux and macOS, amd64 and arm64, with SHA-256 checksums. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
+You need Go 1.25 or newer, or none at all for the programs themselves: every release on the repository's Releases page carries them built for Linux and macOS, amd64 and arm64, with SHA-256 checksums and, from the next release on, SLSA build provenance. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
 
 1. **Watch it run, about ten minutes.**
 
@@ -247,6 +247,22 @@ The skeptic's walk-through (docs/research/03-skeptic-opening.md) hit the same fi
 
   If one of them adds an executor-signed receipt tree, what is left of Writ is its rules for replay, recovery, and reversal, which are easier to add to a draft than a wire format is.
 
+## Where Writ stops
+
+**Bounds are not a prompt-injection defense.** An agent whose model has been hijacked, and that acts inside its writ, is acting lawfully as far as the protocol can see; the threat model says so. Writ limits what a hijacked agent can do (`max`, `set`, `count` per executor, a short `exp`) and records exactly what it did. It does not stop the hijack. [docs/where-writ-stops.md](docs/where-writ-stops.md) has the full argument and its sources.
+
+- **CaMeL and Writ compose.** CaMeL's "capabilities" track where each value came from and where it may go, inside one interpreter. Writ checks who may perform what, within which limits, at an executor that may belong to someone else, and returns signed receipts. A CaMeL-style interpreter decides whether a value may flow into a call; Writ enforces and records the call.
+- **Commit before ingest.** Mint the writs from a plan made before the agent reads anything untrusted, as narrow as the plan allows, so injected text can only choose among actions the plan already permitted, and the receipt tree can be checked against the plan.
+- **Cut the exfiltration leg.** A `set` bound on the argument that names a recipient or host removes attacker-chosen destinations, but only if every channel is a bounded argument. `writ-mcp-proxy -closed` refuses arguments the grant does not bound; a shell or a generic fetch tool stays a channel whatever its arguments say.
+- **Pin tool descriptions.** A poisoned MCP tool description steers the model before any argument exists. `writ-mcp-proxy -pins` lists and calls only tool definitions a person approved ([docs/bindings.md](docs/bindings.md)).
+- **Rule of Two labels, proposed.** Meta's Agents Rule of Two (no more than two of: untrusted input, private data, external effects) maps onto narrowing, since a child writ can only drop authority. A `crit` member carrying the allowed properties is sketched in the page above as a proposal, not part of v0.1.
+
+Against the OWASP Top 10 for Agentic Applications (2026), names from a secondary summary and to be re-checked against OWASP's text:
+
+| Writ addresses | Writ partly addresses | Writ does not address |
+|---|---|---|
+| ASI03 Identity & Privilege Abuse; ASI07 Insecure Inter-Agent Communication | ASI02 Tool Misuse, where an argument carries the meaning; ASI08 Cascading Failures and ASI10 Rogue Agents, through limits, revocation, and undo; ASI04 Supply Chain, for MCP tool descriptions only | ASI01 Agent Goal Hijack within bounds; ASI05 Unexpected Code Execution; ASI06 Memory & Context Poisoning; ASI09 Human-Agent Trust Exploitation |
+
 ## The specification and the threat model
 
 The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-threat-model.md, catalogues 41 threats, 45 pass/fail requirements, and 20 adversarial seeds. The security review of the six candidate designs against that checklist is docs/design/09-security-review.md, and the spec's Security Considerations (section 12) distill both. conformance/ADVERSARIAL.md maps every seed to the vector or test that demonstrates it.
@@ -272,7 +288,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
 | `mcpbind`, `cmd/writ-mcp` | Writ over MCP: the call in `tools/call` `_meta`, the tally in the result, a stdio MCP server that enforces it ([docs/bindings.md](docs/bindings.md)) | 5 tests, including every way a result can contradict its tally; also run with Claude Code as the MCP client |
 | `cmd/writ-gate` | a reverse proxy that enforces Writ in front of an API that has never heard of it ([docs/writ-gate.md](docs/writ-gate.md)) | 5 tests: end to end against a fake orders API, including undo, and a request contract checked against an API that decodes like `encoding/json` (case aliases, duplicates, trailing JSON, unbound members, query strings, path parameters, method overrides) |
-| `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call | 9 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
+| `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call; optionally lists and calls only pinned tool definitions and refuses arguments the grant does not bound | 17 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
 | `a2abind` | Writ over A2A: the call in a message part or metadata, the tally as the task's last artifact | 1 test, message level |
 | `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
@@ -305,6 +321,8 @@ So the consistency claim rests on two implementations in two languages, written 
 - **Vectors,** `conformance/vectors/`: 241 of them, regenerated byte for byte from fixed seeds and fixed nonces, 60 that must be accepted and 181 that must be rejected, each rejection naming its reason code. They cover canonicalization, every bound type in both directions, every chain rule, signatures, expiry, size, depth, and nesting limits, forward and standing calls (including standing calls after expiry), tally trees with sub-tally accounting, and revokes. Most of the 42 added on 2026-09-28 carry two faults each, which pins the reason a verifier must report first (spec section 12 makes that order normative); the rest pin the nesting limit, the full shape of a pending tally, and `depth` on delegated writs. The four added on 2026-09-29 pin tally-tree accounting two levels deep, including the review's reproduction, which both verifiers accepted before the fix. The 28 added on 2026-09-30 pin section 9.4, checking a tally against its signer's ack of a revoke: work the ack holds or lists is accounted for, and work accepted after the revoke is caught, including a tally whose `acc` is dated before it.
 - **Scenarios,** `conformance/scenarios/`: 24 of them, 150 steps in all, for executor behavior that needs memory: count, replay, undo and how reversals are serialized, `sys/tallies`, revoke with in-flight cancel, crash recovery, binding the transport's authenticated peer to the caller's key, revokes of a key and of one writ that outlive a restart, and the ack a revoke is answered with, byte for byte. Each step is a call, a revoke, the end of a held operation, or a restart, and the expected tally is compared byte for byte (spec section 14.1).
 - **The fuzzer,** `cmd/writ-fuzz`, goes beyond hand-written cases. It mutates valid objects one to three faults at a time, records the Go verifier's verdict on each as a vector, and lets another implementation run the directory. Before the 2026-09-28 revision pinned every open ordering question, 60,000 inputs produced about 2,470 disagreements between Go and Python. After it, seeds 1 to 4 at 20,000 inputs each produce none, revokes included.
+- **Native fuzz targets** (`go test -fuzz`) cover what the differential fuzzer does not: whatever `jcs.Canonicalize` accepts must be a fixed point, whatever `wire.Decode` accepts must round-trip to the same bytes and identity, and the tally checker must never call a tally valid without the executor's signature, never give two verdicts for one input, and always name a reason. A planted bug that skipped the tally signature was found in four seconds.
+- **Schemas,** `conformance/schema/`: the shape of a vector (section 14) and of a scenario (section 14.1) as JSON Schema, for implementers in languages with a validator, the way Wycheproof ships its vectors. They describe the harness, not the protocol: the objects inside a vector are left unconstrained, because many are deliberately malformed.
 
 ## How it could be adopted
 
@@ -334,6 +352,8 @@ docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
+docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
+docs/aims-audit-mapping.md         a receipt tree mapped to the WIMSE AIMS audit requirements, gaps included
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
@@ -343,7 +363,9 @@ conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
 demo/run.sh                        three-process demo; transcript in demo/out/ (generated)
 scripts/build-release.sh           builds the release archives; .github/workflows/release.yml publishes them on a v* tag
 .github/workflows/ci.yml           CI: tests, cross-conformance, scenarios, fuzz, regeneration, demo
-.github/workflows/fuzz-weekly.yml  differential fuzz on a fresh seed each week
+.github/workflows/fuzz-weekly.yml  differential fuzz on a fresh seed, and the native fuzz targets, each week
+.github/workflows/scorecard.yml    OpenSSF Scorecard on main and weekly
+conformance/schema/                JSON schemas for vectors and scenarios; scripts/check-schemas.py checks them
 ```
 
 ## Continuous integration
@@ -356,10 +378,14 @@ scripts/build-release.sh           builds the release archives; .github/workflow
 | python unit tests | `unittest` on Python 3.12, 3.13, and 3.14 (developed on 3.14) |
 | cross-implementation conformance | the Go verifier on every Go and Python vector, the Python verifier on every Go and Python vector, and both executors on every scenario |
 | differential fuzz, fixed seed | the Go verifier judges 20,000 mutated inputs from seed 1, and the Python verifier reaches the same verdict and reason on every one |
+| native Go fuzz targets | `testing.F` targets for canonicalization (`jcs`), object decoding (`wire`), and the tally checker (`writ`), seeded from the corpus, 30 seconds each |
+| vector and scenario schemas | every vector and scenario validates against `conformance/schema/`, the schema's rejection reasons match spec section 11, and broken copies of real files are rejected (`scripts/check-schemas.py --control`) |
 | deterministic vector regeneration | all three generators rerun, and `git diff` of the vector and scenario directories is empty |
 | three-process demo | `demo/run.sh` exits zero and the transcript says every expectation held |
 
-`.github/workflows/fuzz-weekly.yml` runs the same fuzz job every Monday on 50,000 inputs from a fresh seed, which it prints first so a failure can be reproduced locally.
+`.github/workflows/fuzz-weekly.yml` runs the same fuzz job every Monday on 50,000 inputs from a fresh seed, which it prints first so a failure can be reproduced locally, and each native fuzz target for ten minutes, keeping any failing input as an artifact.
+
+`.github/workflows/scorecard.yml` runs OpenSSF Scorecard on every push to main and weekly, and publishes the result. `.github/workflows/release.yml` attaches SLSA build provenance, `writ-<tag>.intoto.jsonl`, to every release beside `SHA256SUMS`; the workflow's header shows the `slsa-verifier` command that checks an archive against it.
 
 ## License
 

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pete-builds/writ-protocol/conformance/schema/scenario.schema.json",
+  "title": "Writ executor scenario",
+  "description": "The shape of one executor scenario, spec section 14.1. Calls, revokes, and tallies are left unconstrained beyond being objects: what they must contain is the executor's to check.",
+  "type": "object",
+  "required": ["name", "executor", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "executor": {
+      "type": "object",
+      "required": ["seed", "accept"],
+      "additionalProperties": false,
+      "properties": {
+        "seed": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "accept": {"type": "array", "items": {"$ref": "#/$defs/key"}},
+        "peers": {"type": "object", "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/key"}}}
+      }
+    },
+    "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}}
+  },
+  "$defs": {
+    "key": {"type": "string", "pattern": "^did:key:z[1-9A-HJ-NP-Za-km-z]+$"},
+    "reason": {"$ref": "vector.schema.json#/$defs/reason"},
+    "note": {"type": "string"},
+    "reply": {
+      "oneOf": [
+        {"type": "object", "required": ["error"], "additionalProperties": false, "properties": {"error": {"$ref": "#/$defs/reason"}}},
+        {"type": "object", "required": ["tally"], "additionalProperties": false, "properties": {"tally": {"type": "object"}, "res": true}},
+        {"type": "object", "required": ["inflight"], "additionalProperties": false, "properties": {"inflight": {"const": true}}}
+      ]
+    },
+    "app": {
+      "type": "object",
+      "required": ["st"],
+      "additionalProperties": false,
+      "properties": {
+        "st": {"enum": ["ok", "failed", "canceled", ""]},
+        "code": {"type": "string", "minLength": 1},
+        "res": true,
+        "used": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "rev": {"type": "integer"},
+        "hold": {"type": "boolean"}
+      },
+      "allOf": [
+        {"if": {"properties": {"st": {"enum": ["failed", "canceled"]}}}, "then": {"required": ["code"]}, "else": {"not": {"required": ["code"]}}},
+        {"if": {"required": ["hold"], "properties": {"hold": {"const": true}}}, "then": {"properties": {"st": {"const": ""}}}, "else": {"properties": {"st": {"not": {"const": ""}}}}}
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": ["do", "expect"],
+      "properties": {"do": {"enum": ["call", "revoke", "finish", "restart"]}},
+      "allOf": [
+        {"if": {"properties": {"do": {"const": "call"}}}, "then": {
+          "required": ["now", "call"], "additionalProperties": false,
+          "properties": {"do": true, "note": {"$ref": "#/$defs/note"}, "now": {"type": "integer"}, "call": {"type": "object"},
+            "app": {"$ref": "#/$defs/app"}, "peer": {"type": "string"}, "expect": {"$ref": "#/$defs/reply"}}}},
+        {"if": {"properties": {"do": {"const": "revoke"}}}, "then": {
+          "required": ["now", "revoke"], "additionalProperties": false,
+          "properties": {"do": true, "note": {"$ref": "#/$defs/note"}, "now": {"type": "integer"}, "revoke": {"type": "object"},
+            "expect": {"oneOf": [
+              {"type": "object", "required": ["error"], "additionalProperties": false, "properties": {"error": {"$ref": "#/$defs/reason"}}},
+              {"type": "object", "required": ["tallies", "ack", "res"], "additionalProperties": false, "properties": {
+                "tallies": {"type": "array", "items": {"type": "object"}},
+                "ack": {"type": "object"},
+                "res": {"type": "object", "required": ["held", "open"], "additionalProperties": false, "properties": {
+                  "held": {"type": "array", "items": {"type": "object", "required": ["call", "tally"], "additionalProperties": false,
+                    "properties": {"call": {"type": "string"}, "tally": {"type": "string"}}}},
+                  "open": {"type": "array", "items": {"type": "string"}}}}}}
+            ]}}}},
+        {"if": {"properties": {"do": {"const": "finish"}}}, "then": {
+          "required": ["call", "app", "signaled"], "additionalProperties": false,
+          "properties": {"do": true, "note": {"$ref": "#/$defs/note"}, "call": {"type": "string"}, "app": {"$ref": "#/$defs/app"},
+            "signaled": {"type": "boolean"}, "expect": {"$ref": "#/$defs/reply"}}}},
+        {"if": {"properties": {"do": {"const": "restart"}}}, "then": {
+          "additionalProperties": false,
+          "properties": {"do": true, "note": {"$ref": "#/$defs/note"},
+            "expect": {"type": "object", "required": ["resolved"], "additionalProperties": false, "properties": {"resolved": {"type": "integer", "minimum": 0}}}}}}
+      ]
+    }
+  }
+}
