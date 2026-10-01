@@ -29,6 +29,7 @@ const (
 	CountExhausted      Reason = "count_exhausted"
 	TallyMismatch       Reason = "tally_mismatch"
 	SubUnmatched        Reason = "sub_unmatched"
+	AckMismatch         Reason = "ack_mismatch"
 	NotReversible       Reason = "not_reversible"
 	Undeliverable       Reason = "undeliverable"
 	UnknownOutcome      Reason = "unknown_outcome"

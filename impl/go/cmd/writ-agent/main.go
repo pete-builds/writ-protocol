@@ -281,17 +281,23 @@ func installBooking(e *exec.Executor, downstream string) {
 		log.Printf("canceled booking %v and undid %d payment(s)", m["pnr"], len(subs))
 		return exec.Result{Res: map[string]any{"canceled": m["pnr"]}, Sub: subs, Wrt: wrts}
 	}
-	// Forward revokes to C, best effort.
+	// Forward revokes to C, best effort, and keep C's ack so B's answer
+	// relays it: A then holds C's own record of the revoke (spec 9.4).
 	e.OnRevoke = func(r *writ.Revoke) {
 		wk, err := discover(context.Background())
 		if err != nil {
 			return
 		}
-		if _, err := client.Revoke(context.Background(), downstream+wk.Endpoint, r); err != nil {
+		rep, err := client.Revoke(context.Background(), downstream+wk.Endpoint, r)
+		if err != nil {
 			log.Printf("could not forward revoke: %v", err)
-		} else {
-			log.Printf("forwarded revoke of %s downstream", short(r.Writ))
+			return
 		}
+		if err := e.KeepAcks(r, rep); err != nil {
+			log.Printf("forwarded revoke of %s downstream; refused an ack it returned: %v", short(r.Writ), err)
+			return
+		}
+		log.Printf("forwarded revoke of %s downstream and kept its ack", short(r.Writ))
 	}
 }
 

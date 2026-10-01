@@ -134,8 +134,10 @@ func TestRevokeBetweenCheckAndAdmissionStopsTheCall(t *testing.T) {
 			pend, rej := e.Revoke(rv.Raw)
 			if rej != nil {
 				t.Error(rej)
+				answer <- nil
+				return
 			}
-			answer <- pend
+			answer <- pend.Tallies
 		}()
 		// Give the revoke the whole window. A correct executor holds it
 		// until this call is in flight; without the lock it records the

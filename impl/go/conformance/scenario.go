@@ -227,15 +227,19 @@ func (d *Driver) Run(s *Step) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("step revoke is not an object: %v", err)
 		}
-		tallies, rej := d.e.Revoke(obj)
+		rep, rej := d.e.Revoke(obj)
 		if rej != nil {
 			return map[string]any{"error": string(rej.Code)}, nil
 		}
-		arr := make([]any, 0, len(tallies))
-		for _, t := range tallies {
+		arr := make([]any, 0, len(rep.Tallies))
+		for _, t := range rep.Tallies {
 			arr = append(arr, t)
 		}
-		return map[string]any{"tallies": arr}, nil
+		out := map[string]any{"tallies": arr, "ack": rep.Ack, "res": rep.Res}
+		if len(rep.Fwd) > 0 {
+			out["fwd"] = rep.Fwd
+		}
+		return out, nil
 	case "finish":
 		var cid string
 		if err := json.Unmarshal(s.Call, &cid); err != nil {

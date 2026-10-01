@@ -41,7 +41,7 @@ Pass `-B`, so a stale `.pyc` can never stand in for the source. `tests/test_writ
     ex = Executor(key, accept=[root_did], store_dir="state/", app=my_app)
     ex.set_time(1788400010)          # or pass clock=callable
     answer = ex.receive_call(call)   # {"tally": ..., "res": ...}, {"error": ...}, or {"inflight": True}
-    answer = ex.receive_revoke(rev)  # {"tallies": [...]} or {"error": ...}
+    answer = ex.receive_revoke(rev)  # {"tallies": [...], "ack": ..., "res": ...} or {"error": ...}
     ex.complete(call_id, Outcome("ok", res={...}))   # a held operation returns
     ex.restart()                     # crash and reopen: resolves pending records
 

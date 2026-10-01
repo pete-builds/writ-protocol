@@ -123,6 +123,8 @@ def run_vector(vec):
             V.verify_call(inp["call"], now=now, standing_ops=False)
         elif op == "verify_revoke":
             V.verify_revoke(inp["revoke"], now=now)
+        elif op == "check_ack":
+            V.check_ack(inp["revoke"], inp["ack"], inp.get("res"), inp["chain"], inp["tally"])
         elif op == "verify_tally":
             verdict = V.verify_tally(inp["writ"], inp["call"], inp["tally"], res=inp.get("res"), now=now)
             if not verdict.ok:

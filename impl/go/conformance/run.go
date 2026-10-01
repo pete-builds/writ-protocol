@@ -131,6 +131,13 @@ func Judge(v Vector) (Verdict, error) {
 			err = writ.CheckRevoke(r)
 		}
 		reason = writ.CodeOf(err)
+	case "check_ack":
+		in := decode(v.Input)
+		rvo, _ := in["revoke"].(map[string]any)
+		ack, _ := in["ack"].(map[string]any)
+		tobj, _ := in["tally"].(map[string]any)
+		err = writ.CheckAck(rvo, ack, in["res"], in["chain"], tobj)
+		reason = writ.CodeOf(err)
 	default:
 		return Verdict{}, fmt.Errorf("unknown op %s", v.Op)
 	}

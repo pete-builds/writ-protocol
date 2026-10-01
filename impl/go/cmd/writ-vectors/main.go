@@ -665,5 +665,69 @@ func main() {
 	tv("branching tree within the root max", w1, kAB, tree([]branch{{C, D, 20000, 20000}, {E, F, 30500, 30000}}, 51000), nil, "")
 	tv("own used below its sub tally", w1, kAB, rt(func(o wire.Object) { o["used"] = map[string]any{} }, B), nil, writ.OutOfBounds)
 
+	// Section 9.4: checking a tally against its signer's ack of a revoke. A
+	// revokes w1; C acked it at now+10, holding one finished call and one in
+	// flight. Every tally below verifies under section 6.2; the ack is what
+	// tells work accepted before the revoke from work accepted after it,
+	// whatever the tally's acc says.
+	ackChain := raws(w1, w2)
+	rvA := must(writ.NewRevoke(A, []*writ.Writ{w1}))
+	callC := func() *writ.Call { return must(writ.NewCall(B, []*writ.Writ{w1, w2}, "travel/charge", good)) }
+	kHeld, kOpen := callC(), callC()
+	tHeld := must3(writ.NewTally(C, writ.TallyInput{Call: kHeld, Acc: now + 5, St: "ok", Used: usedOf(58900), Res: map[string]any{"charge": "ch_1"}}))
+	ackBody := writ.AckBody([]writ.AckHeld{{Call: kHeld.ID, Tally: tHeld.ID}}, []string{kOpen.ID})
+	ackC := must(writ.NewAck(C, rvA.ID, now+10, ackBody))
+	ca := func(name string, rvo, ack wire.Object, body any, chain []any, t wire.Object, r writ.Reason) {
+		write(name, "check_ack", map[string]any{"revoke": rvo, "ack": ack, "res": body, "chain": chain, "tally": t}, expectOf(r), r, nil)
+	}
+	tally := func(k *writ.Call, acc int64, st, code string) wire.Object {
+		return must3(writ.NewTally(C, writ.TallyInput{Call: k, Acc: acc, St: st, ErrCode: code})).Raw
+	}
+	ca("held tally", rvA.Raw, ackC.Raw, ackBody, ackChain, tHeld.Raw, "")
+	ca("pending tally of a held call", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(kHeld, now+5, "pending", "pending"), "")
+	ca("pending tally of an open call", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(kOpen, now+6, "pending", "pending"), "")
+	ca("final tally of an open call", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(kOpen, now+6, "canceled", "revoked"), "")
+	ca("work accepted after the revoke", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(callC(), now+20, "ok", ""), writ.Revoked)
+	ca("work after the revoke with acc backdated", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(callC(), now+1, "ok", ""), writ.Revoked)
+	ca("a second outcome for a held call", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(kHeld, now+5, "ok", ""), writ.Revoked)
+	ca("failed work that consumed", rvA.Raw, ackC.Raw, ackBody, ackChain,
+		must3(writ.NewTally(C, writ.TallyInput{Call: callC(), Acc: now + 20, St: "failed", ErrCode: "app/declined", Used: usedOf(1)})).Raw, writ.Revoked)
+	ca("a refusal after the revoke reports no work", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(callC(), now+20, "failed", "revoked"), "")
+	kSys := must(writ.NewCall(B, []*writ.Writ{w1, w2}, "sys/tallies", map[string]any{"writ": w2.ID}))
+	ca("a standing call is not forward work", rvA.Raw, ackC.Raw, ackBody, ackChain, tally(kSys, now+20, "ok", ""), "")
+	ca("an ack by another signer says nothing", rvA.Raw, must(writ.NewAck(D, rvA.ID, now+10, ackBody)).Raw, ackBody, ackChain, tally(callC(), now+20, "ok", ""), "")
+	wSib := narrowAll(w1, B, C.DID(), now+1800)
+	rvSib := must(writ.NewRevoke(B, []*writ.Writ{w1, wSib}))
+	ca("a revoke of a sibling writ does not cover the chain", rvSib.Raw, must(writ.NewAck(C, rvSib.ID, now+10, ackBody)).Raw, ackBody, ackChain, tally(callC(), now+20, "ok", ""), "")
+	wShort := narrowAll(w1, B, C.DID(), now+8)
+	kShort := must(writ.NewCall(B, []*writ.Writ{w1, wShort}, "travel/charge", good))
+	ca("a writ that expired before rcv", rvA.Raw, ackC.Raw, ackBody, raws(w1, wShort), tally(kShort, now+7, "ok", ""), "")
+	rvB := must(writ.NewRevoke(B, nil))
+	ackB := must(writ.NewAck(C, rvB.ID, now+10, ackBody))
+	ca("key-wide revoke covers the writ the key issued", rvB.Raw, ackB.Raw, ackBody, ackChain, tally(callC(), now+20, "ok", ""), writ.Revoked)
+	wDirect := must(writ.Issue(A, C.DID(), bnd("act", "prefix", "travel"), now+3600, nil))
+	kDirect := must(writ.NewCall(A, []*writ.Writ{wDirect}, "travel/x", map[string]any{}))
+	ca("key-wide revoke of a key absent from the chain", rvB.Raw, ackB.Raw, ackBody, raws(wDirect), tally(kDirect, now+20, "ok", ""), "")
+	late := tally(callC(), now+20, "ok", "")
+	ca("ack of another revoke", rvA.Raw, ackB.Raw, ackBody, ackChain, late, writ.AckMismatch)
+	ca("body substituted", rvA.Raw, ackC.Raw, writ.AckBody([]writ.AckHeld{{Call: kHeld.ID, Tally: tHeld.ID}}, []string{kOpen.ID, must(wire.Hash(late))}), ackChain, late, writ.AckMismatch)
+	ca("no body", rvA.Raw, ackC.Raw, nil, ackChain, late, writ.AckMismatch)
+	badBody := map[string]any{"held": map[string]any{}, "open": []any{}}
+	ca("held not an array", rvA.Raw, must(writ.NewAck(C, rvA.ID, now+10, badBody)).Raw, badBody, ackChain, late, writ.Malformed)
+	ra := func(f func(o wire.Object), signer *keys.Identity) wire.Object {
+		o := must(wire.Clone(ackC.Raw))
+		f(o)
+		return re(o, signer)
+	}
+	ca("ack typ tally", rvA.Raw, ra(func(o wire.Object) { o["typ"] = "tally" }, C), ackBody, ackChain, late, writ.WrongType)
+	ca("ack rcv not an integer", rvA.Raw, ra(func(o wire.Object) { o["rcv"] = "soon" }, C), ackBody, ackChain, late, writ.Malformed)
+	ca("ack signed by another key", rvA.Raw, ra(func(o wire.Object) {}, D), ackBody, ackChain, late, writ.BadSignature)
+	ca("ack revoke member before iss", rvA.Raw, ra(func(o wire.Object) { o["revoke"] = "c2hvcnQ"; o["iss"] = "did:web:c.example" }, C), ackBody, ackChain, late, writ.Malformed)
+	ca("revoke before ack", rv(w1.ID, raws(w1), A.DID(), S), ra(func(o wire.Object) { o["typ"] = "tally" }, C), ackBody, ackChain, late, writ.BadSignature)
+	ca("ack before chain", rvA.Raw, ackB.Raw, ackBody, raws(w2), late, writ.AckMismatch)
+	ca("chain before tally", rvA.Raw, ackC.Raw, ackBody, raws(w2), late, writ.ChainBroken)
+	ca("tally signed by someone other than the leaf holder", rvA.Raw, ackC.Raw, ackBody, ackChain, must3(writ.NewTally(D, writ.TallyInput{Call: callC(), Acc: now + 20, St: "ok"})).Raw, writ.BadSignature)
+	ca("tally for another writ", rvA.Raw, ackC.Raw, ackBody, ackChain, must3(writ.NewTally(C, writ.TallyInput{Call: must(writ.NewCall(A, []*writ.Writ{w1}, "travel/book", good)), Acc: now + 20, St: "ok"})).Raw, writ.TallyMismatch)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }

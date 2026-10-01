@@ -93,6 +93,15 @@ class Base(unittest.TestCase):
         self.ex.set_time(t)
         return self.ex
 
+    def assertAcked(self, answer, revoke, tallies=()):
+        """Section 9.4: a recorded revoke is answered with its tallies and
+        this executor's own ack of it, which verifies for that revoke."""
+        self.assertEqual(answer["tallies"], list(tallies), answer)
+        a = V.verify_ack(V.verify_revoke(revoke), answer["ack"], answer["res"])
+        self.assertEqual(a["iss"], self.ex.did)
+        self.assertNotIn("fwd", answer)
+        return a
+
     def assertRefused(self, answer, code, acc=None):
         self.assertIn("tally", answer, answer)
         t = answer["tally"]
@@ -283,8 +292,8 @@ class ForwardTest(Base):
                              "amount": {"t": "max", "v": 58900}, "uses": {"t": "count", "v": 1}})
         _, first = self.charge(ch)
         self.assertEqual(self.at(T0 + 30).receive_call(fwd(ch, 1)), first)   # count is used up
-        rv = self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]]))
-        self.assertEqual(rv, {"tallies": []})
+        r = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        self.assertAcked(self.ex.receive_revoke(r), r)
         self.assertRefused(self.at(T0 + 40).receive_call(fwd(ch, 1)), "revoked")
 
     def test_application_failure_is_unknown_outcome(self):
@@ -429,7 +438,7 @@ class RevokeTest(Base):
                          {"error": "no_standing"})
         self.app.push(Outcome("ok"))
         self.assertEqual(self.ex.receive_call(fwd(ch, 1))["tally"]["st"], "ok")
-        self.assertEqual(self.ex.receive_revoke(r), {"tallies": []})
+        self.assertAcked(self.ex.receive_revoke(r), r)
         self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
 
     def test_answer_order_signal_and_scope(self):
@@ -451,7 +460,7 @@ class RevokeTest(Base):
 
     def test_key_wide_revoke_covers_later_writs_and_keeps_standing(self):
         ch, first = self.charge()
-        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, "*")), {"tallies": []})
+        self.assertAcked(self.ex.receive_revoke(issue.make_revoke(A, "*")), issue.make_revoke(A, "*"))
         self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
         later = chain(n=5)
         self.assertRefused(self.ex.receive_call(fwd(later, 3)), "revoked")
@@ -464,7 +473,8 @@ class RevokeTest(Base):
         self.app.push(HELD)
         undo = issue.make_call(A, ch, "sys/undo", {"tally": first["tally"]}, call_id=cid(2))
         self.ex.receive_call(undo)
-        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]])), {"tallies": []})
+        r = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        self.assertAcked(self.ex.receive_revoke(r), r)
         self.assertFalse(self.ex.signaled(O.identity(undo)))
 
     def test_revoke_survives_restart(self):
@@ -582,18 +592,115 @@ class StoreFailureTest(Base):
         self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, "*")), {"error": STORE_WRITE_FAILED})
         self.assertRefused(self.ex.receive_call(fwd(ch, 1)), "revoked")
         self.ex.stores.revokes.add = real
-        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, "*")), {"tallies": []})
+        self.assertAcked(self.ex.receive_revoke(issue.make_revoke(A, "*")), issue.make_revoke(A, "*"))
         self.assertEqual(self.ex.restart(), 0)
         self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
 
-    def test_unsaved_writ_revoke_is_answered_as_recorded(self):
+    def test_unsaved_writ_revoke_is_an_error_and_still_honored(self):
+        # Section 9: a revoke of one writ MUST survive restart too; answering
+        # an unsaved one as recorded let a restart re-admit the writ.
         ch = chain()
+        real = self.ex.stores.revokes.add
 
         def broken(revoke, exp=None):
             raise OSError("disk full")
         self.ex.stores.revokes.add = broken
-        self.assertEqual(self.ex.receive_revoke(issue.make_revoke(A, ch[0], chain=[ch[0]])), {"tallies": []})
+        rv = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        self.assertEqual(self.ex.receive_revoke(rv), {"error": STORE_WRITE_FAILED})
         self.assertRefused(self.ex.receive_call(fwd(ch, 1)), "revoked")
+        self.ex.stores.revokes.add = real
+        self.assertAcked(self.ex.receive_revoke(rv), rv)
+        self.assertEqual(self.ex.restart(), 0)
+        self.assertRefused(self.ex.receive_call(fwd(ch, 2)), "revoked")
+
+
+# ------------------------------------------------------------------- acks
+
+class AckTest(Base):
+    """Section 9.4: an ack accounts for every tally its signer signs for work
+    under the revoked writ, and nothing it signs for work accepted later,
+    however that tally's acc is dated."""
+
+    def check(self, r, answer, ch, tally):
+        try:
+            V.check_ack(r, answer["ack"], answer["res"], ch, tally)
+        except Exception as e:  # noqa: BLE001, the reason is what is asserted
+            return getattr(e, "reason", repr(e))
+        return None
+
+    def forgetful(self, ch, n, t):
+        """An executor with this one's key and none of its stores: one that
+        lost the revoke, or ignored it, and does new work under it."""
+        d = tempfile.mkdtemp(prefix="writ-forgetful-")
+        self.addCleanup(shutil.rmtree, d, True)
+        app = ScriptedApp()
+        app.push(Outcome("ok", res={"late": n}))
+        g = Executor(EK, [A.did], d, app=app)
+        g.set_time(t)
+        return g.receive_call(fwd(ch, n))["tally"]
+
+    def test_honest_work_is_accounted_for_and_late_work_is_not(self):
+        ch, first = self.charge()
+        self.app.push(HELD)
+        self.assertEqual(self.at(T0 + 11).receive_call(fwd(ch, 2)), {"inflight": True})
+        pending = self.at(T0 + 12).receive_call(fwd(ch, 2))["tally"]
+        r = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        answer = self.at(T0 + 20).receive_revoke(r)
+        self.assertEqual([len(answer["res"]["held"]), len(answer["res"]["open"])], [1, 1])
+        refused = self.assertRefused(self.at(T0 + 30).receive_call(fwd(ch, 3)), "revoked")
+        final = self.ex.complete(O.identity(fwd(ch, 2)), Outcome("canceled", "revoked"))["tally"]
+        for name, t in (("finished before", first["tally"]), ("pending at", pending),
+                        ("final after running across", final), ("refused after", refused)):
+            self.assertIsNone(self.check(r, answer, ch, t), name)
+        late = self.forgetful(ch, 4, T0 + 40)
+        self.assertTrue(V.verify_tally(ch[1], fwd(ch, 4), late).ok)  # 6.2 alone cannot tell
+        self.assertEqual(self.check(r, answer, ch, late), "revoked")
+        back = issue.make_tally(EK, fwd(ch, 5), ch[1], acc=T0 + 1)
+        self.assertTrue(V.verify_tally(ch[1], fwd(ch, 5), back).ok)
+        self.assertEqual(self.check(r, answer, ch, back), "revoked", "a backdated acc must not help")
+
+    def test_key_wide_ack_holds_work_under_the_keys_writs(self):
+        ch, first = self.charge()
+        r = issue.make_revoke(BK, "*")
+        answer = self.at(T0 + 20).receive_revoke(r)
+        self.assertEqual(answer["res"]["held"], [{"call": first["tally"]["call"], "tally": O.identity(first["tally"])}])
+        self.assertIsNone(self.check(r, answer, ch, first["tally"]))
+        self.assertEqual(self.check(r, answer, ch, self.forgetful(ch, 4, T0 + 40)), "revoked")
+
+    def test_forwarded_acks_are_relayed_only_when_they_verify(self):
+        ch = chain(leaf_bnd={"act": {"t": "prefix", "v": "travel"}, "amount": {"t": "max", "v": 58900}})
+        sub_dir = tempfile.mkdtemp(prefix="writ-sub-")
+        self.addCleanup(shutil.rmtree, sub_dir, True)
+        below = Executor(CK, [A.did], sub_dir)
+        below.set_time(T0 + 20)
+        tampered = {"forwarded": 0}
+
+        def forward(data, holder):
+            answer = below.receive_revoke(data)
+            if tampered["forwarded"]:
+                answer = dict(answer, res={"held": [], "open": ["x"]})
+            tampered["forwarded"] += 1
+            return answer
+
+        self.ex.forward_revoke = forward
+        # The executor delegates to CK under ch[1], so it forwards to CK.
+        def delegate(op):
+            op.issue(CK.did, bnd={"act": {"t": "prefix", "v": "travel/charge"},
+                                  "amount": {"t": "max", "v": 100}}, nnc=nnc(99))
+            return Outcome("ok")
+        self.app.push(delegate)
+        self.assertEqual(self.ex.receive_call(fwd(ch, 1))["tally"]["st"], "ok")
+        r = issue.make_revoke(A, ch[0], chain=[ch[0]])
+        answer = self.at(T0 + 20).receive_revoke(r)
+        self.assertEqual(len(answer.get("fwd", [])), 1, answer.keys())
+        relayed = V.verify_ack(V.verify_revoke(r), answer["fwd"][0]["ack"], answer["fwd"][0]["res"])
+        self.assertEqual(relayed["iss"], CK.did)
+        # Forwarded again, the answer below is tampered with and not kept;
+        # the ack kept the first time is still relayed.
+        again = self.at(T0 + 21).receive_revoke(r)
+        self.assertEqual(len(again["fwd"]), 1)
+        V.verify_ack(V.verify_revoke(r), again["fwd"][0]["ack"], again["fwd"][0]["res"])
+        self.assertIsNotNone(self.ex.keep_acks(V.verify_revoke(r), {"ack": answer["ack"], "res": {"held": [], "open": []}}))
 
 
 # ------------------------------------------------------------ peer binding
@@ -853,7 +960,7 @@ class ScenarioRunnerTest(unittest.TestCase):
 
     def test_corpus_scenarios_pass(self):
         names = sorted(n for n in os.listdir(SCENARIOS) if n.endswith(".json"))
-        self.assertEqual(len(names), 22)
+        self.assertEqual(len(names), 24)
         for name in names:
             with self.subTest(name=name):
                 self.run_one(self.load(name))

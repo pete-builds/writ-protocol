@@ -41,15 +41,15 @@ func (e *Executor) Execute(ctx context.Context, obj wire.Object) (*Reply, *writ.
 
 // Revoke runs spec 9.1 on a revoke delivered by a transport that
 // authenticated no peer.
-func (e *Executor) Revoke(obj wire.Object) ([]wire.Object, *writ.Error) {
+func (e *Executor) Revoke(obj wire.Object) (*RevokeReply, *writ.Error) {
 	return e.RevokeContext(context.Background(), obj)
 }
 
 // RevokeContext runs spec 9.1 on a decoded revoke object and, when Audit is
 // set, records the answer with the peer ctx carries (WithPeer). The peer is
 // not checked: any key may revoke its own writs (spec 7.6).
-func (e *Executor) RevokeContext(ctx context.Context, obj wire.Object) ([]wire.Object, *writ.Error) {
-	tallies, rej := e.revoke(obj)
+func (e *Executor) RevokeContext(ctx context.Context, obj wire.Object) (*RevokeReply, *writ.Error) {
+	rep, rej := e.revoke(obj)
 	if e.Audit != nil {
 		a := AuditEntry{At: e.Now(), Kind: "revoke", Peer: peerPtr(ctx), Outcome: "recorded"}
 		a.ID, _ = wire.Hash(obj)
@@ -68,7 +68,7 @@ func (e *Executor) RevokeContext(ctx context.Context, obj wire.Object) ([]wire.O
 		}
 		e.Audit(a)
 	}
-	return tallies, rej
+	return rep, rej
 }
 
 // AuditUnreadable records an object a transport binding rejected before it

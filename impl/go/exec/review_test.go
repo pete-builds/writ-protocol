@@ -143,7 +143,7 @@ func TestRevokeLeavesRunningUndoAlone(t *testing.T) {
 	if rej != nil {
 		t.Fatal(rej)
 	}
-	if got := <-result; got != "ok" || len(pend) != 0 {
-		t.Fatalf("revoke touched a running sys/undo: undo answered %s, revoke listed %d pending tallies", got, len(pend))
+	if got := <-result; got != "ok" || len(pend.Tallies) != 0 {
+		t.Fatalf("revoke touched a running sys/undo: undo answered %s, revoke listed %d pending tallies", got, len(pend.Tallies))
 	}
 }

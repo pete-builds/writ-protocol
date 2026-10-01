@@ -191,6 +191,23 @@
     "writ": "*"
    },
    "expect": {
+    "ack": {
+     "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "out": "QxykdzaqGPLHyi0LbqJNdfMKc1WM7qNSHEUs628ypVQ",
+     "rcv": 1788400020,
+     "revoke": "YtiMDTRb1DvX-GstJvJyBNWsHZZjdLsVIpXmih5aYtU",
+     "sig": "Lb4jZIt0CwYOan1Wz4-0iE5_bvqtfzAMQCjdFkaYIp_WW4hjkzYu5tXXuRxrrKjZ6iEY9C97Lwji5oa7GgyWCw",
+     "typ": "ack",
+     "v": 1
+    },
+    "res": {
+     "held": [],
+     "open": [
+      "4FUwIk_3L-MDhWZlRGdtqh8LisIENxhhHxqoKaIX_OA",
+      "yxBoNSSF9jiQBPbMDE-bMxcF7u6oaNyRUCVWQNzQ6Xw",
+      "zdyAmjTaYGQCT8RHgRkZBkGp8hVuVt9_jrLoqDhbvLk"
+     ]
+    },
     "tallies": [
      {
       "acc": 1788400012,

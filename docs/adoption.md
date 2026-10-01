@@ -4,12 +4,13 @@ Status: adoption plan, written 2026-09-03 and aligned with the v0.1 specificatio
 
 ## The short version
 
-Writ has four signed objects:
+Writ has five signed objects:
 
 - a `writ`, authority signed by the delegator, which the holder can narrow;
 - a `call`, which exercises a chain of writs;
 - a `tally`, the executor's signed receipt naming the exact writ it honored;
-- a `revoke`, which withdraws a writ.
+- a `revoke`, which withdraws a writ;
+- an `ack`, an executor's signed record of when it recorded a revoke and which work under the writ it held then.
 
 Limits come from five bound types with fixed comparison rules (`max`, `count`, `prefix`, `set`, `window`). Keys are did:key, signatures are Ed25519 over canonical JSON (JCS), and no party ever has to be online for anyone to verify anything.
 

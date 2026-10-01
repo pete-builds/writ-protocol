@@ -20,6 +20,19 @@
     "writ": "*"
    },
    "expect": {
+    "ack": {
+     "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "out": "23jvBT56I1rAZQqqlI_M4Na8gBsfPOlL4563po4JfDI",
+     "rcv": 1788400010,
+     "revoke": "XbF2ptOR8RqHza7Bl3AERERY8YKHYp3LsoTQ2HmZYT0",
+     "sig": "iWtmAqyOur0NfLdsFoVJ0c4wDtE3rogQmLday7TYPcR3O-aVLPCvsL0FC-miUBm_avpvBmXMxUAihwDy6Y32CQ",
+     "typ": "ack",
+     "v": 1
+    },
+    "res": {
+     "held": [],
+     "open": []
+    },
     "tallies": []
    }
   },

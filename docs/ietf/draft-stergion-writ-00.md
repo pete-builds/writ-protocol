@@ -32,7 +32,7 @@ informative:
 
 --- abstract
 
-Writ defines four signed JSON objects and the rules for checking them. A **writ** is a grant of bounded authority from one key to another that the holder can narrow and pass on without contacting the original issuer. A **call** assigns work under a chain of writs. A **tally** is the executor's signed account of what it did under exactly which writ, including the tallies of everyone it delegated to. A **revoke** withdraws a writ. Verification needs only the objects and the public keys embedded in them.
+Writ defines five signed JSON objects and the rules for checking them. A **writ** is a grant of bounded authority from one key to another that the holder can narrow and pass on without contacting the original issuer. A **call** assigns work under a chain of writs. A **tally** is the executor's signed account of what it did under exactly which writ, including the tallies of everyone it delegated to. A **revoke** withdraws a writ. An **ack** is an executor's signed record of when it recorded a revoke and of exactly which work under the revoked writ it held at that moment. Verification needs only the objects and the public keys embedded in them.
 
 --- middle
 
@@ -40,7 +40,7 @@ Writ defines four signed JSON objects and the rules for checking them. A **writ*
 
 Writ is not a transport, a discovery mechanism, a task lifecycle, or a tool schema. Those belong to existing protocols (HTTP, A2A Agent Cards, A2A and MCP tasks, MCP tools). Writ carries what they leave out: an authority object that survives a hop into a foreign trust domain, can be narrowed by its holder under a mechanical subset rule, and is named by the receipt that comes back.
 
-How to read this specification (non-normative). Sections 1 to 4 define the encoding, the writ, its bounds, and how a chain is checked for narrowing. Sections 5 and 6 define the call and the tally, and how each is verified. Sections 7 to 9 say what an executor does with a call, which operations stay open to issuers after a writ expires, and what state the executor keeps and for how long. Section 10 is the HTTP binding, section 11 the reason codes, section 12 the security considerations, section 13 how Writ relates to other protocols, and section 14 what conformance means. Appendix A walks through one complete exchange. The orders of checks in sections 3, 4, 6.1, 6.2, 7, 9.1, and 14 are normative: two implementations must reject a bad object for the same reason.
+How to read this specification (non-normative). Sections 1 to 4 define the encoding, the writ, its bounds, and how a chain is checked for narrowing. Sections 5 and 6 define the call and the tally, and how each is verified. Sections 7 to 9 say what an executor does with a call, which operations stay open to issuers after a writ expires, and what state the executor keeps and for how long. Section 10 is the HTTP binding, section 11 the reason codes, section 12 the security considerations, section 13 how Writ relates to other protocols, and section 14 what conformance means. Appendix A walks through one complete exchange. The orders of checks in sections 3, 4, 6.1, 6.2, 7, 9.1, 9.4, and 14 are normative: two implementations must reject a bad object for the same reason.
 
 In terms of prior work: a writ is an OAuth Rich Authorization Request value set plus a comparison table, signed by the delegator instead of an authorization server; a tally is a UCAN-style receipt with consumption accounting and an embedded sub-tree. Hash-linked offline attenuation for agents is also the subject of several 2026 Internet-Drafts; section 13 and the prior-art survey place Writ against them.
 
@@ -82,7 +82,7 @@ for example `writ/1` followed by a NUL byte followed by the canonical bytes. The
 
 ## Object identity
 
-The identity of a signed object is the hash of the canonical form of the whole object, `sig` included. Every reference from one object to another (`prv`, `call`, `writ`) is such a hash.
+The identity of a signed object is the hash of the canonical form of the whole object, `sig` included. Every reference from one object to another (`prv`, `call`, `writ`, `revoke`) is such a hash.
 
 ## Limits
 
@@ -93,6 +93,7 @@ The identity of a signed object is the hash of the canonical form of the whole o
 | call, canonical bytes | at most 65536 |
 | tally, canonical bytes | at most 262144 |
 | revoke, canonical bytes | at most 65536 |
+| ack, canonical bytes | at most 4096 |
 | `id` and `nnc` | at least 16 random bytes (22 characters) |
 | nesting depth of arrays and objects | at most 64 levels (section 1.1 rule 7) |
 
@@ -268,19 +269,19 @@ B's tally for A's call embeds C's tally in `sub` and writ_2 in `wrt`.
 
 ## Verifying a single signed object
 
-For a writ, call, tally, or revoke, in this order:
+For a writ, call, tally, revoke, or ack, in this order:
 
 1. Byte length within section 1.6: the received bytes before parsing and the canonical bytes after; and nesting depth within section 1.1 rule 7. Reason `too_large`.
-2. Parse; section 1.1 rules 2 to 4 anywhere in the object, then rule 5 for the object's own binary members whose value is a string: `sig` of every type; a writ's `prv` and `nnc`; a call's `id`; a tally's `call`, `writ`, and `out`, and the `ref` member of its `err` when `err` is an object; a revoke's `writ` unless it is `"*"`. Reason `noncanonical`. A binary member that is not a string is left to step 5, and a writ or tally nested in `chain`, `sub`, or `wrt` meets rule 5 when it passes this section itself.
+2. Parse; section 1.1 rules 2 to 4 anywhere in the object, then rule 5 for the object's own binary members whose value is a string: `sig` of every type; a writ's `prv` and `nnc`; a call's `id`; a tally's `call`, `writ`, and `out`, and the `ref` member of its `err` when `err` is an object; a revoke's `writ` unless it is `"*"`; an ack's `revoke` and `out`. Reason `noncanonical`. A binary member that is not a string is left to step 5, and a writ or tally nested in `chain`, `sub`, or `wrt` meets rule 5 when it passes this section itself.
 3. `v` is the integer 1; anything else, including a missing `v`, is `unsupported_version`. `typ` is the expected type; anything else, including a missing `typ`, is `wrong_type`.
 4. `crit`, section 1.7: first, `crit` is an array of strings (`malformed`); then each name in array order is one the verifier understands (`unsupported_critical`) and is present in the object (`malformed`).
-5. The remaining members, in the order of the object's member table (sections 2, 5, 6, and 9.1). Each member is checked completely before the next: present, of the required type, a valid key where the table says key (`bad_key`), the decoded length of a binary member, and the member's own rules below. Reason `malformed` unless stated otherwise.
+5. The remaining members, in the order of the object's member table (sections 2, 5, 6, 9.1, and 9.4). Each member is checked completely before the next: present, of the required type, a valid key where the table says key (`bad_key`), the decoded length of a binary member, and the member's own rules below. Reason `malformed` unless stated otherwise.
     - A writ's `bnd`: an object; `act` is present; every bound, in canonical member-name order, passes section 3; then `act` is a `prefix`, `hld` if present is a `set` whose elements, in array order, are strings and valid keys (`bad_key`), and `depth` if present is a `max` (section 3.2).
     - A call's or revoke's `chain`: an array; at most 8 elements (`too_large`); every element an object. A call's chain is not empty. A revoke's chain is empty exactly when its `writ` is `"*"`. The writs themselves are verified afterwards (section 7 step 2, section 9.1 step 2).
     - A tally's `err`: null when `st` is `ok`; otherwise an object whose `code` is a string and whose `ref`, if present, is a hash. `used`: an object whose members are integers of zero or more. `rev`: null, or an object whose `until` is an integer.
     - A tally's `sub` and `wrt`: arrays of objects. Their elements are checked at section 6.2 steps 8 and 9, after the tally's own signature.
     - After a tally's `wrt`: when `st` is `pending`, `err.code` is `pending`, `used` is empty, `rev` and `out` are null, and `sub` and `wrt` are empty (section 6).
-6. Signature verifies under the signer's key (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`). Reason `bad_signature`.
+6. Signature verifies under the signer's key (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`; ack: `iss`). Reason `bad_signature`.
 
 A tally names its writ by hash, so a tally can only be verified by a party holding that writ (section 6.2). A refusal with reason `wrong_executor` is signed by the party that received the call, which is not the leaf holder; it is evidence of the refusal but does not verify under section 6.2.
 
@@ -304,6 +305,8 @@ Names in `used` that are not `max` bounds of the writ are ignored. This procedur
 A verifier cannot check `S.call` for a sub-tally because it does not hold the call B made; the sub-tally binds C to a call that B can produce in a dispute.
 
 The result of verification for each tally is one of `valid`, `signed_unauthorized` (section 6.1 passed for T but a later step failed, anywhere in the tree, including a `sub_unmatched` in T itself: an admission by a signer), or `unverifiable` (T itself fails section 6.1). A verifier MUST NOT treat a result body whose tally is absent or `unverifiable` as a completed result; the task is `unverified`.
+
+Revocation is not an input to this procedure. A revoke takes effect at each executor when that executor records it (section 9.1) and carries no time, and a tally does not say whether its call was accepted before or after that moment. A tally that passes this procedure is therefore `valid` whether or not a writ in its chain has since been revoked: it proves the work was accepted under a chain its signer then honored, which is what a revoker needs in order to account for the work and to reverse it (section 8). A verifier that holds an executor's ack of a revoke checks that executor's tallies against it (section 9.4); a tally reporting forward work the ack does not account for is `signed_unauthorized`, with reason `revoked`.
 
 # Executing a call
 
@@ -396,14 +399,14 @@ Returns every tally the executor still holds whose chain included a given writ. 
 | call store | (leaf writ identity, `id`) with state pending or the final tally; while pending, the writs issued and sub-tallies received for the call (section 7.5) | forward call: until leaf `exp`; standing call: as long as the tally store retains any record under that leaf | MUST survive restart | a retried call may execute twice; the protocol does not hide this |
 | count store | writ identity, integer consumed | until that writ's `exp` | MUST survive restart | `count` may be exceeded |
 | tally store | tally identity; indexed by every writ identity in its chain | until the later of leaf `exp` and `rev.until`, and SHOULD be longer where recovery matters | MUST survive restart | `sys/undo` and `sys/tallies` fail with `not_reversible` or return less |
-| revoke store | writ identity; for a key-wide revoke, the revoking key | until that writ's `exp`; a key-wide revoke is kept indefinitely, because it covers writs issued after it arrived | a writ's revoke SHOULD survive restart; a key-wide revoke MUST | a revoked writ is honored again until `exp`; a withdrawn key is honored again with no end |
+| revoke store | writ identity; for a key-wide revoke, the revoking key | until that writ's `exp`; a key-wide revoke is kept indefinitely, because it covers writs issued after it arrived | MUST survive restart | a revoked writ is honored again until `exp`; a withdrawn key is honored again with no end |
 | reversal store | target tally identity: that a reversal began and under which call, or that one succeeded and its result body | as long as the tally store holds the target | MUST survive restart | a reversal may run twice |
 
 A pending call record found after a restart MUST be resolved to a final tally: `ok` or `failed` when the outcome can be determined, otherwise `failed` with `unknown_outcome`. The resolved tally keeps the record's `acc`, carries in `wrt` and `sub` every writ and sub-tally persisted for the call (section 7.5), with a `used` that covers those sub-tallies, is stored in the call store and the tally store like any final tally, and answers every later retry of the call.
 
 An executor that cannot write its call store or count store at section 7 steps 9 and 10 MUST NOT perform the operation. It refuses with a signed `failed` tally whose `err.code` is an implementation code (section 11), recording nothing. An executor that performed the operation and then cannot persist the final tally MUST NOT answer as if it had: it answers with a pending tally, which is what its durable record will resolve to after a restart.
 
-An executor that cannot persist a key-wide revoke MUST keep honoring it for as long as it runs and MUST NOT answer as if it were recorded: it answers with an unsigned error whose code is an implementation code (section 11), and the sender retries. A key-wide revoke is how a stolen or retired key is withdrawn, and one lost at a restart silently re-admits that key.
+An executor that cannot persist a revoke MUST keep honoring it for as long as it runs and MUST NOT answer as if it were recorded: it answers with an unsigned error whose code is an implementation code (section 11), and the sender retries. A revoke lost at a restart silently re-admits what it withdrew: a writ until its `exp`, and a stolen or retired key with no end.
 
 The tally store holds every final tally the executor signs at section 7 step 12 and every tally it signs resolving a pending record, forward and standing alike. It holds no refusal: a tally signed for a failure at section 7 steps 3 to 10 is returned to the caller and not recorded (a failed check of section 8.1 or 8.2 is an outcome at step 11, not a refusal, and is held), so a party without standing cannot fill an executor's stores, and a retry of a refused call is checked afresh.
 
@@ -428,7 +431,7 @@ A verifier checks a revoke in this order, which is the order of section 7 steps 
 
 For `"*"`, `iss` is the key every one of whose writs is revoked. Expiry is not checked on a revoke. An invalid revoke is not recorded and changes nothing.
 
-An executor that receives a valid revoke MUST record it and MUST NOT accept new forward calls under the revoked writ or any writ below it (section 7 step 7). A revoke does not withdraw standing: `sys/undo` and `sys/tallies` under the revoked chain are still accepted (section 8), so the revoker can reverse or recover what completed before the revoke arrived. It SHOULD forward the revoke to the `hld` of every writ it issued under the revoked writ. It answers with the tallies of every forward call it holds under the revoked writ that is not yet final, in ascending order of call identity compared as the ASCII bytes of the identity string: `canceled` for calls not yet accepted, and for accepted calls either the final tally when the operation completes or a `pending` tally. An executor that answers with a `pending` tally MUST tell the running operation to stop, and the call's final tally follows when the operation returns. An executor MUST NOT report `canceled` for an operation it has already started unless it actually stopped it. Calls already final are not in the answer; `sys/tallies` recovers them. A standing call in flight is neither stopped nor listed, because a revoke ends forward authority and not standing: a revoker racing its own `sys/undo` must not cancel it.
+An executor that receives a valid revoke MUST record it and MUST NOT accept new forward calls under the revoked writ or any writ below it (section 7 step 7). A revoke does not withdraw standing: `sys/undo` and `sys/tallies` under the revoked chain are still accepted (section 8), so the revoker can reverse or recover what completed before the revoke arrived. It SHOULD forward the revoke to the `hld` of every writ it issued under the revoked writ, and relay the acks they return (section 9.4). It answers with the tallies of every forward call it holds under the revoked writ that is not yet final, in ascending order of call identity compared as the ASCII bytes of the identity string: `canceled` for calls not yet accepted, and for accepted calls either the final tally when the operation completes or a `pending` tally. An executor that answers with a `pending` tally MUST tell the running operation to stop, and the call's final tally follows when the operation returns. An executor MUST NOT report `canceled` for an operation it has already started unless it actually stopped it. Calls already final are not in the answer; `sys/tallies` recovers them. A standing call in flight is neither stopped nor listed, because a revoke ends forward authority and not standing: a revoker racing its own `sys/undo` must not cancel it. With the answer, it returns its ack of the revoke (section 9.4).
 
 Safety MUST NOT depend on a revoke arriving. `exp` is the hard bound. A key-wide revoke (`"*"`) signed by a key is honored by every verifier that sees it, and a compromised key cannot undo it.
 
@@ -444,6 +447,42 @@ The stores above hold what the checks of this protocol need, for as long as they
 
 No check in this protocol consults the audit record, `sys/tallies` does not return it, and an entry confers no standing. Anyone can send a call or a revoke, so the record's growth is bounded the way revoke intake is (section 12), by rate per transport-authenticated peer. How long it is kept is deployment policy; an executor that keeps it longer than its tally store SHOULD keep tallies as long, so an entry naming a tally can still produce it. Evidence meant to outlive the executor belongs in a transparency log: a tally can be registered with a SCITT log (section 13).
 
+## Acknowledging a revoke
+
+A tally does not say whether its call was accepted before or after a revoke reached its executor, and neither party's clock settles it. So an executor that records a revoke says, under its own signature, when it recorded it and exactly which work under the revoked writ it held at that moment. Any tally it produces for other forward work under that writ contradicts that statement, however the tally's `acc` is dated.
+
+| Member | Type | Required | Meaning |
+|---|---|---|---|
+| `v` | integer | yes | `1` |
+| `typ` | string | yes | `"ack"` |
+| `revoke` | hash | yes | identity of the revoke recorded |
+| `iss` | key | yes | the executor that recorded it, who signs |
+| `rcv` | integer | yes | the time the executor recorded the revoke, by its own clock |
+| `out` | hash | yes | hash of the canonical form of the ack's body |
+| `crit` | array of strings | no | section 1.7 |
+| `sig` | string | yes | by `iss` |
+
+The body travels beside the ack, as a result body travels beside a tally (section 10). It is the object `{"held": [...], "open": [...]}`:
+
+- `held` has one element `{"call": <call identity>, "tally": <tally identity>}` for every tally in the executor's tally store (section 9) under the revoked writ, in ascending order of call identity compared as the ASCII bytes of the identity string. A tally is under the revoked writ when the chain of the call it answers includes that writ or, for a key-wide revoke, includes a writ whose `iss` is the revoke's `iss`.
+- `open` has the call identity of every tally in the revoke's answer (section 9.1), in the answer's order: the forward calls under the revoked writ that the executor had accepted and were not final.
+
+An executor that records a valid revoke MUST sign an ack for it and return it with its answer. It sets `rcv`, and computes `held` and `open`, atomically with recording the revoke, under the rule of section 7 that makes recording a revoke atomic with steps 7 to 11 of a forward call. Every forward call under the revoked writ that it ever accepts was then accepted before the revoke was recorded, and at that moment was either final, and so in `held`, or not, and so in `open`. A revoke received again is recorded again and answered with a new ack; each ack stays true of its own `rcv`. A revoke the executor could not persist is answered with the error of section 9 and no ack, because an ack says the revoke was recorded.
+
+A verifier holding a revoke R, an ack A with its body B, and a tally T answering a call under the chain C, root to T's writ, checks T against A in this order:
+
+1. R passes the checks of section 9.1, with their reasons.
+2. A passes section 6.1 with signer `A.iss`.
+3. `A.revoke` is the identity of R. Reason `ack_mismatch`.
+4. `A.out` is the hash of B's canonical form (`ack_mismatch`), and B is an object whose `held` and `open` are arrays (`malformed`).
+5. C passes chain verification (section 4), with its reasons; T passes section 6.1 with signer the `hld` of C's last writ; and `T.writ` is the identity of that writ (`tally_mismatch`).
+6. A says nothing about T, and the check accepts, unless all of these hold: `A.iss` is the `hld` of C's last writ, so A and T have one signer; `T.op` does not begin with `sys/`; T reports work, meaning its `st` is `ok`, `pending`, or `canceled`, or a member of its `used` is above zero, or its `sub` or `wrt` is not empty; R covers C, meaning `R.writ` is the identity of a writ in C, or `R.writ` is `"*"` and a writ in C has `iss` equal to `R.iss`; and the `exp` of C's last writ is after `A.rcv`, so a final T was still in the tally store at `A.rcv`.
+7. T is accounted for: `T.call` is an element of `B.open`; or `B.held` has an element whose `call` is `T.call` and whose `tally` is the identity of T; or `T.st` is `pending` and `B.held` has an element whose `call` is `T.call`, the call having finished before `A.rcv`. Otherwise reason `revoked`.
+
+A tally that fails step 7 is `signed_unauthorized`: its signer made two statements that cannot both be true. A refusal reports no work and a standing call is not forward work, so neither can fail it; a revoke ends forward authority and not standing (section 8). A verifier checks T against every ack it holds that names R, and one contradiction is enough. An ack without its body proves only that R reached its signer by `rcv`.
+
+An executor that forwards a revoke SHOULD keep each ack it receives in answer that passes steps 2 to 4 for that revoke, those in the answer's own `fwd` included, and from then on return every ack it keeps for a revoke, with its body, in `fwd` of each answer to that revoke, including the answer during which it forwarded (section 10). A delegator then learns that its revoke reached executors it never contacted, and holds the acks to check their tallies against. A relay cannot forge an ack, because each is signed by the executor that recorded the revoke.
+
 # HTTP binding
 
 Every implementation MUST support this binding. Other bindings carry the same objects.
@@ -458,7 +497,13 @@ Response to a call: status 200 and body
 
 `res`, when present, is the object whose canonical form hashes to `tally.out`. Rejections before signature verification (section 7 steps 1 and 2) are status 400 with body `{"error": <reason>}`. Every other rejection is status 200 with a `failed` tally.
 
-Response to a revoke: status 200 and body `{"tallies": [<tally>...]}`, in the order of section 9.1. An invalid revoke MAY be answered with status 400 and body `{"error": <reason>}`. A valid key-wide revoke the executor could not persist (section 9) is answered with status 503 and body `{"error": <implementation code>}`.
+Response to a revoke: status 200 and body
+
+```json
+{"tallies": [<tally>...], "ack": <ack>, "res": <ack body>, "fwd": [{"ack": <ack>, "res": <ack body>}...]}
+```
+
+`tallies` is in the order of section 9.1, `ack` is the executor's own ack of the revoke and `res` its body (section 9.4), and `fwd`, present only when the executor holds acks relayed from executors below it, is in ascending order of ack identity compared as the ASCII bytes of the identity string. An invalid revoke MAY be answered with status 400 and body `{"error": <reason>}`. A valid revoke the executor could not persist (section 9) is answered with status 503 and body `{"error": <implementation code>}`.
 
 Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NOT be replaced by it: a writ is authority to act, not proof of who is connecting. When the transport authenticates the peer, the binding MUST pass that identity to the executor, which checks it against the call's `from` (section 7.6). A writ MUST NOT be sent in an `Authorization` header.
 
@@ -481,7 +526,7 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 | `root_not_accepted` | executor does not act under this root |
 | `wrong_executor` | the receiving party is not the leaf `hld` |
 | `peer_mismatch` | the transport-authenticated peer is not bound to the call's `from` (section 7.6) |
-| `revoked` | a forward call names a chain with a revoked writ; never raised for a standing call |
+| `revoked` | a forward call names a chain with a revoked writ, or a tally reports forward work under a revoked writ that its signer's ack does not account for (section 9.4); never raised for a standing call |
 | `no_standing` | `from` is not the required issuer |
 | `forbidden_op` | `op` not matched by `act`, or a forward `op` under `sys/` |
 | `missing_arg` | a bound name absent from `args` |
@@ -489,6 +534,7 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 | `count_exhausted` | a `count` bound in the chain is used up |
 | `tally_mismatch` | a tally does not name the expected call, writ, op, or output |
 | `sub_unmatched` | a sub-tally names a writ absent from `wrt` |
+| `ack_mismatch` | an ack does not name the revoke, or its body does not hash to its `out` (section 9.4) |
 | `not_reversible` | `sys/undo` target has no `rev`, is past `until`, is not `ok`, or is not this executor's |
 | `undeliverable` | a sub-call never answered |
 | `unknown_outcome` | the executor cannot determine whether its effect occurred |
@@ -528,6 +574,8 @@ Application failures use `failed` with a code outside this table; such codes SHO
 
 **Denial of service.** Section 1.6 limits are checked before any signature. Verification cost is linear in chain length and tally tree size. A valid key-wide revoke needs no accepted root, since any key may revoke itself, so anyone can send revokes. An executor records every valid one, because a key-wide revoke is how a stolen key is withdrawn from executors that have not yet seen it, and SHOULD bound the rate at which it accepts revokes from each transport-authenticated peer (section 10), and store them so that recording one does not rewrite the others.
 
+**Revocation evidence.** A revoke ends forward authority at each executor when that executor records it, so a tally for work accepted before the revoke reached its executor is valid, and the revoker needs it (section 6.2). An ack makes work accepted afterwards a contradiction in its signer's own hand (section 9.4); dating `acc` earlier does not help, because the ack lists every call the signer accounted for, not only a time. It cannot catch everything. An executor the revoke never reached is doing nothing wrong: `exp` bounds that case, and a revoker that learns of an executor from `wrt` can send the revoke to it directly. An executor that lost its tally store signs acks that omit work it did, and each omission surfaces as a contradiction, which it is. `rcv` is the signer's own claim, and a later `rcv` exempts work under writs that expired before it (section 9.4 step 6); a party that receives an ack from its signer SHOULD compare `rcv` with its own clock, and a relayed ack is only as fresh as its relay.
+
 **Residual risks.** The protocol does not detect an executor that lies within its bounds, an executor colluding with a resource that does not check chains, or a sub-delegation that never surfaces because the sub-executor stays silent and the holder omits it. It makes each of these a signed statement its author cannot disown, bounds the damage by `exp`, `count`, and typed bounds, and leaves attribution to key bindings and liability to contract.
 
 # Relationship to other protocols
@@ -562,6 +610,7 @@ An implementation conforms when it passes the conformance corpus: a directory of
 | `verify_call` | `{"call": <call>}` | section 7 steps 1 and 2 (section 6.1 steps 1 to 5 on the call, section 6.1 on each writ of its chain, then the call's signature), section 4 on its chain, expiry at `now` if given and the call is forward, then section 5's forward or standing rules in the stated order; not root acceptance, executor identity, revocation, or replay, which need executor state, and not section 8's argument checks |
 | `verify_tally` | `{"writ": <leaf writ>, "call": <call>, "tally": <tally>, "res": <body, optional>}` | section 6.2 |
 | `verify_revoke` | `{"revoke": <revoke>}` | section 9.1's checks, in its order |
+| `check_ack` | `{"revoke": <revoke>, "ack": <ack>, "res": <ack body>, "chain": [<writ>...], "tally": <tally>}` | section 9.4, steps 1 to 7; `accept` when T is accounted for or the ack says nothing about it |
 
 A vector without `now` is evaluated with no clock: expiry is not checked. A vector with `now` uses that value as the verifier's current time and never the real clock, so the corpus is stable forever. Keys in the corpus derive from fixed seeds and fixed nonces so any implementation can regenerate every vector byte for byte. Executor behavior that needs state (count, replay, undo, revoke, recovery) is exercised by the scenarios of section 14.1.
 
@@ -574,13 +623,13 @@ A scenario tests one executor over a sequence of steps. It is an object with `na
 | `do` | Members | What the executor does | `expect` |
 |---|---|---|---|
 | `call` | `now`, `call`, optional `app`, optional `peer` | receives `call` (section 7) with its clock at `now`, delivered by the transport-authenticated peer `peer`, or over a transport that authenticated no peer when `peer` is absent | `{"error": <reason>}` for an unsigned rejection at section 7 steps 1 and 2; `{"tally": <tally>}` or `{"tally": <tally>, "res": <body>}` for a reply; `{"inflight": true}` when the call was accepted and its operation has not returned |
-| `revoke` | `now`, `revoke` | receives the revoke (section 9.1) with its clock at `now`, and persists it | `{"error": <reason>}` for an invalid revoke; otherwise `{"tallies": [<tally>...]}` |
+| `revoke` | `now`, `revoke` | receives the revoke (section 9.1) with its clock at `now`, and persists it | `{"error": <reason>}` for an invalid revoke; otherwise `{"tallies": [<tally>...], "ack": <ack>, "res": <ack body>}` (section 10; a single executor relays nothing, so never `fwd`) |
 | `finish` | `call` (a call identity), `app`, `signaled` | the held operation of that call returns `app` | as for `call` |
 | `restart` | none | loses everything not in a durable store, so an operation still running is lost as in a crash; reopens its stores; resolves pending records (section 9) | `{"resolved": <count of pending records resolved>}` |
 
 `app` scripts the application. It is the outcome the operation returns when the executor performs it at section 7 step 11: the forward operation for a forward call, the reversal for `sys/undo`. Its members are `st` (`ok`, `failed`, or `canceled`), `code` (the `err.code`, present exactly when `st` is not `ok`), and optionally `res` (the result body), `used` (the `used` object), `rev` (the `rev.until` time), and `hold` (true when the operation does not return until a `finish` step names the call). A held operation's outcome comes from that `finish` step, so its `app` has `st` the empty string and no `code`. A `call` step with no `app` asserts that the executor performs no operation: an implementation that invokes its application for that step fails it. `sys/tallies` never invokes the application. `signaled` is true when the executor must have told the held operation to stop (section 9.1) before it returns, and false when it must not have.
 
-A step passes when the executor's answer equals `expect`. Tallies and result bodies compare by canonical form, so every member, `acc`, `out`, and `sig` included, must match: Ed25519 signatures are deterministic, and every member of a tally is fixed by the executor's key, its clock, the call, and the scripted outcome, so two conforming executors given the same scenario sign the same bytes. A reply with no result body has no `res` member. Scripted outcomes carry no `sub` or `wrt`; tally trees are tested by `verify_tally` vectors.
+A step passes when the executor's answer equals `expect`. Tallies, acks, and bodies compare by canonical form, so every member, `acc`, `rcv`, `out`, and `sig` included, must match: Ed25519 signatures are deterministic, every member of a tally is fixed by the executor's key, its clock, the call, and the scripted outcome, and every member of an ack by the key, the clock, the revoke, and the stores, so two conforming executors given the same scenario sign the same bytes. A reply with no result body has no `res` member. Scripted outcomes carry no `sub` or `wrt`; tally trees are tested by `verify_tally` vectors.
 
 # IANA Considerations
 
@@ -609,7 +658,7 @@ The demo in the reference implementation runs this exchange between three proces
 5. B books, returns tally_B with `sub` `[tally_C]`, `wrt` `[writ_2]`, and `used` `{"amount":58900}`: the fare C charged is what B's booking consumed, counted once at each level (section 6).
 6. A verifies tally_B and tally_C with nothing but writ_1, its own call, and the keys inside the objects.
 7. A sends `sys/undo` to C directly, carrying `[writ_1, writ_2]` and tally_C. C reverses the charge and returns an undo tally.
-8. In a second run, A sends a revoke for writ_1 to B while B is working; B forwards it to C; the responses are `canceled` tallies.
+8. In a second run, A sends a revoke for writ_1 to B while B is working; B forwards it to C; the responses are `canceled` tallies. B's answer carries its own ack and, in `fwd`, the ack C returned to B, so A holds C's signed record of the revoke without ever having called C.
 
 Rejected attempts in the same demo: writ_2 with `amount` 65000 (`not_narrowed`), a call with `amount` 61000 (`out_of_bounds`), a second call under writ_2 (`count_exhausted`), a call with no `amount` (`missing_arg`), a chain re-rooted at a stranger (`root_not_accepted`), and a call whose `op` is `travel/chargeback` under `act` `travel/charge` (`forbidden_op`).
 
@@ -640,6 +689,8 @@ Why the tally embeds sub-tallies verbatim: a summary is B's word; an embedded si
 Why no `nbf`: it adds a second clock comparison and only prevents early use, which the issuer controls by not issuing early.
 
 Why reversal is a standing call and not a new writ: the chain the tally names already proves who had standing, the executor's own signature on the tally proves the effect is its own, and one verification path is easier to get right in 2046 than two.
+
+Why an ack lists the work it held and not only a time: a time alone lets its signer date a later tally's `acc` before it. A list of every call accounted for at that moment leaves nothing to redate: work absent from it was accepted afterwards, or not accepted at all.
 
 Why standing survives expiry and revocation: `exp` and revoke bound the holder's authority to start work; `rev.until` bounds the executor's promise to undo it; the tally store's retention bounds what can be recovered. Tying the second and third to the first made the promise in `rev` a lie whenever `until` was later than `exp`, which in the demo it always is.
 

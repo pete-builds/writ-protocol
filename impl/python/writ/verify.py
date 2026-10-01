@@ -9,6 +9,8 @@
   (sys/) is authorized by the chain as historical proof.
 - verify_tally: section 6.2, the tally tree, returning a Verdict of
   valid, signed_unauthorized, or unverifiable plus the reason code.
+- verify_ack and check_ack: section 9.4, an executor's ack of a revoke,
+  and whether a tally it signed is accounted for by it.
 """
 
 import time
@@ -230,6 +232,74 @@ def verify_revoke(data, now=None):
             raise WritError("no_standing", "iss is not the issuer of any writ in the chain")
     r["chain"] = writs
     return r
+
+
+def verify_ack(revoke, data, body):
+    """Section 9.4 steps 2 to 4, for a revoke that passed section 9.1:
+    the ack passes section 6.1 under its own iss, names the revoke
+    (ack_mismatch), and commits to ``body`` (ack_mismatch), an object
+    whose held and open are arrays (malformed). Returns the parsed ack."""
+    a = O.verify_object(data, "ack")                                     # 2
+    if a["revoke"] != O.identity(revoke):                                # 3
+        raise WritError("ack_mismatch", "the ack names another revoke")
+    if O.hash_body(body) != a["out"]:                                    # 4
+        raise WritError("ack_mismatch", "the ack's body does not hash to its out")
+    if not isinstance(body, dict) or not isinstance(body.get("held"), list) \
+            or not isinstance(body.get("open"), list):
+        raise WritError("malformed", "the ack's body must be an object whose held and open are arrays")
+    return a
+
+
+def check_ack(revoke, ack, body, chain, tally):
+    """Section 9.4 steps 1 to 7: is ``tally``, answering a call under
+    ``chain`` (root to the tally's writ), accounted for by ``ack``, with
+    ``body``, of ``revoke``? Returns None when it is, or when the ack says
+    nothing about it; raises WritError otherwise, reason revoked when the
+    tally reports forward work under the revoked writ that its signer's own
+    ack does not account for."""
+    r = verify_revoke(revoke)                                            # 1
+    a = verify_ack(r, ack, body)                                         # 2 to 4
+    writs = verify_chain(chain, now=NO_CLOCK)                            # 5
+    leaf = writs[-1]
+    t = O.verify_object(tally, "tally", signer=leaf["hld"])
+    if t["writ"] != O.identity(leaf):
+        raise WritError("tally_mismatch", "the tally names another writ than the chain's last")
+    if not _ack_speaks_of(r, a, writs, t):                               # 6
+        return None
+    if _accounted_for(body, t):                                          # 7
+        return None
+    raise WritError("revoked", f"the tally reports forward work under the revoked writ that its signer's ack at {a['rcv']} does not account for")
+
+
+def _ack_speaks_of(r, a, writs, t):
+    """Section 9.4 step 6: one signer, forward work, a chain the revoke
+    covers, and a last writ unexpired at rcv."""
+    leaf = writs[-1]
+    if a["iss"] != leaf["hld"] or t["op"].startswith("sys/") or not _reports_work(t):
+        return False
+    if r["writ"] == "*":
+        covered = any(w["iss"] == r["iss"] for w in writs)
+    else:
+        covered = any(O.identity(w) == r["writ"] for w in writs)
+    return covered and leaf["exp"] > a["rcv"]
+
+
+def _reports_work(t):
+    """A refusal reports none: failed, nothing used, nothing delegated."""
+    if t["st"] in ("ok", "pending", "canceled"):
+        return True
+    return any(n > 0 for n in t["used"].values()) or bool(t["sub"]) or bool(t["wrt"])
+
+
+def _accounted_for(body, t):
+    """Section 9.4 step 7."""
+    if any(isinstance(c, str) and c == t["call"] for c in body["open"]):
+        return True
+    tid = O.identity(t)
+    for e in body["held"]:
+        if isinstance(e, dict) and e.get("call") == t["call"] and (e.get("tally") == tid or t["st"] == "pending"):
+            return True
+    return False
 
 
 def _max_bounds(writ):

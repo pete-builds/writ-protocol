@@ -94,9 +94,9 @@ func TestRevokeAnswersForDeferredCalls(t *testing.T) {
 		t.Fatalf("not admitted: %v %v", rep, rej)
 	}
 	rv, _ := writ.NewRevoke(A, []*writ.Writ{w})
-	tallies, rej := e.Revoke(rv.Raw)
-	if rej != nil || len(tallies) != 1 || tallies[0]["st"] != "pending" || tallies[0]["call"] != k.ID {
-		t.Fatalf("revoke answered %v %v, want one pending tally for the deferred call", tallies, rej)
+	rrep, rej := e.Revoke(rv.Raw)
+	if rej != nil || len(rrep.Tallies) != 1 || rrep.Tallies[0]["st"] != "pending" || rrep.Tallies[0]["call"] != k.ID {
+		t.Fatalf("revoke answered %v %v, want one pending tally for the deferred call", rrep, rej)
 	}
 	if rep, _ := e.Complete(context.Background(), k.Raw, Result{}); tallyCode(rep) != "ok" {
 		t.Fatalf("the operation had already run; its receipt still stands: %s", tallyCode(rep))

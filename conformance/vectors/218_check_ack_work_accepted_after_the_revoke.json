@@ -1,0 +1,184 @@
+{
+ "expect": "reject",
+ "input": {
+  "ack": {
+   "iss": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+   "out": "Ci_b3v2PN8UX_APZhAd__zYl1vB-r1fZ_oTcyyKvxuw",
+   "rcv": 1788400010,
+   "revoke": "_v-f_mDmU_5rehZlVVN3thzWeTCKJ4GSOJbiiUEhL-8",
+   "sig": "he21HD2dwwFzarNoVQyo43AnsaTT08tcgm2yh1ijlEBc3SugQ8JjFipB-Mqg-gUQ4ue5-56Z5DeUcRy1a1mnCg",
+   "typ": "ack",
+   "v": 1
+  },
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel"
+     },
+     "amount": {
+      "t": "max",
+      "v": 60000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261019
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+    "prv": null,
+    "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+    "typ": "writ",
+    "v": 1
+   },
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "travel/charge"
+     },
+     "amount": {
+      "t": "max",
+      "v": 58900
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     },
+     "date": {
+      "t": "window",
+      "v": [
+       20261015,
+       20261015
+      ]
+     },
+     "fare": {
+      "t": "set",
+      "v": [
+       "refundable"
+      ]
+     },
+     "uses": {
+      "t": "count",
+      "v": 1
+     }
+    },
+    "exp": 1788401800,
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+    "prv": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U",
+    "sig": "yVka3FzI2TbD42_qnZgVOit6pshRr4xfpnsn83jpNOFLAxX9u89KDUcluGExTD2UUXrS2Ugnm6tGRzsAxQSqDQ",
+    "typ": "writ",
+    "v": 1
+   }
+  ],
+  "res": {
+   "held": [
+    {
+     "call": "I3cezgDhA39dEE8XyVbN6hXTgqJuPFjMZKF2R0RPM9Q",
+     "tally": "CZ-nPlK_iG7spIPZYYPbxbiGMsr-aP9_mMPwLGPchmE"
+    }
+   ],
+   "open": [
+    "HHYcRbBx0Ut6dzzMvoLU2Sm7Aq-9UgUvHPYO19vv2sg"
+   ]
+  },
+  "revoke": {
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "c4aTx2-QmNlj9rm7l2SYWhDFyZOp_DVPBNlAer6MrL0nQxmj-Rt68Ey6PFh1rXZuCqXcvDx5gL49SkilzkvfCw",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "sig": "G-R8OOiKrRkSXpxBIiyAK_eYsl4I-_5yFIHq2GOcbjRcaZw76-jiGnc_NvIqjSryw1UVqaPIaUok8lBiPqzaBw",
+   "typ": "revoke",
+   "v": 1,
+   "writ": "zpKUMDs2vGseN-2U9LHKrEhRfOrXYRr7x8O6DEO4g7U"
+  },
+  "tally": {
+   "acc": 1788400020,
+   "call": "YEX_U_gXCQKcmVAY01Mq1oPPFgFBcwdLGQO8SHF2Sms",
+   "err": null,
+   "op": "travel/charge",
+   "out": null,
+   "rev": null,
+   "sig": "25C5bANtS7WjrQfqpQERDyAk9cf5ivT5L_9B4nlAziTgmEUimOjsLByQisGURs3G9eQrn0AbGsjs8QJvqFGeBw",
+   "st": "ok",
+   "sub": [],
+   "typ": "tally",
+   "used": {},
+   "v": 1,
+   "writ": "Wjxqd7hNCOyVKynHaMFi9AeTkZTsgY8xB7pUfW3UwHA",
+   "wrt": []
+  }
+ },
+ "name": "work accepted after the revoke",
+ "op": "check_ack",
+ "reason": "revoked"
+}

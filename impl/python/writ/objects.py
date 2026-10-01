@@ -1,4 +1,4 @@
-"""Signed objects: structural validation and signatures (sections 1.4 to 1.7, 2, 5, 6, 9.1).
+"""Signed objects: structural validation and signatures (sections 1.4 to 1.7, 2, 5, 6, 9.1, 9.4).
 
 verify_object() runs section 6.1 in its normative order and returns the
 parsed object. signing_input() and identity() implement sections 1.4 and
@@ -11,13 +11,13 @@ from .errors import WritError
 from .keys import is_b64u, is_did, sha256_b64u, verify as verify_sig
 
 # Section 1.6
-LIMITS = {"writ": 4096, "call": 65536, "tally": 262144, "revoke": 65536}
+LIMITS = {"writ": 4096, "call": 65536, "tally": 262144, "revoke": 65536, "ack": 4096}
 MAX_CHAIN = 8
 MIN_NONCE_BYTES = 16
 HASH_BYTES = 32
 SIG_BYTES = 64
 
-TYPES = ("writ", "call", "tally", "revoke")
+TYPES = ("writ", "call", "tally", "revoke", "ack")
 
 # Every member this implementation understands, per type. A name in crit
 # outside this set is reason unsupported_critical.
@@ -27,11 +27,12 @@ KNOWN_MEMBERS = {
     "tally": frozenset(["v", "typ", "call", "writ", "op", "acc", "st", "err", "out",
                         "used", "rev", "sub", "wrt", "crit", "sig"]),
     "revoke": frozenset(["v", "typ", "writ", "iss", "chain", "crit", "sig"]),
+    "ack": frozenset(["v", "typ", "revoke", "iss", "rcv", "out", "crit", "sig"]),
 }
 
 TALLY_STATES = ("ok", "failed", "canceled", "pending")
 
-SIGNER_MEMBER = {"writ": "iss", "call": "from", "revoke": "iss"}
+SIGNER_MEMBER = {"writ": "iss", "call": "from", "revoke": "iss", "ack": "iss"}
 
 
 # ------------------------------------------------------ identity and input
@@ -93,6 +94,9 @@ def _check_binary_members(obj, typ):
             _require_b64u(err, "ref")
     elif typ == "revoke":
         _require_b64u(obj, "writ", allow_star=True)
+    elif typ == "ack":
+        _require_b64u(obj, "revoke")
+        _require_b64u(obj, "out")
 
 
 def load(data, typ):
@@ -302,11 +306,21 @@ def _check_revoke_members(obj):
     _require_sig(obj)
 
 
+def _check_ack_members(obj):
+    """Section 9.4's member table: revoke, iss, rcv, out, sig."""
+    _require_hash(obj, "revoke")
+    _require_key(obj, "iss")
+    _require(obj, "rcv", is_int, "an integer")
+    _require_hash(obj, "out")
+    _require_sig(obj)
+
+
 _MEMBER_CHECKS = {
     "writ": _check_writ_members,
     "call": _check_call_members,
     "tally": _check_tally_members,
     "revoke": _check_revoke_members,
+    "ack": _check_ack_members,
 }
 
 

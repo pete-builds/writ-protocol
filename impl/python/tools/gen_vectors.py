@@ -127,6 +127,15 @@ def build():
     t_undo = issue.make_tally(C, undo, w2, out={"refund": "rf_8813"}, acc=EXP1 + 60)
     add("verify_tally undo tally acc after exp", "verify_tally",
         {"writ": w2, "call": undo, "tally": t_undo, "res": {"refund": "rf_8813"}}, "accept", now=EXP1 + 60)
+    # Section 9.4: C's ack of A's revoke of w1, signed by this implementation.
+    rv = issue.make_revoke(A, w1, chain=[w1])
+    body = issue.ack_body([(O.identity(call_b), O.identity(t_c))], [])
+    ack = issue.make_ack(C, O.identity(rv), NOW + 20, body)
+    ack_in = {"revoke": rv, "ack": ack, "res": body, "chain": [w1, w2]}
+    add("check_ack held tally", "check_ack", {**ack_in, "tally": t_c}, "accept")
+    late = issue.make_call(B, [w1, w2], "travel/charge", call_b["args"], call_id="f6f1c0a3Ln2k9QpXs4vYzw")
+    add("check_ack backdated work after the revoke", "check_ack",
+        {**ack_in, "tally": issue.make_tally(C, late, w2, acc=NOW - 5)}, "reject", "revoked")
     return vec
 
 
