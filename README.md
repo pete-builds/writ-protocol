@@ -247,6 +247,22 @@ The skeptic's walk-through (docs/research/03-skeptic-opening.md) hit the same fi
 
   If one of them adds an executor-signed receipt tree, what is left of Writ is its rules for replay, recovery, and reversal, which are easier to add to a draft than a wire format is.
 
+## Where Writ stops
+
+**Bounds are not a prompt-injection defense.** An agent whose model has been hijacked, and that acts inside its writ, is acting lawfully as far as the protocol can see; the threat model says so. Writ limits what a hijacked agent can do (`max`, `set`, `count` per executor, a short `exp`) and records exactly what it did. It does not stop the hijack. [docs/where-writ-stops.md](docs/where-writ-stops.md) has the full argument and its sources.
+
+- **CaMeL and Writ compose.** CaMeL's "capabilities" track where each value came from and where it may go, inside one interpreter. Writ checks who may perform what, within which limits, at an executor that may belong to someone else, and returns signed receipts. A CaMeL-style interpreter decides whether a value may flow into a call; Writ enforces and records the call.
+- **Commit before ingest.** Mint the writs from a plan made before the agent reads anything untrusted, as narrow as the plan allows, so injected text can only choose among actions the plan already permitted, and the receipt tree can be checked against the plan.
+- **Cut the exfiltration leg.** A `set` bound on the argument that names a recipient or host removes attacker-chosen destinations, but only if every channel is a bounded argument. `writ-mcp-proxy -closed` refuses arguments the grant does not bound; a shell or a generic fetch tool stays a channel whatever its arguments say.
+- **Pin tool descriptions.** A poisoned MCP tool description steers the model before any argument exists. `writ-mcp-proxy -pins` lists and calls only tool definitions a person approved ([docs/bindings.md](docs/bindings.md)).
+- **Rule of Two labels, proposed.** Meta's Agents Rule of Two (no more than two of: untrusted input, private data, external effects) maps onto narrowing, since a child writ can only drop authority. A `crit` member carrying the allowed properties is sketched in the page above as a proposal, not part of v0.1.
+
+Against the OWASP Top 10 for Agentic Applications (2026), names from a secondary summary and to be re-checked against OWASP's text:
+
+| Writ addresses | Writ partly addresses | Writ does not address |
+|---|---|---|
+| ASI03 Identity & Privilege Abuse; ASI07 Insecure Inter-Agent Communication | ASI02 Tool Misuse, where an argument carries the meaning; ASI08 Cascading Failures and ASI10 Rogue Agents, through limits, revocation, and undo; ASI04 Supply Chain, for MCP tool descriptions only | ASI01 Agent Goal Hijack within bounds; ASI05 Unexpected Code Execution; ASI06 Memory & Context Poisoning; ASI09 Human-Agent Trust Exploitation |
+
 ## The specification and the threat model
 
 The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-threat-model.md, catalogues 41 threats, 45 pass/fail requirements, and 20 adversarial seeds. The security review of the six candidate designs against that checklist is docs/design/09-security-review.md, and the spec's Security Considerations (section 12) distill both. conformance/ADVERSARIAL.md maps every seed to the vector or test that demonstrates it.
@@ -272,7 +288,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
 | `mcpbind`, `cmd/writ-mcp` | Writ over MCP: the call in `tools/call` `_meta`, the tally in the result, a stdio MCP server that enforces it ([docs/bindings.md](docs/bindings.md)) | 5 tests, including every way a result can contradict its tally; also run with Claude Code as the MCP client |
 | `cmd/writ-gate` | a reverse proxy that enforces Writ in front of an API that has never heard of it ([docs/writ-gate.md](docs/writ-gate.md)) | 5 tests: end to end against a fake orders API, including undo, and a request contract checked against an API that decodes like `encoding/json` (case aliases, duplicates, trailing JSON, unbound members, query strings, path parameters, method overrides) |
-| `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call | 9 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
+| `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call; optionally lists and calls only pinned tool definitions and refuses arguments the grant does not bound | 17 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
 | `a2abind` | Writ over A2A: the call in a message part or metadata, the tally as the task's last artifact | 1 test, message level |
 | `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
@@ -334,6 +350,7 @@ docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
+docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
