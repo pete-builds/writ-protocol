@@ -42,13 +42,15 @@ type request struct {
 	// own request: nil when the client cancelled it, closed when the server
 	// exited first. A relayed request has none: its response goes straight
 	// to the client.
-	reply chan []byte
-	msg   message // a tool call as the client sent it
+	reply  chan []byte
+	msg    message // a tool call as the client sent it
+	method string  // a relayed request's method
 }
 
 type proxy struct {
 	agent    *keys.Identity
 	grant    *writ.Writ
+	pol      *policy // pins and closed-world mode, or nil (policy.go)
 	receipts io.Writer
 	recMu    sync.Mutex
 
@@ -167,6 +169,9 @@ func (p *proxy) readServer() error {
 			case r.reply != nil:
 				r.reply <- line
 			default:
+				if r.method == "tools/list" && p.pol.pinning() {
+					line = p.filterList(line)
+				}
 				p.write(withID(line, r.client))
 				p.end()
 			}
@@ -185,6 +190,9 @@ func (p *proxy) readServer() error {
 			}
 			p.write(line)
 		default:
+			if m.Method == "notifications/tools/list_changed" && p.pol.pinning() {
+				p.pol.changed()
+			}
 			p.write(line)
 		}
 	}
@@ -239,6 +247,7 @@ func (p *proxy) relay(m message, line []byte) {
 		return
 	}
 	r := p.register(m.ID, false)
+	r.method = m.Method
 	p.active++
 	p.mu.Unlock()
 	if err := p.toServer(withID(line, r.id)); err != nil && p.take(r.id) != nil {

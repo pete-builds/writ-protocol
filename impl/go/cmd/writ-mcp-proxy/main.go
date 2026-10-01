@@ -16,6 +16,14 @@
 // tally authenticates (mcpbind.Verified), never as the server sent it.
 // Verified tallies are appended to -receipts.
 //
+// -pins and -closed add two policies argument bounds cannot express
+// (policy.go): only pinned tool definitions are listed and called, and no
+// argument the grant does not bound is sent. -print-pins lists a server's
+// tools, writes their definitions to stderr for review and a pin file for
+// them to stdout, and exits:
+//
+//	writ-mcp-proxy -print-pins -- writ-mcp -seed ... > pins.json
+//
 // The proxy reads the client and the server independently (relay.go), so a
 // server may ask the client something, such as an elicitation, in the middle
 // of a tool call, and the client may cancel a call, without either side
@@ -45,13 +53,31 @@ func main() {
 	seedFile := flag.String("agent-seed-file", "", "file holding the agent's 32-byte hex seed, which signs each call")
 	grantFile := flag.String("grant", "", "the grant: a writ from its root to the agent key")
 	receipts := flag.String("receipts", "", "append each verified tally to this file as a JSON line")
+	pinFile := flag.String("pins", "", "list and call only the tools whose definitions match this pin file")
+	closed := flag.Bool("closed", false, "refuse any tool argument the grant does not bound")
+	printPins := flag.Bool("print-pins", false, "write a pin file for the server's tools to stdout and exit")
 	flag.Parse()
 	if flag.NArg() == 0 {
-		log.Fatal("usage: writ-mcp-proxy -agent-seed-file F -grant G [-receipts R] -- <mcp server command> [args]")
+		log.Fatal("usage: writ-mcp-proxy -agent-seed-file F -grant G [-receipts R] [-pins P] [-closed] -- <mcp server command> [args]\n       writ-mcp-proxy -print-pins -- <mcp server command> [args]")
+	}
+	if *printPins {
+		if err := printServerPins(flag.Args(), os.Stdout, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	agent, grant, err := load(*seedFile, *grantFile)
 	if err != nil {
 		log.Fatal(err)
+	}
+	var pol *policy
+	if *pinFile != "" || *closed {
+		pol = &policy{closed: *closed}
+		if *pinFile != "" {
+			if pol.pins, err = loadPins(*pinFile); err != nil {
+				log.Fatal(err)
+			}
+		}
 	}
 	cmd := osexec.Command(flag.Arg(0), flag.Args()[1:]...)
 	cmd.Stderr = os.Stderr
@@ -67,6 +93,7 @@ func main() {
 		log.Fatal(err)
 	}
 	p := newProxy(agent, grant, upIn, upOut)
+	p.pol = pol
 	if *receipts != "" {
 		f, err := os.OpenFile(*receipts, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if err != nil {
@@ -133,6 +160,9 @@ func (p *proxy) sign(m message) (k *writ.Call, params map[string]any, reason, ms
 		if err := dec.Decode(&args); err != nil {
 			return nil, nil, "malformed", "arguments are not an object"
 		}
+	}
+	if reason, msg := p.admit(name, args); reason != "" {
+		return nil, nil, reason, msg
 	}
 	if p.child == nil {
 		if p.server == "" {

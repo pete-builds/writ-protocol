@@ -25,6 +25,11 @@ type upstreamOpts struct {
 	// server, or anything between the server and the proxy, could. S is the
 	// server's key and k the Writ call the request carried.
 	mutate func(S *keys.Identity, k *writ.Call, result map[string]any)
+	// listing answers the n-th tools/list, counting from 0, with the tools
+	// it returns. changed sends notifications/tools/list_changed right after
+	// the first tools/call result.
+	listing func(n int) []any
+	changed bool
 }
 
 func stripTally(_ *keys.Identity, _ *writ.Call, r map[string]any) { delete(r, "_meta") }
@@ -45,6 +50,7 @@ func upstream(t *testing.T, in io.Reader, out io.WriteCloser, S *keys.Identity, 
 	}, true)
 	sc := bufio.NewScanner(in)
 	enc := json.NewEncoder(out)
+	lists, calls := 0, 0
 	for sc.Scan() {
 		var m message
 		_ = json.Unmarshal(sc.Bytes(), &m)
@@ -61,7 +67,15 @@ func upstream(t *testing.T, in io.Reader, out io.WriteCloser, S *keys.Identity, 
 				ext = mcpbind.ExtensionInfo(S.DID())
 			}
 			resp["result"] = map[string]any{"extensions": ext}
+		case "tools/list":
+			if o.listing == nil {
+				resp["error"] = map[string]any{"code": -32601, "message": "no"}
+				break
+			}
+			resp["result"] = map[string]any{"tools": o.listing(lists)}
+			lists++
 		case "tools/call":
+			calls++
 			// A notification in the middle, which the proxy must relay.
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress", "params": map[string]any{"p": 1}})
 			res, rpcErr := srv.CallTool(context.Background(), m.Params)
@@ -77,6 +91,9 @@ func upstream(t *testing.T, in io.Reader, out io.WriteCloser, S *keys.Identity, 
 			resp["error"] = map[string]any{"code": -32601, "message": "no"}
 		}
 		_ = enc.Encode(resp)
+		if m.Method == "tools/call" && calls == 1 && o.changed {
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+		}
 	}
 }
 
@@ -97,6 +114,12 @@ func carried(params json.RawMessage) *writ.Call {
 // session runs the proxy between a scripted client and an upstream.
 func session(t *testing.T, bnd map[string]any, o upstreamOpts, requests ...map[string]any) ([]map[string]any, string) {
 	t.Helper()
+	return sessionWith(t, bnd, o, nil, requests...)
+}
+
+// sessionWith is session with the proxy's policies set.
+func sessionWith(t *testing.T, bnd map[string]any, o upstreamOpts, pol *policy, requests ...map[string]any) ([]map[string]any, string) {
+	t.Helper()
 	A, _ := keys.FromSeed(bytes.Repeat([]byte{1}, 32))
 	B, _ := keys.FromSeed(bytes.Repeat([]byte{2}, 32))
 	S, _ := keys.FromSeed(bytes.Repeat([]byte{7}, 32))
@@ -108,6 +131,7 @@ func session(t *testing.T, bnd map[string]any, o upstreamOpts, requests ...map[s
 	upOutR, upOutW := io.Pipe()
 	go upstream(t, upInR, upOutW, S, A.DID(), o)
 	p := newProxy(B, grant, upInW, upOutR)
+	p.pol = pol
 	var receipts bytes.Buffer
 	p.receipts = &receipts
 	var in bytes.Buffer
