@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -65,9 +66,10 @@ const staleAfter = maxGrant
 var toolUseID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type env struct {
-	home string // WRIT_HOME
-	dir  string // WRIT_HOME/claude
-	now  func() int64
+	home  string // WRIT_HOME
+	dir   string // WRIT_HOME/claude
+	now   func() int64
+	binds func(peer, did string) bool // which keys each mTLS peer speaks for (serve -bindings)
 }
 
 func newEnv() *env {
@@ -93,16 +95,23 @@ func main() {
 	}
 	e := newEnv()
 	var err error
-	// With WRIT_HOOK_SOCKET set, the hook commands go to a gate running as
-	// its own process (writ-hook serve) instead of opening the state here.
-	if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
+	// With WRIT_HOOK_GATE or WRIT_HOOK_SOCKET set, the hook commands go to a
+	// gate running as its own process (writ-hook serve), over mTLS or a Unix
+	// socket, instead of opening the state here.
+	where, send := "", asker(nil)
+	if gate := os.Getenv("WRIT_HOOK_GATE"); gate != "" {
+		where, send = gate, tlsClient(gate)
+	} else if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
+		where, send = socket, viaSocket(socket)
+	}
+	if send != nil {
 		switch os.Args[1] {
 		case "pre", "post", "recover", "receipts":
 			var in io.Reader = os.Stdin
 			if os.Args[1] == "recover" && !piped(os.Stdin) {
 				in = strings.NewReader("")
 			}
-			ok, err := remote(socket, os.Args[1], in, os.Stdout)
+			ok, err := remote(where, send, os.Args[1], in, os.Stdout)
 			if err != nil {
 				die("writ-hook: %v", err)
 			}
@@ -117,11 +126,41 @@ func main() {
 		fs := flag.NewFlagSet("serve", flag.ExitOnError)
 		socket := fs.String("socket", "", "Unix socket to listen on; the hook commands find it through WRIT_HOOK_SOCKET")
 		mode := fs.Uint("mode", 0o666, "permission of the socket file, which the Claude Code user must be able to connect to")
+		listen := fs.String("listen", "", "TCP address to serve mTLS on, such as :8443; the hook commands find it through WRIT_HOOK_GATE")
+		cert := fs.String("tls-cert", "", "with -listen: the gate's certificate (PEM)")
+		key := fs.String("tls-key", "", "with -listen: the gate's private key (PEM)")
+		clientCA := fs.String("client-ca", "", "with -listen: the CA that signs the machines' client certificates (PEM)")
+		bindings := fs.String("bindings", "", "with -listen: a JSON file mapping each machine's peer URI to the keys it speaks for (docs/directories.md)")
 		_ = fs.Parse(os.Args[2:])
-		if *socket == "" {
-			die("writ-hook serve: -socket is required")
+		if *socket == "" && *listen == "" {
+			die("writ-hook serve: -socket or -listen is required")
 		}
-		err = e.serve(*socket, os.FileMode(*mode), func() { fmt.Fprintln(os.Stderr, "writ-hook gate listening on", *socket) })
+		if *bindings != "" {
+			b, berr := exec.LoadBindings(*bindings)
+			if berr != nil {
+				die("writ-hook serve: %v", berr)
+			}
+			e.binds = b.Binds
+		}
+		errs := make(chan error, 2)
+		if *listen != "" {
+			cfg, terr := gateTLS(*cert, *key, *clientCA)
+			if terr != nil {
+				die("writ-hook serve: %v", terr)
+			}
+			ln, lerr := tls.Listen("tcp", *listen, cfg)
+			if lerr != nil {
+				die("writ-hook serve: %v", lerr)
+			}
+			fmt.Fprintln(os.Stderr, "writ-hook gate listening on", ln.Addr(), "with mTLS")
+			go func() { errs <- e.serveTLS(ln) }()
+		}
+		if *socket != "" {
+			go func() {
+				errs <- e.serve(*socket, os.FileMode(*mode), func() { fmt.Fprintln(os.Stderr, "writ-hook gate listening on", *socket) })
+			}()
+		}
+		err = <-errs
 	case "init":
 		err = e.initKeys(os.Stdout)
 	case "grant":
@@ -393,6 +432,9 @@ func (g *gate) use(id string) error {
 	x := exec.New(g.id, st)
 	x.Now = g.env.now
 	x.AcceptRoot = func(did string) bool { return did == g.rootID }
+	if g.env.binds != nil {
+		x.PeerBinds = g.env.binds
+	}
 	x.Audit = func(a exec.AuditEntry) {
 		if err := g.audit.Record(a); err != nil {
 			fmt.Fprintf(os.Stderr, "writ-hook: audit record not written: %v\n", err)
@@ -499,6 +541,20 @@ type hookInput struct {
 	ToolResponse json.RawMessage `json:"tool_response"`
 	Error        json.RawMessage `json:"error"`
 	SessionID    string          `json:"session_id"`
+
+	// Set by the gate for a request that came over mTLS: the context
+	// carrying the transport-authenticated peer, for peer binding (spec
+	// 7.6), and that peer, so a call one machine began only that machine
+	// can finish or recover. Both are empty for a local hook or the socket.
+	ctx  context.Context
+	peer string
+}
+
+func (h *hookInput) context() context.Context {
+	if h.ctx == nil {
+		return context.Background()
+	}
+	return h.ctx
 }
 
 // pendingCall is what pre keeps for a call it admitted, until post signs its
@@ -506,6 +562,7 @@ type hookInput struct {
 // when, so a session starting up resolves only calls that cannot be running.
 type pendingCall struct {
 	Session string          `json:"session"`
+	Peer    string          `json:"peer,omitempty"` // the machine that began it, over mTLS
 	At      int64           `json:"at"`
 	Call    json.RawMessage `json:"call"`
 }
@@ -539,10 +596,17 @@ func grantOf(obj wire.Object) (string, error) {
 }
 
 func (e *env) hook(in io.Reader, out io.Writer, f func(*hookInput) (any, error)) error {
+	return e.hookFrom(context.Background(), "", in, out, f)
+}
+
+// hookFrom runs a hook for a request from peer, over a connection whose
+// context ctx carries it; peer is "" for a local hook or the socket.
+func (e *env) hookFrom(ctx context.Context, peer string, in io.Reader, out io.Writer, f func(*hookInput) (any, error)) error {
 	var h hookInput
 	if err := json.NewDecoder(in).Decode(&h); err != nil {
 		return fmt.Errorf("hook input: %v", err)
 	}
+	h.ctx, h.peer = ctx, peer
 	v, err := f(&h)
 	if err != nil {
 		return err
@@ -607,7 +671,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err != nil {
 		return deny("the tool input cannot be carried in a call: " + err.Error()), nil
 	}
-	rep, rej := g.e.Begin(context.Background(), k.Raw)
+	rep, rej := g.e.Begin(h.context(), k.Raw)
 	switch {
 	case rej != nil:
 		return deny(string(rej.Code)), nil
@@ -622,7 +686,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, At: e.now(), Call: call}); err != nil {
+	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, Peer: h.peer, At: e.now(), Call: call}); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -729,12 +793,15 @@ func (e *env) post(h *hookInput) (any, error) {
 		return nil, err
 	}
 	defer unlock()
-	_, obj, err := readPending(e.pendingPath(h.ToolUseID))
+	p, obj, err := readPending(e.pendingPath(h.ToolUseID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil // not a call this gate admitted
 	}
 	if err != nil {
 		return nil, err
+	}
+	if p.Peer != h.peer {
+		return nil, fmt.Errorf("call %s was begun by another machine, which alone can report its outcome", h.ToolUseID)
 	}
 	id, err := grantOf(obj)
 	if err != nil {
@@ -757,7 +824,7 @@ func (e *env) post(h *hookInput) (any, error) {
 		body = map[string]any{"tool_use_id": h.ToolUseID, "error_sha256": hex.EncodeToString(errSum[:])}
 	}
 	r.Res = body
-	if _, rej := g.e.Complete(context.Background(), obj, r); rej != nil && rej.Code != writ.Reason(exec.NotAdmitted) {
+	if _, rej := g.e.Complete(h.context(), obj, r); rej != nil && rej.Code != writ.Reason(exec.NotAdmitted) {
 		return nil, fmt.Errorf("receipt not signed: %v", rej)
 	}
 	if err := os.Remove(e.pendingPath(h.ToolUseID)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -964,7 +1031,7 @@ func (e *env) recover(out io.Writer, h *hookInput) error {
 				at = fi.ModTime().Unix()
 			}
 		}
-		if h != nil && (p.Session == "" || p.Session != h.SessionID) && e.now()-at <= int64(staleAfter/time.Second) {
+		if h != nil && (p.Session == "" || p.Session != h.SessionID || p.Peer != h.peer) && e.now()-at <= int64(staleAfter/time.Second) {
 			continue
 		}
 		id, err := grantOf(obj)

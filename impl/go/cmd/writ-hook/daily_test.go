@@ -120,12 +120,12 @@ func TestSessionStartOverSocket(t *testing.T) {
 	socket := startGate(t, e)
 	preAs(t, e, "sess-a", "Read", "toolu_1", map[string]any{"file_path": "/a"})
 	var out bytes.Buffer
-	if _, err := remote(socket, "recover", strings.NewReader(`{"session_id":"sess-b","hook_event_name":"SessionStart"}`), &out); err != nil ||
+	if _, err := remote(socket, viaSocket(socket), "recover", strings.NewReader(`{"session_id":"sess-b","hook_event_name":"SessionStart"}`), &out); err != nil ||
 		!strings.Contains(out.String(), "resolved 0") {
 		t.Fatalf("session b over the socket: %v %q", err, out.String())
 	}
 	out.Reset()
-	if _, err := remote(socket, "recover", strings.NewReader(`{"session_id":"sess-a","hook_event_name":"SessionStart"}`), &out); err != nil ||
+	if _, err := remote(socket, viaSocket(socket), "recover", strings.NewReader(`{"session_id":"sess-a","hook_event_name":"SessionStart"}`), &out); err != nil ||
 		!strings.Contains(out.String(), "resolved 1") {
 		t.Fatalf("session a over the socket: %v %q", err, out.String())
 	}
