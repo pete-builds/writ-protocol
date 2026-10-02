@@ -364,6 +364,7 @@ docs/directories.md                connecting a directory: mTLS certificates and
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
 docs/approval.md                   a call above an agent's limits, approved as a one-use delegation
+docs/x402.md                       Writ as the authorization layer in front of an x402 signer: the field mapping
 docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
 docs/aims-audit-mapping.md         a receipt tree mapped to the WIMSE AIMS audit requirements, gaps included
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted

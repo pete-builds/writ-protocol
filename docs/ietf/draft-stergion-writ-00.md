@@ -599,6 +599,7 @@ Application failures use `failed` with a code outside this table; such codes SHO
 | delegation with attenuation | UCAN, Biscuit, macaroons, ZCAP-LD, Tenuo | Writ is the JSON-only, DID-key-only, six-comparison subset, plus receipt trees |
 | receipts | UCAN Receipt, in-toto, SCITT | a UCAN Receipt signs an invocation's result and the tasks it enqueues; a tally also embeds the tallies of the work delegated below it and accounts for consumption across them. A tally can be wrapped as an in-toto statement or registered with a SCITT log by an extension |
 | payment mandates | AP2 | an AP2 mandate can be carried as an application bound; Writ does not settle payments |
+| payment for HTTP resources | x402 | an x402 payment requirement maps onto bounds, and the signer that holds the payment key is the executor; Writ does not settle payments |
 | hash-linked attenuated agent delegation | draft-asor-wimse-agent-delegation-chain, draft-hamr-oauth-agent-delegation, AgentROA, AIP/IBCT | same shape (parent hash, subset per hop, offline check); Writ differs in carrying no OAuth or JWT envelope, in a closed six-type bound algebra, and in binding the receipt tree to the chain. A JWS profile is the bridge |
 | per-action authorization receipts and tool-call binding | draft-schrock-ep-authorization-receipts, draft-das-agentic-tool-binding | pre-execution approval of one action; a tally is post-execution and MAY carry such a receipt's hash in `err.ref` or the result body |
 

@@ -215,6 +215,8 @@ None of these is a competitor. The way to keep it so is to say one accurate sent
 
 **AP2.** AP2 is the mandate chain from the human to the merchant, and Writ is the chain from a merchant's agent to its subcontractors. A tally can carry a Payment Mandate reference unchanged, and Writ will never define a payment object.
 
+**x402.** x402 settles a payment for an HTTP resource and names client-side budget management as out of its scope. Writ fills that from the client's side: the signer that holds the payment key is the executor, an x402 payment requirement maps onto bounds (`max` and `total` on the amount, `set` on the recipient, network, and asset), and the tally is the record of why money moved. docs/x402.md has the mapping; it is a binding, not code, and unproven against a live facilitator.
+
 **SCITT.** A tally is a Signed Statement waiting for a Receipt. A SCITT Receipt travels as an extension member beside the tally (ignored by any verifier that does not know it, spec section 1.7), and Writ will never define a log or require one.
 
 ## 6. How it could go wrong, and the guard for each
