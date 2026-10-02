@@ -32,7 +32,7 @@ OWASP published its Top 10 for Agentic Applications on 2025-12-09 ([OWASP](https
 | ASI06 Memory & Context Poisoning | no | Writ does not see what an agent remembers or reads. |
 | ASI07 Insecure Inter-Agent Communication | yes | Every call, receipt, and revoke is signed and verifiable offline; replays are named and answered from the replay store; the peer binding (spec 7.6) ties a transport identity to the signing key. |
 | ASI08 Cascading Failures | partly | Per-executor limits, revocation that reaches the whole subtree, and `sys/undo` within a promised window bound how far one failure spreads and what can be reversed. They do not prevent it. |
-| ASI09 Human-Agent Trust Exploitation | no | The spec has no rule for showing bounds to a person, so a person can still approve something they did not understand. |
+| ASI09 Human-Agent Trust Exploitation | no | The spec has no rule for showing bounds to a person, so a person can still approve something they did not understand. An approval (docs/approval.md) is one action with every argument pinned, which is small enough to show in full, but nothing makes the person read it. |
 | ASI10 Rogue Agents | partly | The same as ASI08: short expiry, revocation, and receipts bound and expose a rogue agent's work. Nothing in a signature detects one. |
 
 ## Pattern 1: commit before ingest

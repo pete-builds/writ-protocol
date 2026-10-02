@@ -1,4 +1,4 @@
-"""The five bound types (section 3), narrowing and satisfaction.
+"""The six bound types (section 3), narrowing and satisfaction.
 
 A bound is ``{"t": <type>, "v": <value>}`` and nothing else. validate()
 checks shape and value, narrows() implements the "child narrows parent"
@@ -9,7 +9,7 @@ prefix_matches() is section 3.1.
 from .canon import is_int
 from .errors import WritError
 
-TYPES = ("max", "count", "prefix", "set", "window")
+TYPES = ("max", "count", "total", "prefix", "set", "window")
 
 # Bounds that section 7.2 does not compare against args.
 RESERVED_NAMES = ("act", "hld", "depth")
@@ -37,7 +37,7 @@ def validate(bound, name="bound"):
         raise WritError("malformed", f"bound {name} type is not a string")
     if t not in TYPES:
         raise WritError("unknown_bound", f"bound {name} has unknown type {t!r}")
-    if t in ("max", "count"):
+    if t in ("max", "count", "total"):
         if not is_int(v):
             raise WritError("malformed", f"bound {name} ({t}) value is not an integer")
         if v < 0:
@@ -83,7 +83,7 @@ def narrows(child, parent):
         return False
     t = child["t"]
     c, p = child["v"], parent["v"]
-    if t in ("max", "count"):
+    if t in ("max", "count", "total"):
         return c <= p
     if t == "prefix":
         return prefix_matches(p, c)
@@ -99,13 +99,15 @@ def satisfies(bound, arg):
     """True when arg satisfies bound. The bound is assumed validated.
 
     A ``count`` bound is not applied by argument (section 3, section 7.3),
-    so it is satisfied by anything. Type confusion never satisfies: a string
-    never satisfies max or window, a non-string never satisfies prefix, and
+    so it is satisfied by anything. A ``total`` bound is satisfied here by
+    one call's argument, as max is; the running sum across calls is the
+    executor's (section 7 step 10). Type confusion never satisfies: a string
+    never satisfies max, total, or window, a non-string never satisfies prefix, and
     the integer 1 does not satisfy a set holding only the string "1".
     """
     t = bound["t"]
     v = bound["v"]
-    if t == "max":
+    if t in ("max", "total"):
         return is_int(arg) and 0 <= arg <= v
     if t == "count":
         return True

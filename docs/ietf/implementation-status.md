@@ -9,7 +9,7 @@ According to {{RFC7942}}, "this will allow reviewers and working groups to assig
 
 {{RFC7942}} asks for this section just before the Security Considerations. It is placed here instead so that every section number matches the repository text this document is generated from.
 
-The conformance corpus is in the repository: 241 vectors of section 14 and 24 executor scenarios of section 14.1, with JSON schemas for both.
+The conformance corpus is in the repository: 269 vectors of section 14 and 25 executor scenarios of section 14.1, with JSON schemas for both.
 
 ## Go reference implementation
 
@@ -33,7 +33,7 @@ The conformance corpus is in the repository: 241 vectors of section 14 and 24 ex
 - Coverage: sections 1 to 11, the ack of section 9.4 included, and the conformance harness of section 14. It passes every vector and every scenario, and serves the HTTP binding well enough to stand in for the Go executor in the three-agent demonstration.
 - Version compatibility: this version (-00).
 - Licensing: Apache License 2.0.
-- Implementation experience: writing the executor found ten places where the text was unclear, each since answered in the specification. It comes from the same author's tooling as the Go implementation, so agreement between the two shows that the text can be read the same way twice, not that a stranger can build from it.
+- Implementation experience: writing the executor found ten places where the text was unclear, each since answered in the specification. The `total` bound type was added to both on 2026-10-01 the same way: an agent kept away from the Go code implemented it from the text alone, passed every vector and scenario on its first run, and named four places worth a sentence, three of which the text now answers. It comes from the same author's tooling as the Go implementation, so agreement between the two shows that the text can be read the same way twice, not that a stranger can build from it.
 - Contact: issues at https://github.com/pete-builds/writ-protocol.
 - Last updated: 2026-10-01.
 
@@ -44,7 +44,7 @@ The conformance corpus is in the repository: 241 vectors of section 14 and 24 ex
 - Description: a TypeScript verifier and executor written from the specification and the conformance corpus alone, without reading either implementation above, by an AI coding agent directed by its author, who discloses that it counts "as an independent reading of the text, not as a human stranger".
 - Maturity: prototype.
 - Coverage: the verifier passes all 213 vectors of the corpus at that commit, which were available while it was built. The executor was built with every scenario's expected answers removed, and its first run passed 19 of 22 scenarios (136 of 140 steps); the three failures had one cause in the implementation, which was then fixed.
-- Version compatibility: the repository text at commit 6552968 (2026-09-30), before the ack of section 9.4 was added. It does not yet sign acks, so its executor's answer to a revoke lacks the members section 10 now requires.
+- Version compatibility: the repository text at commit 6552968 (2026-09-30), before the ack of section 9.4 was added. It does not yet sign acks, so its executor's answer to a revoke lacks the members section 10 now requires, and it predates the `total` bound type of section 3, so it rejects the 28 vectors that carry one as `unknown_bound`.
 - Licensing: Apache License 2.0.
 - Implementation experience: it reported two places where the text was unclear, both confirmed: a `canceled` tally for a call not yet accepted names no error code (section 9.1), and "outermost value" in the nesting limit of section 1.1 is ambiguous.
 - Contact: https://github.com/pete-builds/writ-protocol/issues/22.

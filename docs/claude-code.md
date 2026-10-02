@@ -34,6 +34,8 @@ writ-hook grant -name search -tools Grep,Glob -uses 200 -ttl 8h
 
 A tool no grant lists is checked under the first grant without a `-tools` list, or failing that the first grant by name, which refuses it with its reason.
 
+When a call is refused for its arguments or its operation and a writ above the one that refused it would allow it, the reason names that writ's signer, usually you, and tells the model to ask rather than retry. You approve exactly that call, once, with `writ approve` ([approval.md](approval.md)).
+
 | Flag | Bound it signs | Meaning |
 |---|---|---|
 | `-name` | none | the grant's name, lowercase letters, digits, and dashes; granting the same name again replaces it |
@@ -101,7 +103,7 @@ What the socket still allows: any local process can send `pre` and `post` events
 writ-hook receipts
 ```
 
-It verifies every receipt against the chain it names, with the keys inside the objects and nothing else, and exits non-zero if any fails. The audit record is `~/.writ/claude/audit.jsonl`, one JSON line per call, refusals included.
+It verifies every receipt against the chain it names, with the keys inside the objects and nothing else, and exits non-zero if any fails. The audit record is `~/.writ/claude/audit.jsonl`, one JSON line per call, refusals included. Each line carries the hash of the line before it, so `receipts` also reports whether every link is intact: an entry edited, removed, or reordered since it was written makes it fail. `writ audit <file>` checks any record the same way.
 
 ## What Claude sees when a call is blocked
 

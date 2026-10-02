@@ -221,14 +221,14 @@ func Params(tool string, k *writ.Call) map[string]any {
 }
 
 // Ready refuses to send k to a server that does not advertise the extension
-// when any writ in its chain carries a max or count bound.
+// when any writ in its chain carries a max, count, or total bound.
 func Ready(k *writ.Call, advertised bool) error {
 	if advertised {
 		return nil
 	}
 	for _, w := range k.Chain {
 		for _, b := range w.Bnd {
-			if b.T == "max" || b.T == "count" {
+			if b.T == "max" || b.T == "count" || b.T == "total" {
 				return ErrUnenforcedServer
 			}
 		}

@@ -39,14 +39,24 @@ Each route is a contract for the request it matches. The gate enforces it before
 
 The gate also refuses to start with a mapping that is ambiguous in itself: two bound members of one object whose names fold together, one bound member inside another, a member or path parameter bound twice, a `used` entry that reads a member no `bind` entry signs, or a path that is not `$.` followed by member names.
 
-**What the API receives** is rebuilt from the signed args alone, never the caller's bytes: the route's method, the route's path with each parameter filled in from its signed value (percent-encoded), and a body holding each bound member once, in canonical form (spec section 1.2) with `Content-Type: application/json`. Other request headers are forwarded, except `Writ-Call`, `Host`, the body headers (`Content-Type`, `Content-Length`, `Content-Encoding`, `Transfer-Encoding`), and the method override headers `X-HTTP-Method-Override`, `X-HTTP-Method`, and `X-Method-Override`. The tally's `used` is read from the signed args, so it reports what the API was actually asked to do.
+**What the API receives** is rebuilt from the signed args alone, never the caller's bytes: the route's method, the route's path with each parameter filled in from its signed value (percent-encoded), and a body holding each bound member once, in canonical form (spec section 1.2) with `Content-Type: application/json`. Other request headers are forwarded, except `Writ-Call`, `Host`, the body headers (`Content-Type`, `Content-Length`, `Content-Encoding`, `Transfer-Encoding`), the method override headers `X-HTTP-Method-Override`, `X-HTTP-Method`, and `X-Method-Override`, and the caller's credentials (below). The tally's `used` is read from the signed args, so it reports what the API was actually asked to do.
+
+## The gate holds the API's credential
+
+A caller that holds a credential the API accepts can skip the gate and send its request to the API directly, and then nothing here applies: no bound, no count, no tally. So the gate is the only party that holds the API's credential.
+
+- **A caller's credential never reaches the API.** `Authorization`, `Proxy-Authorization`, and `Cookie` from a caller are dropped, always, with or without a credentials file.
+- **The gate sends its own.** `-upstream-credentials <file>` names a file of `Name: value` lines, such as `Authorization: Bearer <token>` or `X-Api-Key: <key>`. The gate adds them to every request it sends the API, the forward request and the reversal alike. A header the file names is also dropped from callers, so an API that reads its key from `X-Api-Key` lists it here and a caller's own `X-Api-Key` never arrives.
+- **The file is checked at start.** It must be a regular file (not a symlink) readable by its owner only (`chmod 600`). A malformed line, a name given twice, an empty file, or a header the gate controls (`Writ-Call`, `Writ-Tally`, `Host`, the body headers, the method overrides) stops the gate from starting.
+
+The other half is the API's: it must accept only the gate's credential, and callers must not be issued one. If they are, the gate is advice. The pattern is the one x402Shield's design states for payments, where the service that decides holds no signing key and the signer acts only on a permit: the party that checks the authority and the party that holds the power to act are separate, and the only path between them runs through the check.
 
 What the contract cannot see: a header the API reads as an operation parameter. Headers other than those above are forwarded unchecked and unsigned, so an API that takes, say, an amount from a header cannot be put behind the gate safely.
 
 ## Running it
 
 ```
-writ-gate -config gate.json -seed-file gate.seed -accept <root did> -store gate-store.json -audit audit.jsonl -listen 127.0.0.1:8090
+writ-gate -config gate.json -seed-file gate.seed -accept <root did> -store gate-store.json -audit audit.jsonl -upstream-credentials api.creds -listen 127.0.0.1:8090
 ```
 
 A caller sends `Writ-Call: <base64url of the call's JSON>` with its ordinary request. The answers are:
@@ -68,7 +78,9 @@ The tally's result body is `{"status", "body_sha256", "reverse_id"}`, so a calle
 
 ## Compatibility
 
-The request contract was added on 2026-09-30, after a review found that the gate checked the fields it extracted but forwarded the caller's bytes: a body of `{"total_cents":1200,"TOTAL_CENTS":9999}` signed for 1200 was charged 9999 by an API that decodes into a Go struct, and the gate signed a valid tally reporting 1200. The changes a deployment notices:
+**2026-10-01.** The gate no longer forwards a caller's `Authorization`, `Proxy-Authorization`, or `Cookie`, or any header its credentials file names. A deployment whose callers sent the API's credential through the gate moves that credential into the file given to `-upstream-credentials` and stops issuing it to callers. A reversal now carries the credential too; before, it carried no headers at all, so an API that required one refused every `sys/undo`.
+
+**2026-09-30.** The request contract was added on 2026-09-30, after a review found that the gate checked the fields it extracted but forwarded the caller's bytes: a body of `{"total_cents":1200,"TOTAL_CENTS":9999}` signed for 1200 was charged 9999 by an API that decodes into a Go struct, and the gate signed a valid tally reporting 1200. The changes a deployment notices:
 
 - A request with any body member the route does not bind is refused. Before, unbound members passed through unsigned. Bind every member the API reads; a member with no bound in the writ is still an argument the call signs.
 - A request with a query string is refused.
@@ -78,5 +90,7 @@ The request contract was added on 2026-09-30, after a review found that the gate
 ## Tested
 
 `cmd/writ-gate/contract_test.go` puts the gate in front of a ledger API that decodes the way most Go services do, into a tagged struct with `encoding/json`, and also lets a query parameter override the body, multiplies by a `quantity`, reads every JSON value of a batch body, and honors `X-HTTP-Method-Override`. Every request is signed for 1200 under a `max` of 5000. A case alias, a Unicode folding alias, a duplicate member, trailing JSON, an unbound member, a query string, a path parameter other than the signed one, and a dot segment are each refused before the API sees anything; before the fix, the first two were charged 9999 under a valid tally reporting 1200, the batch was charged twice, the unbound `quantity` was charged 12000, and the query string was charged 9999. An accepted charge reaches the API as the canonical body and the signed path, with the method override and a form content type removed, and its tally's `used` equals what the API charged. Mappings that leave a path parameter unbound, bind folding names, or read `used` from an unsigned member are refused at start. With each check removed in turn, a test fails.
+
+`cmd/writ-gate/credentials_test.go` puts the gate in front of an API that accepts only the gate's credential and records every header it receives. A caller sending its own `Authorization`, `Proxy-Authorization`, `Cookie`, and `X-Api-Key` gets an order created under the gate's credential, and the API sees exactly one `Authorization` and one `X-Api-Key`, both the gate's, no cookie, and the caller's ordinary `X-Request-Id`. The undo of that order reaches the API with the gate's credential. With no credentials file, a caller's `Authorization` is still dropped, so the API answers 401. The loader refuses a group or world readable file, a symlink, malformed lines, control characters, a duplicate, an empty file, and every header the gate controls. With the credential drop, the reversal's credential, and the mode check each removed in turn, a test fails.
 
 `cmd/writ-gate/main_test.go` runs a fake orders API behind the gate: an order inside the grant is created and its tally verifies against the rebuilt response, the API never sees the `Writ-Call` header, an order over the `max`, a body that differs from the signed args, and a request with no call are all refused without reaching the API, a replay is answered from the store, the count runs out, an undo cancels the order through the API, and an unrouted path is refused. With the check that the signed args equal the body switched off, the test fails: an order signed for 1200 and sent as 9999 is created.

@@ -1,0 +1,15 @@
+{
+ "expect": "accept",
+ "input": {
+  "child": {
+   "t": "total",
+   "v": 0
+  },
+  "parent": {
+   "t": "total",
+   "v": 1000
+  }
+ },
+ "name": "total smaller",
+ "op": "narrows"
+}

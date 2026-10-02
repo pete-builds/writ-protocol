@@ -7,7 +7,8 @@
 # rejects differently from the other, an executor scenario either
 # implementation answers differently, a fuzzed input the two judge
 # differently, a corpus that is not byte-for-byte reproducible from the
-# generators, or a demo expectation that does not hold.
+# generators, a demo expectation that does not hold, or a concurrency
+# check against a real executor process that does not hold.
 name: ci
 
 on:
@@ -186,6 +187,21 @@ jobs:
         run: |
           python3 scripts/build-ietf-draft.py
           git diff --stat --exit-code docs/ietf/draft-stergion-writ-00.md
+
+  concurrency:
+    name: concurrency proof, real executor process
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      # writ-agent runs as its own process, built with the race detector,
+      # behind real HTTP; README.md publishes the same run at full size.
+      - name: claims, totals, replays, and a restart under 128 requests in flight
+        working-directory: impl/go
+        run: go run ./cmd/writ-bench -claims 2000 -totals 2000 -fits 50 -replays 10000 -workers 128 -race
 
   demo:
     name: three-process demo

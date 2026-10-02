@@ -109,6 +109,7 @@ func setup() {
 	base.w1 = must(writ.Issue(A, B.DID(), bnd(
 		"act", "prefix", "travel",
 		"amount", "max", 60000,
+		"budget", "total", 120000,
 		"currency", "set", []any{"USD"},
 		"date", "window", []any{20261015, 20261019},
 		"fare", "set", []any{"refundable", 2},
@@ -119,6 +120,7 @@ func setup() {
 	base.w2 = must(writ.Issue(B, C.DID(), bnd(
 		"act", "prefix", "travel/charge",
 		"amount", "max", 58900,
+		"budget", "total", 100000,
 		"currency", "set", []any{"USD"},
 		"date", "window", []any{20261015, 20261016},
 		"fare", "set", []any{"refundable"},
@@ -129,16 +131,16 @@ func setup() {
 	base.v1 = must(writ.Issue(A, B.DID(), bnd("act", "prefix", "travel", "amount", "max", 60000), now+3600, nil))
 	base.v2 = must(writ.Issue(B, D.DID(), bnd("act", "prefix", "travel/charge", "amount", "max", 58900), now+2400, base.v1))
 	base.v3 = must(writ.Issue(D, C.DID(), bnd("act", "prefix", "travel/charge", "amount", "max", 58000, "note", "prefix", "a/"), now+1200, base.v2))
-	args := map[string]any{"amount": 58900, "currency": "USD", "date": 20261015, "fare": "refundable", "pnr": "K7Q2ZD"}
+	args := map[string]any{"amount": 58900, "budget": 58900, "currency": "USD", "date": 20261015, "fare": "refundable", "pnr": "K7Q2ZD"}
 	base.kFwd = must(writ.NewCall(B, []*writ.Writ{base.w1, base.w2}, "travel/charge", args))
 	base.kFwd3 = must(writ.NewCall(D, []*writ.Writ{base.v1, base.v2, base.v3}, "travel/charge/retry", map[string]any{"amount": 58000, "note": "a/b"}))
-	base.kAB = must(writ.NewCall(A, []*writ.Writ{base.w1}, "travel/book", map[string]any{"amount": 58900, "currency": "USD", "date": 20261016, "fare": 2}))
+	base.kAB = must(writ.NewCall(A, []*writ.Writ{base.w1}, "travel/book", map[string]any{"amount": 58900, "budget": 58900, "currency": "USD", "date": 20261016, "fare": 2}))
 	until := now + 86400
 	base.resC = map[string]any{"charge": "ch_8813"}
-	tC, _, _ := writ.NewTally(C, writ.TallyInput{Call: base.kFwd, Acc: now + 15, St: "ok", Res: base.resC, Used: map[string]int64{"amount": 58900}, RevUntil: &until})
+	tC, _, _ := writ.NewTally(C, writ.TallyInput{Call: base.kFwd, Acc: now + 15, St: "ok", Res: base.resC, Used: map[string]int64{"amount": 58900, "budget": 58900}, RevUntil: &until})
 	base.tC = tC.Raw
 	base.resB = map[string]any{"booking": "bk_1", "pnr": "K7Q2ZD"}
-	tB, _, _ := writ.NewTally(B, writ.TallyInput{Call: base.kAB, Acc: now + 12, St: "ok", Res: base.resB, Used: map[string]int64{"amount": 58900}, Sub: []*writ.Tally{tC}, Wrt: []*writ.Writ{base.w2}})
+	tB, _, _ := writ.NewTally(B, writ.TallyInput{Call: base.kAB, Acc: now + 12, St: "ok", Res: base.resB, Used: map[string]int64{"amount": 58900, "budget": 58900}, Sub: []*writ.Tally{tC}, Wrt: []*writ.Writ{base.w2}})
 	base.tB = tB.Raw
 	base.kUndo = must(writ.NewCall(A, []*writ.Writ{base.w1, base.w2}, "sys/undo", map[string]any{"tally": base.tC}))
 	base.kTal = must(writ.NewCall(B, []*writ.Writ{base.w1, base.w2}, "sys/tallies", map[string]any{"writ": base.w1.ID}))
@@ -339,13 +341,13 @@ func interesting() any {
 	}
 }
 
-var boundTypes = []string{"max", "count", "prefix", "set", "window", "bogus"}
+var boundTypes = []string{"max", "count", "total", "prefix", "set", "window", "bogus"}
 
 func randBound() any {
 	t := pick(boundTypes...)
 	var v any
 	switch t {
-	case "max", "count":
+	case "max", "count", "total":
 		v = pick[any](n(0), n(1), n(58900), n(60000), n(-1), json.Number("9007199254740991"), json.Number("1.5"), "7")
 	case "prefix":
 		v = pick[any]("travel", "travel/", "travel/charge", "", "trave", "travel/charge/x", "sys/", "a/", n(1))

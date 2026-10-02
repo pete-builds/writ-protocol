@@ -42,7 +42,7 @@
   "$defs": {
     "reason": {
       "description": "A rejection reason: every code of spec section 11 except pending, which is not a rejection. scripts/check-schemas.py fails when this list and the spec's table differ.",
-      "enum": ["too_large", "noncanonical", "unsupported_version", "wrong_type", "unsupported_critical", "malformed", "bad_key", "bad_signature", "chain_broken", "not_narrowed", "unknown_bound", "expired", "root_not_accepted", "wrong_executor", "peer_mismatch", "revoked", "no_standing", "forbidden_op", "missing_arg", "out_of_bounds", "count_exhausted", "tally_mismatch", "sub_unmatched", "ack_mismatch", "not_reversible", "undeliverable", "unknown_outcome"]
+      "enum": ["too_large", "noncanonical", "unsupported_version", "wrong_type", "unsupported_critical", "malformed", "bad_key", "bad_signature", "chain_broken", "not_narrowed", "unknown_bound", "expired", "root_not_accepted", "wrong_executor", "peer_mismatch", "revoked", "no_standing", "forbidden_op", "missing_arg", "out_of_bounds", "count_exhausted", "total_exhausted", "tally_mismatch", "sub_unmatched", "ack_mismatch", "not_reversible", "undeliverable", "unknown_outcome"]
     }
   }
 }

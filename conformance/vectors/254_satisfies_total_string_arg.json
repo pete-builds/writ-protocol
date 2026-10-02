@@ -1,0 +1,13 @@
+{
+ "expect": "reject",
+ "input": {
+  "arg": "1000",
+  "bound": {
+   "t": "total",
+   "v": 1000
+  }
+ },
+ "name": "total string arg",
+ "op": "satisfies",
+ "reason": "out_of_bounds"
+}

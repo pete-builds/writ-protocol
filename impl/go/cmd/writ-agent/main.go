@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"writproto/exec"
@@ -118,15 +119,17 @@ func main() {
 
 // installPayment: agent C. It charges within the leaf bounds and can refund.
 func installPayment(e *exec.Executor) {
-	seq := 0
+	// Operations run concurrently once admitted (spec 7 step 11), so the
+	// charge sequence is atomic: two charges never share an identifier.
+	var seq atomic.Int64
 	e.Handle = func(ctx context.Context, k *writ.Call) exec.Result {
 		amount, _ := k.Args["amount"].(interface{ Int64() (int64, error) })
 		n, _ := amount.Int64()
-		seq++
+		ch := seq.Add(1)
 		until := e.Now() + 86400
 		log.Printf("charge %d %v for %s", n, k.Args["currency"], k.From[:20])
 		return exec.Result{
-			Res:      map[string]any{"charge": fmt.Sprintf("ch_%04d", seq), "amount": n},
+			Res:      map[string]any{"charge": fmt.Sprintf("ch_%04d", ch), "amount": n},
 			Used:     map[string]int64{"amount": n},
 			RevUntil: &until,
 		}

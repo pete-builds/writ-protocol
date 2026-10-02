@@ -1,0 +1,34 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "pay"
+    },
+    "amount": {
+     "t": "total",
+     "v": -1
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+   "nnc": "bm9uY2UtMDAwMDAwMDEwMw",
+   "prv": null,
+   "sig": "d2Dpm9wWTDMf7tQ_4XgYY_31Gmn50LdATOBlgrPSSbRWZlC_Duej4kNZV56-wZdDnLC1ctyTFVHMDF1O958EDw",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "total negative in a writ",
+ "op": "verify_writ",
+ "reason": "noncanonical"
+}

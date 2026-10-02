@@ -136,6 +136,23 @@ def build():
     late = issue.make_call(B, [w1, w2], "travel/charge", call_b["args"], call_id="f6f1c0a3Ln2k9QpXs4vYzw")
     add("check_ack backdated work after the revoke", "check_ack",
         {**ack_in, "tally": issue.make_tally(C, late, w2, acc=NOW - 5)}, "reject", "revoked")
+    # Section 3 as revised 2026-10-01: a total narrows and is checked per
+    # call as max is, and a tally's used is bounded by it.
+    wt1 = issue.issue_root(A, B.did, {"act": {"t": "prefix", "v": "pay"}, "amount": {"t": "total", "v": 1000}},
+                           EXP1, nnc="Tp6et1z4v8aN0mCUw3dE5A")
+    wt2 = issue.narrow(wt1, B, C.did, exp=EXP2, nnc="Uq7fu2a5w9bO1nDVx4eF6g", bnd={
+        "amount": {"t": "total", "v": 600},
+    })
+    add("verify_chain child narrows total", "verify_chain", {"chain": [wt1, wt2]}, "accept", now=NOW)
+    add("verify_chain child widens total", "verify_chain",
+        {"chain": [wt1, resign(wt2, B, bnd={**wt2["bnd"], "amount": {"t": "total", "v": 1001}})]},
+        "reject", "not_narrowed", now=NOW)
+    call_t = issue.make_call(B, [wt1, wt2], "pay", {"amount": 400}, call_id="g7f1c0a3Ln2k9QpXs4vYzw")
+    add("verify_call amount over the leaf total", "verify_call",
+        {"call": resign(call_t, B, args={"amount": 601})}, "reject", "out_of_bounds", now=NOW)
+    add("verify_tally used over total", "verify_tally",
+        {"writ": wt2, "call": call_t, "tally": issue.make_tally(C, call_t, wt2, used={"amount": 601}, acc=NOW + 5)},
+        "reject", "out_of_bounds", now=NOW)
     return vec
 
 

@@ -7,7 +7,10 @@
 //	writ send -endpoint <url> -call <call.json> [-out <reply.json>]
 //	writ verify -writ <leaf.json> -call <call.json> -tally <tally.json> [-res <res.json>]
 //	writ revoke -seed <hex> -chain <writ.json,...> > revoke.json
+//	writ approve -chain <writ.json,...> -op <op> -args <json>          print who can approve a refused call
+//	writ approve -seed <hex> -chain <writ.json,...> -op <op> -args <json> -exp <unix> [-at <i>] > approval.json
 //	writ inspect <object.json>                       print type, identity, and signer
+//	writ audit <audit.jsonl>                         check the audit record's links, exit non-zero on a break
 //	writ conformance <dir>                           run every vector, exit non-zero on failure
 //	writ scenarios <dir>                             run every executor scenario, exit non-zero on failure
 package main
@@ -22,6 +25,7 @@ import (
 	"strings"
 
 	"writproto/conformance"
+	"writproto/exec"
 	"writproto/httpbind"
 	"writproto/keys"
 	"writproto/wire"
@@ -73,7 +77,7 @@ func emit(v any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ <keygen|issue|call|send|verify|revoke|inspect|conformance|scenarios> ...")
+		die("usage: writ <keygen|issue|call|send|verify|revoke|approve|inspect|audit|conformance|scenarios> ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -111,6 +115,52 @@ func main() {
 			die("%v", err)
 		}
 		emit(w.Raw)
+	case "approve":
+		// Approval is delegation (docs/approval.md): the issuer of the first
+		// writ that refuses the call issues a one-use writ for it in that
+		// writ's place, and each holder below re-issues its own writ under it
+		// with -at 1 and a chain of the new writ followed by its old one.
+		seed := fs.String("seed", "", "approver seed; without it, print who the approver is")
+		chain := fs.String("chain", "", "comma-separated writ files, root first")
+		op := fs.String("op", "", "operation of the refused call")
+		argsJSON := fs.String("args", "{}", "args JSON of the refused call")
+		exp := fs.Int64("exp", 0, "expiry of the approval, unix seconds")
+		at := fs.Int("at", -1, "index of the writ to replace (default: the first that refuses the call)")
+		_ = fs.Parse(args)
+		dec := json.NewDecoder(strings.NewReader(*argsJSON))
+		dec.UseNumber()
+		var a map[string]any
+		if err := dec.Decode(&a); err != nil {
+			die("args: %v", err)
+		}
+		ch := readChain(*chain)
+		j := *at
+		if j < 0 {
+			j = writ.ApprovalPoint(ch, *op, a)
+		}
+		if j < 0 {
+			die("every writ in the chain admits this call, so its refusal was not about its operation or arguments, and approval cannot help")
+		}
+		if j >= len(ch) {
+			die("-at %d: the chain has %d writs", j, len(ch))
+		}
+		if *seed == "" {
+			fmt.Println(ch[j].Iss)
+			fmt.Fprintf(os.Stderr, "the approver is the issuer of writ %d, printed above\n", j)
+			return
+		}
+		var parent *writ.Writ
+		if j > 0 {
+			parent = ch[j-1]
+		}
+		w, err := writ.Approve(identity(*seed), parent, ch[j], *op, a, *exp)
+		if err != nil {
+			die("%v", err)
+		}
+		emit(w.Raw)
+		if j < len(ch)-1 {
+			fmt.Fprintf(os.Stderr, "this approval replaces writ %d; its holder %s re-issues writ %d under it with -at 1\n", j, ch[j].Hld, j+1)
+		}
 	case "call":
 		seed := fs.String("seed", "", "caller seed")
 		chain := fs.String("chain", "", "comma-separated writ files, root first")
@@ -186,6 +236,23 @@ func main() {
 			die("%v", err)
 		}
 		emit(r.Raw)
+	case "audit":
+		if len(args) != 1 {
+			die("usage: writ audit <audit.jsonl>")
+		}
+		f, err := os.Open(args[0])
+		if err != nil {
+			die("%v", err)
+		}
+		rep, err := exec.VerifyAudit(f)
+		f.Close()
+		if err != nil {
+			die("%v", err)
+		}
+		emit(map[string]any{"entries": rep.Entries, "unchained": rep.Unchained, "torn": rep.Torn, "breaks": rep.Breaks})
+		if len(rep.Breaks) > 0 {
+			os.Exit(1)
+		}
 	case "inspect":
 		if len(args) != 1 {
 			die("usage: writ inspect <file>")

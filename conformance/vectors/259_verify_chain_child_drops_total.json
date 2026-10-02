@@ -1,0 +1,58 @@
+{
+ "expect": "reject",
+ "input": {
+  "chain": [
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "pay"
+     },
+     "amount": {
+      "t": "total",
+      "v": 60000
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     }
+    },
+    "exp": 1788403600,
+    "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+    "nnc": "bm9uY2UtMDAwMDAwMDEwMw",
+    "prv": null,
+    "sig": "V4OQwqF3fTKUIDWJpuUXoI-vgYblx5mNtZXz9ueO-2lTfMSpZxbkktlQsbZAXrKBgcx6wLxHX24VMSykw7w4CA",
+    "typ": "writ",
+    "v": 1
+   },
+   {
+    "bnd": {
+     "act": {
+      "t": "prefix",
+      "v": "pay"
+     },
+     "currency": {
+      "t": "set",
+      "v": [
+       "USD"
+      ]
+     }
+    },
+    "exp": 1788401800,
+    "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+    "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+    "nnc": "bm9uY2UtMDAwMDAwMDEwNA",
+    "prv": "fKroHdQKVjFpAXYaiP0FlTRYuttrSFIIpqrLkiGQ5h4",
+    "sig": "Uo4Y6nMWW_8v2OPCgSOGtFrR7myn3RYWWBZUQJ2m_xBQx8QvJ03b4nynUWVBas8ACu4R1bOkD2tZxiVx9O1VAw",
+    "typ": "writ",
+    "v": 1
+   }
+  ]
+ },
+ "name": "child drops total",
+ "op": "verify_chain",
+ "reason": "not_narrowed"
+}

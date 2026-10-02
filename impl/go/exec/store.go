@@ -48,8 +48,8 @@ type tallyRec struct {
 	UndoRes any    `json:"undo_res,omitempty"`
 }
 
-// FileStore is the executor stores of spec section 9. The call, count, and
-// tally stores (with each tally's reversal state) are one JSON file,
+// FileStore is the executor stores of spec section 9. The call, count, total,
+// and tally stores (with each tally's reversal state) are one JSON file,
 // rewritten on every mutation. It is deliberately simple: durability across
 // restart is a conformance requirement, throughput is not. Every mutation
 // that the protocol relies on reports a failed write, and the caller refuses
@@ -63,10 +63,11 @@ type tallyRec struct {
 type FileStore struct {
 	mu      sync.Mutex
 	path    string
-	Calls   map[string]*Record   `json:"calls"`   // key leaf|id
-	Counts  map[string]int64     `json:"counts"`  // writ identity
-	Tallies map[string]*tallyRec `json:"tallies"` // tally identity
-	Revoked map[string]int64     `json:"-"`       // writ identity, or "*:" and a key, to exp
+	Calls   map[string]*Record   `json:"calls"`            // key leaf|id
+	Counts  map[string]int64     `json:"counts"`           // writ identity
+	Totals  map[string]int64     `json:"totals,omitempty"` // writ identity|bound name
+	Tallies map[string]*tallyRec `json:"tallies"`          // tally identity
+	Revoked map[string]int64     `json:"-"`                // writ identity, or "*:" and a key, to exp
 	unsaved map[string]bool      // revokes held in memory whose log write failed
 }
 
@@ -81,7 +82,7 @@ func (s *FileStore) revokeLog() string { return s.path + ".revoked" }
 // OpenFileStore loads or creates a store at path ("" for memory only).
 func OpenFileStore(path string) (*FileStore, error) {
 	s := &FileStore{path: path, Calls: map[string]*Record{}, Counts: map[string]int64{},
-		Tallies: map[string]*tallyRec{}, Revoked: map[string]int64{}}
+		Totals: map[string]int64{}, Tallies: map[string]*tallyRec{}, Revoked: map[string]int64{}}
 	if path == "" {
 		return s, nil
 	}
@@ -99,6 +100,9 @@ func OpenFileStore(path string) (*FileStore, error) {
 	dec.UseNumber() // protocol objects must round-trip integers exactly
 	if err := dec.Decode(s); err != nil {
 		return nil, err
+	}
+	if s.Totals == nil { // a store written before the total store existed
+		s.Totals = map[string]int64{}
 	}
 	return s, nil
 }
@@ -162,29 +166,49 @@ func (s *FileStore) flush() error {
 
 func callKey(leaf, cid string) string { return leaf + "|" + cid }
 
+// totalUse is one total bound a call draws on: the total store key (writ
+// identity and bound name), the call's argument, and the bound's value.
+type totalUse struct {
+	Key   string
+	Add   int64
+	Limit int64
+}
+
+func totalKey(writID, name string) string { return writID + "|" + name }
+
 // admit runs spec section 7 steps 9 and 10 as one atomic operation. When the
 // call store already has an entry for the call, admit returns it and changes
-// nothing. Otherwise, when every writ id with a count bound is below it, admit
-// increments each, records rec as the pending entry, persists both, and
-// returns nil, true, nil. When a count is exhausted it returns nil, false, nil
-// and records nothing. When the store cannot be written, admit undoes its
-// changes and returns the error: nothing may run that is not recorded.
-func (s *FileStore) admit(rec *Record, ids []string, bounds map[string]int64) (*Record, bool, error) {
+// nothing. Otherwise, when every writ id with a count bound is below it and
+// every total would stay within its value, admit increments each count, adds
+// to each total, records rec as the pending entry, persists all of it, and
+// returns nil, "", nil. When a count is exhausted it returns
+// count_exhausted, and when a total would be exceeded total_exhausted, and
+// records nothing. When the store cannot be written, admit undoes its changes
+// and returns the error: nothing may run that is not recorded.
+func (s *FileStore) admit(rec *Record, ids []string, bounds map[string]int64, totals []totalUse) (*Record, writ.Reason, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := callKey(rec.LeafID, rec.CID)
 	if prior, ok := s.Calls[key]; ok {
-		return prior, true, nil
+		return prior, "", nil
 	}
 	for _, id := range ids {
 		if b, ok := bounds[id]; ok && s.Counts[id] >= b {
-			return nil, false, nil
+			return nil, writ.CountExhausted, nil
+		}
+	}
+	for _, u := range totals {
+		if s.Totals[u.Key] > u.Limit-u.Add {
+			return nil, writ.TotalExhausted, nil
 		}
 	}
 	for _, id := range ids {
 		if _, ok := bounds[id]; ok {
 			s.Counts[id]++
 		}
+	}
+	for _, u := range totals {
+		s.Totals[u.Key] += u.Add
 	}
 	s.Calls[key] = rec
 	if err := s.flush(); err != nil {
@@ -193,10 +217,15 @@ func (s *FileStore) admit(rec *Record, ids []string, bounds map[string]int64) (*
 				s.Counts[id]--
 			}
 		}
+		for _, u := range totals {
+			if s.Totals[u.Key] -= u.Add; s.Totals[u.Key] == 0 {
+				delete(s.Totals, u.Key)
+			}
+		}
 		delete(s.Calls, key)
-		return nil, false, err
+		return nil, "", err
 	}
-	return nil, true, nil
+	return nil, "", nil
 }
 
 // finish records a call's final tally in the tally store and the call store

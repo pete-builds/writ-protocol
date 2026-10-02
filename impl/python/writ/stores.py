@@ -1,6 +1,6 @@
 """Durable executor state (section 9), one directory of files per store.
 
-Section 9 names four stores an executor holds. Each is a FileStore here: a
+Section 9 names the stores an executor holds. Each is a FileStore here: a
 directory with one JSON file per record, named by the SHA-256 of the
 record's key so that no key, however long or however it is cased, becomes
 an unsafe or colliding file name (base64url keys differ only by case on a
@@ -12,6 +12,7 @@ the old record or the new one and never a torn one.
 |---|---|---|
 | CallStore | (leaf writ identity, call id) | pending record or final tally and body |
 | CountStore | writ identity | uses consumed, and the writ's exp |
+| TotalStore | (writ identity, bound name) | sum of arguments consumed, and the writ's exp |
 | TallyStore | tally identity | every final tally, indexed by each writ in its chain |
 | RevokeStore | writ identity, or "*" plus a key | recorded revokes |
 | ReversalStore | target tally identity | the sys/undo reversal state (section 8.1) |
@@ -187,6 +188,39 @@ class CountStore(FileStore):
         return n
 
 
+# ----------------------------------------------------------- total store
+
+class TotalStore(FileStore):
+    """Section 9 total store: (writ identity, bound name) to the sum of the
+    arguments consumed under that writ's total bound of that name."""
+
+    @staticmethod
+    def key(writ_id, name):
+        # A writ identity is base64url and holds no space, so the first
+        # space separates the two parts whatever the bound name holds.
+        return writ_id + " " + name
+
+    def used(self, writ_id, name):
+        rec = self.get(self.key(writ_id, name))
+        return 0 if rec is None else rec["n"]
+
+    def set_used(self, writ_id, name, n, exp):
+        self.put(self.key(writ_id, name), {"n": n, "exp": exp})
+
+    def remove(self, writ_id, name):
+        self.delete(self.key(writ_id, name))
+
+    def prune(self, now):
+        """Drop entries whose writ has expired: a forward call under it is
+        refused at section 7 step 4, before total."""
+        n = 0
+        for key, rec in self.items():
+            if now >= rec["exp"]:
+                self.delete(key)
+                n += 1
+        return n
+
+
 # ----------------------------------------------------------- tally store
 
 def tally_order(identity, tally):
@@ -341,10 +375,12 @@ class Stores:
         self.path = path
         self.calls = CallStore(os.path.join(path, "calls"))
         self.counts = CountStore(os.path.join(path, "counts"))
+        self.totals = TotalStore(os.path.join(path, "totals"))
         self.tallies = TallyStore(os.path.join(path, "tallies"))
         self.revokes = RevokeStore(os.path.join(path, "revokes"))
         self.reversals = ReversalStore(os.path.join(path, "reversals"))
 
     def prune(self, now):
         """Apply the section 9 lifetimes. Returns how many records went."""
-        return self.calls.prune(now) + self.counts.prune(now) + self.revokes.prune(now)
+        return (self.calls.prune(now) + self.counts.prune(now) + self.totals.prune(now)
+                + self.revokes.prune(now))

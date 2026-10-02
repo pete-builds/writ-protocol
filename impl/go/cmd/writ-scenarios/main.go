@@ -581,5 +581,34 @@ func main() {
 		b.write()
 	}
 
+	// Added 2026-10-01: the total bound (sections 3, 7 step 10, 7.3, and 9).
+	// Each executor keeps a running sum per writ and bound name, drawn at
+	// acceptance against every writ in the chain that carries the bound.
+	{
+		b := scenario("a total bounds the running sum at each executor", A)
+		w1 := issue(A, B, bnd("act", "prefix", "pay", "amount", "total", 1000), now+3600, nil)
+		share1 := issue(B, C, bnd("act", "prefix", "pay", "amount", "total", 600), now+3600, w1)
+		share2 := issue(B, C, bnd("act", "prefix", "pay", "amount", "total", 600), now+3600, w1)
+		ch1, ch2 := []*writ.Writ{w1, share1}, []*writ.Writ{w1, share2}
+		pay := func(ch []*writ.Writ, n int64) *writ.Call {
+			return call(B, ch, "pay", map[string]any{"amount": n})
+		}
+		paid := func(n int64) *conformance.App {
+			return &conformance.App{St: "ok", Res: map[string]any{"paid": n}, Used: map[string]int64{"amount": n}}
+		}
+		k := pay(ch1, 400)
+		b.call(now+10, k, paid(400), "ok", "400 of the first share's 600, and of the root's 1000")
+		b.call(now+20, k, nil, "ok", "a replay is answered from the call store and draws nothing")
+		b.call(now+30, pay(ch1, 601), nil, "failed:out_of_bounds", "one call over the leaf's value fails section 7.2, before the running sum")
+		b.call(now+40, pay(ch1, 300), nil, "failed:total_exhausted", "400 and 300 would pass the share's 600")
+		b.call(now+50, pay(ch1, 200), paid(200), "ok", "the refusal consumed nothing, so 200 brings the share to exactly 600")
+		b.call(now+60, pay(ch1, 0), paid(0), "ok", "zero fits in a spent total")
+		b.call(now+70, pay(ch2, 500), nil, "failed:total_exhausted", "the second share is fresh, but the root has 400 left")
+		b.call(now+80, pay(ch2, 400), paid(400), "ok", "the root's last 400")
+		b.restart("resolved:0", "the executor restarts")
+		b.call(now+90, pay(ch2, 1), nil, "failed:total_exhausted", "the total store survived the restart")
+		b.write()
+	}
+
 	fmt.Printf("wrote %d scenarios to %s\n", count, dir)
 }

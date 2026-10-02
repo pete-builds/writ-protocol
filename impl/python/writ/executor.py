@@ -74,8 +74,9 @@ HELD = object()
 """Returned by an application whose operation has not finished yet."""
 
 STORE_WRITE_FAILED = "writ-py/store_write_failed"
-"""Implementation code (section 11) for a call refused because the call or
-count store could not be written at section 7 steps 9 and 10 (section 9)."""
+"""Implementation code (section 11) for a call refused because the call,
+count, or total store could not be written at section 7 steps 9 and 10
+(section 9)."""
 
 OUTCOME_STATES = ("ok", "failed", "canceled")
 
@@ -88,20 +89,29 @@ class UnidentifiedPeer(str):
     replay (section 7.6)."""
 
 
-def _max_names(writ):
-    """Names of the writ's max bounds, in canonical order."""
+def _used_names(writ):
+    """Names of the writ's max and total bounds, the ones a tally's used
+    reports (section 6), in canonical order."""
     bnd = writ["bnd"]
-    return [n for n in sorted(bnd, key=lambda k: k.encode("utf-16-be", "surrogatepass")) if bnd[n]["t"] == "max"]
+    return [n for n in sorted(bnd, key=lambda k: k.encode("utf-16-be", "surrogatepass"))
+            if bnd[n]["t"] in ("max", "total")]
 
 
-def _cover_subs(used, max_names, sub):
+def _total_bounds(writ):
+    """(name, value) of the writ's total bounds, in canonical order."""
+    bnd = writ["bnd"]
+    return [(n, bnd[n]["v"]) for n in sorted(bnd, key=lambda k: k.encode("utf-16-be", "surrogatepass"))
+            if bnd[n]["t"] == "total"]
+
+
+def _cover_subs(used, names, sub):
     """Section 6: used is inclusive of the subtree. Returns used raised, for
-    every max bound of the leaf, to the sum over the sub-tallies: an
+    every max or total bound of the leaf, to the sum over the sub-tallies: an
     operation cannot have consumed less than the work it delegated reports,
     and a record resolved after a restart, whose own outcome is unknown,
     reports at least that much."""
     out = dict(used)
-    for name in max_names:
+    for name in names:
         total = sum(S["used"].get(name, 0) for S in sub)
         if total > out.get(name, 0):
             out[name] = total
@@ -332,7 +342,9 @@ class Executor:
                 return self._stored_answer(rec), None
             return {"tally": self._pending_tally(rec)}, None
 
-        counted = []
+        # Step 10: every count is checked, then every total, and only then
+        # is anything consumed, so a refusal at this step consumes nothing.
+        counted, summed = [], []
         if not standing:                                            # step 10
             for i, w in zip(ids, writs):
                 limits = [b["v"] for b in w["bnd"].values() if b["t"] == "count"]
@@ -342,13 +354,24 @@ class Executor:
                 if used >= min(limits):
                     return self._refusal(call_id, leaf_id, call["op"], now, "count_exhausted"), None
                 counted.append((i, used, w["exp"]))
+            for i, w in zip(ids, writs):
+                for name, limit in _total_bounds(w):
+                    # args[name] is present and an integer within the leaf's
+                    # value: section 4 puts every total of the chain on the
+                    # leaf, and step 8 checked the leaf's bounds.
+                    used = self.stores.totals.used(i, name)
+                    if used + call["args"][name] > limit:
+                        return self._refusal(call_id, leaf_id, call["op"], now, "total_exhausted"), None
+                    summed.append((i, name, used, call["args"][name], w["exp"]))
 
         rec = {                                                     # step 11
             "state": PENDING, "leaf": leaf_id, "id": call["id"], "call": call_id,
             "op": call["op"], "acc": now, "chain": ids, "iss": [w["iss"] for w in writs],
-            "exp": writs[-1]["exp"], "standing": standing, "max": _max_names(writs[-1]),
+            # "max" names every bound used reports, max and total alike; the
+            # record key predates total.
+            "exp": writs[-1]["exp"], "standing": standing, "max": _used_names(writs[-1]),
         }
-        if not self._write_admission(rec, counted):
+        if not self._write_admission(rec, counted, summed):
             return self._refusal(call_id, leaf_id, call["op"], now, STORE_WRITE_FAILED), None
 
         call = dict(call, chain=writs)  # never mutate the caller's object
@@ -398,17 +421,21 @@ class Executor:
                 return True
         return False
 
-    def _write_admission(self, rec, counted):
-        """Persist steps 10 and 11: every count increment, then the pending
-        record. On a write failure undo what was written and return False,
-        so that a refused call records nothing (section 9). Count entries
-        are written first so that a crash between the two writes leaves a
-        use consumed, never an operation performed without one."""
-        written = []
+    def _write_admission(self, rec, counted, summed):
+        """Persist steps 10 and 11: every count increment and every total
+        addition, then the pending record. On a write failure undo what was
+        written and return False, so that a refused call records nothing
+        (section 9). Count and total entries are written first so that a
+        crash between the writes leaves a use or an amount consumed, never
+        an operation performed without one."""
+        written, added = [], []
         try:
             for i, used, exp in counted:
                 self.stores.counts.set_used(i, used + 1, exp)
                 written.append((i, used, exp))
+            for i, name, used, amount, exp in summed:
+                self.stores.totals.set_used(i, name, used + amount, exp)
+                added.append((i, name, used, exp))
             self.stores.calls.record(rec)
         except OSError:
             for i, used, exp in written:
@@ -417,6 +444,14 @@ class Executor:
                         self.stores.counts.set_used(i, used, exp)
                     else:
                         self.stores.counts.delete(i)
+                except OSError:
+                    pass
+            for i, name, used, exp in added:
+                try:
+                    if used:
+                        self.stores.totals.set_used(i, name, used, exp)
+                    else:
+                        self.stores.totals.remove(i, name)
                 except OSError:
                     pass
             return False
@@ -563,7 +598,7 @@ class Executor:
             op.call_id, op.leaf_id, op.op, op.acc, outcome.st,
             None if outcome.st == "ok" else {"code": outcome.code},
             None if outcome.res is None else O.hash_body(outcome.res),
-            _cover_subs(outcome.used, _max_names(op.call["chain"][-1]), rec.get("sub", [])),
+            _cover_subs(outcome.used, _used_names(op.call["chain"][-1]), rec.get("sub", [])),
             rev, sub=rec.get("sub", []), wrt=rec.get("wrt", []),
         )
         answer = self._persist_final(rec, tally, outcome.res)

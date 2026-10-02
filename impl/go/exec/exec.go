@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"writproto/bound"
 	"writproto/keys"
 	"writproto/wire"
 	"writproto/writ"
@@ -281,24 +282,35 @@ func (e *Executor) run(ctx context.Context, obj wire.Object, deferred bool) (*Re
 	} else if err := writ.CheckForward(k); err != nil {
 		return refuse(string(writ.CodeOf(err)))
 	}
-	// Steps 9 and 10, one atomic operation: replay, then count consumed against
-	// every writ in the chain that carries one. A writ with several count
-	// bounds is limited by the smallest. Admission records the pending entry,
-	// so a concurrent duplicate sees it and cannot execute a second time.
+	// Steps 9 and 10, one atomic operation: replay, then count and total
+	// consumed against every writ in the chain that carries one. A writ with
+	// several count bounds is limited by the smallest; each total bound draws
+	// the call's argument of the same name, which step 8 checked against the
+	// leaf, and every total in the chain is on the leaf (spec 4 step 4).
+	// Admission records the pending entry, so a concurrent duplicate sees it
+	// and cannot execute a second time.
 	ids := chainIDs(k)
 	bounds := map[string]int64{}
+	var totals []totalUse
 	if !k.Standing() {
 		for _, w := range k.Chain {
-			for _, b := range w.Bnd {
+			for name, b := range w.Bnd {
 				if cur, ok := bounds[w.ID]; b.T == "count" && (!ok || b.Int < cur) {
 					bounds[w.ID] = b.Int
+				}
+				if b.T == "total" {
+					n, err := bound.Int(k.Args[name])
+					if err != nil { // unreachable after step 8; never consume an unchecked amount
+						return refuse(string(writ.OutOfBounds))
+					}
+					totals = append(totals, totalUse{Key: totalKey(w.ID, name), Add: n, Limit: b.Int})
 				}
 			}
 		}
 	}
 	acc := e.Now()
 	pending := &Record{LeafID: leaf.ID, CID: k.CID, Acc: acc, Exp: leaf.Exp, Call: k.Raw}
-	prior, admitted, serr := e.Store.admit(pending, ids, bounds)
+	prior, exhausted, serr := e.Store.admit(pending, ids, bounds, totals)
 	if serr != nil {
 		return refuse(StoreUnavailable)
 	}
@@ -309,8 +321,8 @@ func (e *Executor) run(ctx context.Context, obj wire.Object, deferred bool) (*Re
 		// Accepted but not yet answered (concurrent duplicate or crash): pending tally.
 		return e.pendingReply(k, prior.Acc), nil
 	}
-	if !admitted {
-		return refuse(string(writ.CountExhausted))
+	if exhausted != "" {
+		return refuse(string(exhausted))
 	}
 	if deferred && !k.Standing() {
 		// Step 11's pending record is persisted; the operation runs elsewhere.
@@ -724,7 +736,7 @@ func evidence(rec *Record, r Result) ([]*writ.Writ, []*writ.Tally) {
 func coverSubs(leaf *writ.Writ, used map[string]int64, sub []*writ.Tally) map[string]int64 {
 	out, copied := used, false
 	for name, b := range leaf.Bnd {
-		if b.T != "max" {
+		if b.T != "max" && b.T != "total" {
 			continue
 		}
 		var sum int64

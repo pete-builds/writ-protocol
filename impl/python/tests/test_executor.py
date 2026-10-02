@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from writ import canon, cli, issue, objects as O, stores as S, verify as V  # noqa: E402
+from writ import canon, cli, executor as E, issue, objects as O, stores as S, verify as V  # noqa: E402
 from writ.executor import HELD, STORE_WRITE_FAILED, Executor, Outcome  # noqa: E402
 from writ.keys import Key  # noqa: E402
 
@@ -184,8 +184,10 @@ class StoreTest(unittest.TestCase):
         stores.calls.record(dict(base, id="pend", state=S.PENDING, standing=False))
         stores.calls.record(dict(base, id="undo", state=S.FINAL, standing=True, tally={}))
         stores.counts.set_used("L", 1, 50)
+        stores.totals.set_used("L", "amount", 400, 50)
         self.assertEqual(stores.prune(49), 0)
-        self.assertEqual(stores.prune(50), 2)
+        self.assertEqual(stores.prune(50), 3)
+        self.assertEqual(stores.totals.used("L", "amount"), 0)
         self.assertIsNone(stores.calls.lookup("L", "done"))
         self.assertIsNotNone(stores.calls.lookup("L", "pend"))   # must be resolved first
         self.assertIsNotNone(stores.calls.lookup("L", "undo"))   # standing: kept with its tally
@@ -308,6 +310,110 @@ class ForwardTest(Base):
         self.app.push(Outcome("failed", "app/sold_out"))
         t = self.ex.receive_call(fwd(chain(), 1))["tally"]
         self.assertEqual((t["st"], t["err"], t["out"]), ("failed", {"code": "app/sold_out"}, None))
+
+
+# ------------------------------------------------------------ total bounds
+
+class TotalTest(Base):
+    """Section 7 step 10 and section 7.3: a total bounds the running sum of
+    one argument at this executor, against every writ in the chain."""
+
+    def writs(self, root=None, leaves=((600, None),)):
+        """A root A -> BK carrying ``root`` bounds (amount total 1000 by
+        default), and one leaf BK -> executor per (total, extra bounds)."""
+        w1 = issue.issue_root(A, BK.did, root or {"act": {"t": "prefix", "v": "pay"},
+                                                  "amount": {"t": "total", "v": 1000}}, EXP_ROOT, nnc=nnc(70))
+        out = [w1]
+        for n, (total, extra) in enumerate(leaves):
+            out.append(issue.narrow(w1, BK, EK.did, bnd={"amount": {"t": "total", "v": total}, **(extra or {})},
+                                    nnc=nnc(71 + n)))
+        return out
+
+    def pay(self, w1, leaf, n, amount, ok=True):
+        if ok:
+            self.app.push(Outcome("ok", used={"amount": amount}))
+        return self.ex.receive_call(issue.make_call(BK, [w1, leaf], "pay", {"amount": amount}, call_id=cid(n)))
+
+    def used(self, writ):
+        return self.ex.stores.totals.used(O.identity(writ), "amount")
+
+    def test_running_sum(self):
+        w1, leaf = self.writs()
+        self.assertEqual(self.pay(w1, leaf, 1, 400)["tally"]["used"], {"amount": 400})
+        self.assertEqual(self.pay(w1, leaf, 2, 200)["tally"]["st"], "ok")      # exactly 600
+        self.assertEqual(self.pay(w1, leaf, 3, 0)["tally"]["st"], "ok")        # zero still fits
+        self.assertRefused(self.pay(w1, leaf, 4, 1, ok=False), "total_exhausted")
+        self.assertEqual((self.used(leaf), self.used(w1)), (600, 600))
+        self.assertEqual(len(self.app.calls), 3)
+        # A retry is answered at step 9, before total, and adds nothing.
+        self.assertEqual(self.pay(w1, leaf, 1, 400, ok=False)["tally"]["st"], "ok")
+        self.assertEqual(self.used(leaf), 600)
+
+    def test_refusal_consumes_nothing(self):
+        w1, leaf = self.writs(leaves=((600, {"uses": {"t": "count", "v": 3}}),))
+        self.pay(w1, leaf, 1, 400)
+        self.assertRefused(self.pay(w1, leaf, 2, 300, ok=False), "total_exhausted")
+        self.assertEqual((self.used(leaf), self.used(w1)), (400, 400))
+        self.assertEqual(self.ex.stores.counts.used(O.identity(leaf)), 1)    # no use spent either
+        self.assertIsNone(self.ex.stores.calls.lookup(O.identity(leaf), cid(2)))
+        self.assertEqual(self.pay(w1, leaf, 3, 200)["tally"]["st"], "ok")     # the 200 left is still there
+        self.assertEqual(self.pay(w1, leaf, 4, 0)["tally"]["st"], "ok")       # uses 3 of 3
+        self.assertRefused(self.pay(w1, leaf, 5, 0, ok=False), "count_exhausted")
+        self.assertEqual((self.used(leaf), self.used(w1)), (600, 600))     # count refusal adds nothing
+
+    def test_draws_against_every_writ_in_the_chain(self):
+        # Two children of 600 under a root total of 1000: each is a share
+        # that still draws on the root (section 7.3).
+        w1, wa, wb = self.writs(leaves=((600, None), (600, None)))
+        self.assertEqual(self.pay(w1, wa, 1, 600)["tally"]["st"], "ok")
+        self.assertEqual(self.pay(w1, wb, 2, 400)["tally"]["st"], "ok")
+        self.assertRefused(self.pay(w1, wb, 3, 1, ok=False), "total_exhausted")   # wb has 200, root none
+        self.assertEqual((self.used(w1), self.used(wa), self.used(wb)), (1000, 600, 400))
+
+    def test_count_is_reported_before_total(self):
+        # The root's total and the leaf's count are both used up. Every
+        # count in the chain is checked before any total, so the leaf's
+        # count is reported although the root comes first in the chain.
+        root = {"act": {"t": "prefix", "v": "pay"}, "amount": {"t": "total", "v": 100}}
+        w1, leaf = self.writs(root=root, leaves=((100, {"uses": {"t": "count", "v": 1}}),))
+        self.pay(w1, leaf, 1, 100)
+        self.assertRefused(self.pay(w1, leaf, 2, 50, ok=False), "count_exhausted")
+
+    def test_total_survives_restart(self):
+        w1, leaf = self.writs()
+        self.pay(w1, leaf, 1, 400)
+        self.assertEqual(self.ex.restart(), 0)
+        self.assertRefused(self.pay(w1, leaf, 2, 300, ok=False), "total_exhausted")
+        again = Executor(EK, [A.did], self.dir, app=self.app)
+        again.set_time(T0 + 10)
+        self.ex = again
+        self.assertRefused(self.pay(w1, leaf, 3, 201, ok=False), "total_exhausted")
+        self.assertEqual(self.pay(w1, leaf, 4, 200)["tally"]["st"], "ok")
+        self.assertEqual(self.used(w1), 600)
+
+    def test_store_write_failure_gives_the_total_back(self):
+        w1, leaf = self.writs()
+        self.pay(w1, leaf, 1, 400)
+        real = self.ex.stores.calls.record
+
+        def broken(rec):
+            raise OSError("disk full")
+        self.ex.stores.calls.record = broken
+        self.assertRefused(self.pay(w1, leaf, 2, 100, ok=False), STORE_WRITE_FAILED)
+        self.assertEqual((self.used(leaf), self.used(w1)), (400, 400))
+        self.ex.stores.calls.record = real
+        self.assertEqual(self.pay(w1, leaf, 3, 200)["tally"]["st"], "ok")
+
+    def test_used_covers_sub_tallies_under_a_total(self):
+        # Section 6: used is inclusive of the subtree for total bounds as
+        # for max, including in a record resolved after a restart.
+        w1, leaf = self.writs()
+        self.app.push(HELD)
+        self.ex.receive_call(issue.make_call(BK, [w1, leaf], "pay", {"amount": 500}, call_id=cid(1)))
+        names = self.ex.stores.calls.lookup(O.identity(leaf), cid(1))["max"]
+        self.assertEqual(names, ["amount"])
+        subs = [{"used": {"amount": 300}}, {"used": {"amount": 200}}]
+        self.assertEqual(E._cover_subs({"amount": 100}, names, subs), {"amount": 500})
 
 
 # --------------------------------------------------------------- held work
@@ -778,16 +884,33 @@ class AuditTest(Base):
         self.assertEqual(self.rows(), [("call", "ok", None, BK.did, "spiffe://b/agent")])
 
     def test_audit_log_appends_json_lines(self):
-        from writ.audit import AuditLog
+        from writ.audit import AuditLog, line_hash
         path = os.path.join(self.dir, "audit.jsonl")
         for i in range(2):
             log = AuditLog(path)
             log.record({"at": i, "kind": "call", "peer": None, "outcome": "ok"})
             log.close()
-        with open(path, encoding="utf-8") as f:
+        with open(path, "rb") as f:
             lines = f.read().splitlines()
         self.assertEqual(len(lines), 2)
-        self.assertEqual(json.loads(lines[1]), {"at": 1, "kind": "call", "peer": None, "outcome": "ok"})
+        self.assertEqual(json.loads(lines[1]), {"at": 1, "kind": "call", "peer": None, "outcome": "ok",
+                                                "prev": line_hash(lines[0])})
+        self.assertIsNone(json.loads(lines[0])["prev"])
+
+    def test_audit_log_links_across_a_torn_line(self):
+        """Section 9.3: a line a crash cut short stays, and the next entry
+        links to its bytes."""
+        from writ.audit import AuditLog, line_hash
+        path = os.path.join(self.dir, "audit.jsonl")
+        with open(path, "wb") as f:
+            f.write(b'{"at":0,"prev":null}\n{"at":1,"ki')
+        log = AuditLog(path)
+        log.record({"at": 2})
+        log.close()
+        with open(path, "rb") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(json.loads(lines[2])["prev"], line_hash(b'{"at":1,"ki'))
 
 
 # ------------------------------------------------------- delegating onward
@@ -960,7 +1083,7 @@ class ScenarioRunnerTest(unittest.TestCase):
 
     def test_corpus_scenarios_pass(self):
         names = sorted(n for n in os.listdir(SCENARIOS) if n.endswith(".json"))
-        self.assertEqual(len(names), 24)
+        self.assertEqual(len(names), 25)
         for name in names:
             with self.subTest(name=name):
                 self.run_one(self.load(name))

@@ -178,7 +178,7 @@ func TestRevokeCancelsInflightAndRestartRecovers(t *testing.T) {
 	w1c, _ := writ.Issue(A, B.DID(), bnd("act", "prefix", "travel"), now+3600, nil)
 	w2c, _ := writ.Issue(B, e.ID.DID(), bnd("act", "prefix", "travel"), now+3600, w1c)
 	k3, _ := writ.NewCall(B, []*writ.Writ{w1c, w2c}, "travel/y", map[string]any{})
-	if _, _, err := e.Store.admit(&Record{LeafID: w2c.ID, CID: k3.CID, Acc: now, Exp: w2c.Exp, Call: k3.Raw}, nil, nil); err != nil {
+	if _, _, err := e.Store.admit(&Record{LeafID: w2c.ID, CID: k3.CID, Acc: now, Exp: w2c.Exp, Call: k3.Raw}, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	e2 := newC(t, path, A, nil)
