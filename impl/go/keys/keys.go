@@ -49,6 +49,20 @@ func (id *Identity) DID() string { return DIDFromPublicKey(id.Pub) }
 // Sign produces a detached Ed25519 signature over msg.
 func (id *Identity) Sign(msg []byte) []byte { return ed25519.Sign(id.Priv, msg) }
 
+// SignMessage is Sign as a Signer: signing in memory cannot fail.
+func (id *Identity) SignMessage(msg []byte) ([]byte, error) { return id.Sign(msg), nil }
+
+// Signer signs with one Ed25519 key and names it by its did:key. An Identity
+// holds the private key in memory; a Signer can instead ask a service that
+// holds it, such as Vault's transit engine (package keys/vault), so the key
+// never reaches this process. Signing through a service can fail, so
+// SignMessage returns an error, and every signature it returns must verify
+// under DID: callers put it on the wire as is.
+type Signer interface {
+	DID() string
+	SignMessage(msg []byte) ([]byte, error)
+}
+
 // DIDFromPublicKey encodes an Ed25519 public key as did:key.
 func DIDFromPublicKey(pub ed25519.PublicKey) string {
 	buf := append(append([]byte{}, multicodecEd25519Pub...), pub...)
