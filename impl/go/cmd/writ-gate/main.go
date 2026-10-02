@@ -87,6 +87,7 @@ func main() {
 	store := flag.String("store", "", "path of the durable store")
 	audit := flag.String("audit", "", "path of the audit record")
 	listen := flag.String("listen", "127.0.0.1:8090", "address to listen on")
+	creds := flag.String("upstream-credentials", "", `file of "Name: value" headers the gate sends the API, mode 600`)
 	flag.Parse()
 	b, err := os.ReadFile(*cfgPath)
 	if err != nil {
@@ -132,6 +133,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if *creds != "" {
+		if g.creds, err = loadCredentials(*creds); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Printf("no -upstream-credentials: the API must accept the gate's requests without a credential, and callers' credentials are not forwarded")
+	}
 	log.Printf("writ-gate %s in front of %s on %s", id.DID(), cfg.Upstream, *listen)
 	log.Fatal(http.ListenAndServe(*listen, g))
 }
@@ -142,6 +150,7 @@ type gate struct {
 	e      *exec.Executor
 	client *http.Client
 	writ   http.Handler // the section 10 endpoint for standing calls and revokes
+	creds  http.Header  // the API credential, which only the gate holds (credentials.go)
 }
 
 type ctxKey struct{}
@@ -269,13 +278,14 @@ func (g *gate) forward(ctx context.Context, k *writ.Call) exec.Result {
 		return exec.Result{St: "failed", ErrCode: "gate/bad_upstream"}
 	}
 	for k, vs := range x.req.Header {
-		if dropped[http.CanonicalHeaderKey(k)] {
+		if !g.forwarded(k) {
 			continue
 		}
 		for _, v := range vs {
 			req.Header.Add(k, v)
 		}
 	}
+	g.authorize(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -321,6 +331,7 @@ func (g *gate) reverse(ctx context.Context, t *writ.Tally, res any) exec.Result 
 	if err != nil {
 		return exec.Result{St: "failed", ErrCode: "gate/bad_upstream"}
 	}
+	g.authorize(req)
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return exec.Result{St: "failed", ErrCode: "gate/upstream_unreachable"}
@@ -341,7 +352,8 @@ func (g *gate) match(method, path string) (*contract, map[string]string) {
 	return nil, nil
 }
 
-// dropped are the request headers the gate does not forward. The Writ call
+// dropped are the request headers the gate does not forward, beside the
+// caller's credentials (credentials.go). The Writ call
 // is the gate's; the body headers describe bytes the gate replaced; and a
 // method override header would turn the signed operation into another one.
 var dropped = map[string]bool{
