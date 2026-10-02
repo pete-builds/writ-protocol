@@ -103,7 +103,7 @@ What the socket still allows: any local process can send `pre` and `post` events
 writ-hook receipts
 ```
 
-It verifies every receipt against the chain it names, with the keys inside the objects and nothing else, and exits non-zero if any fails. The audit record is `~/.writ/claude/audit.jsonl`, one JSON line per call, refusals included.
+It verifies every receipt against the chain it names, with the keys inside the objects and nothing else, and exits non-zero if any fails. The audit record is `~/.writ/claude/audit.jsonl`, one JSON line per call, refusals included. Each line carries the hash of the line before it, so `receipts` also reports whether every link is intact: an entry edited, removed, or reordered since it was written makes it fail. `writ audit <file>` checks any record the same way.
 
 ## What Claude sees when a call is blocked
 

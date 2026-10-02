@@ -1,8 +1,11 @@
 package exec
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"io"
 	"os"
 	"sync"
 
@@ -25,6 +28,10 @@ type AuditEntry struct {
 	Outcome string  `json:"outcome"` // a tally's st, "rejected" when unsigned, or "recorded" for a revoke
 	Reason  string  `json:"reason,omitempty"`
 	Tally   string  `json:"tally,omitempty"`
+	// Prev is the hash of the entry before this one in the record, as its
+	// bytes stand in the file, or null for the first (spec 9.3). AuditLog
+	// sets it; anything a caller puts here is replaced.
+	Prev *string `json:"prev"`
 }
 
 // Execute runs spec section 7 on a decoded call object and, when Audit is
@@ -108,7 +115,12 @@ func peerPtr(ctx context.Context) *string {
 }
 
 // AuditLog is an append-only audit record in a file, one JSON object per
-// line, each synced before Record returns.
+// line, each synced before Record returns. Each entry carries the hash of
+// the line before it (spec 9.3), so editing, removing, or reordering an
+// entry breaks every later link; VerifyAudit walks them. Several processes
+// may append to one file, as writ-hook's do: Record holds an exclusive lock
+// on the file from reading the last line to syncing its own, where the
+// platform has one (audit_lock_unix.go).
 type AuditLog struct {
 	mu sync.Mutex
 	f  *os.File
@@ -116,25 +128,139 @@ type AuditLog struct {
 
 // OpenAuditLog opens path for appending, creating it if needed.
 func OpenAuditLog(path string) (*AuditLog, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	return &AuditLog{f: f}, nil
 }
 
-// Record appends one entry.
+// Record appends one entry, linked to the line before it.
 func (l *AuditLog) Record(a AuditEntry) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	unlock, err := lockFile(l.f)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	last, torn, err := lastLine(l.f)
+	if err != nil {
+		return err
+	}
+	a.Prev = nil
+	if last != nil {
+		h := lineHash(last)
+		a.Prev = &h
+	}
 	line, err := json.Marshal(a)
 	if err != nil {
 		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if _, err := l.f.Write(append(line, '\n')); err != nil {
+	out := append(line, '\n')
+	if torn {
+		// A crash cut the last line short. It stays, as an entry whose
+		// bytes the next one links to, and is ended here.
+		out = append([]byte{'\n'}, out...)
+	}
+	if _, err := l.f.Write(out); err != nil {
 		return err
 	}
 	return l.f.Sync()
+}
+
+// lineHash is the hash of one line of the record, without its newline.
+func lineHash(line []byte) string {
+	sum := sha256.Sum256(line)
+	return wire.B64.EncodeToString(sum[:])
+}
+
+// lastLine returns the file's last line without its newline, nil for an
+// empty file, and whether a crash left that line without one.
+func lastLine(f *os.File) ([]byte, bool, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	size := fi.Size()
+	if size == 0 {
+		return nil, false, nil
+	}
+	for chunk := int64(4096); ; chunk *= 2 {
+		if chunk > size {
+			chunk = size
+		}
+		buf := make([]byte, chunk)
+		if _, err := f.ReadAt(buf, size-chunk); err != nil && err != io.EOF {
+			return nil, false, err
+		}
+		torn := buf[len(buf)-1] != '\n'
+		body := buf
+		if !torn {
+			body = buf[:len(buf)-1]
+		}
+		if i := bytes.LastIndexByte(body, '\n'); i >= 0 {
+			return append([]byte(nil), body[i+1:]...), torn, nil
+		}
+		if chunk == size {
+			return append([]byte(nil), body...), torn, nil
+		}
+	}
+}
+
+// AuditReport is what VerifyAudit found in a record.
+type AuditReport struct {
+	Entries   int   // lines, torn ones included
+	Unchained int   // leading lines with no prev member, written before chaining
+	Torn      []int // 1-based lines that are not JSON objects: writes a crash cut short
+	Breaks    []int // 1-based lines whose prev does not name the line before
+}
+
+// VerifyAudit walks an audit record's links (spec 9.3). A line breaks the
+// chain when its prev is not the hash of the line before it, when the first
+// line's prev is not null (the start of the record is missing), or when a
+// line after the first chained one has no prev. A torn line cannot be
+// checked itself, but the line after it must link to its bytes. What the
+// chain cannot show is the newest entries cut off, or the whole record
+// replaced: nothing in the record holds its own head.
+func VerifyAudit(r io.Reader) (*AuditReport, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
+		lines = lines[:len(lines)-1]
+	}
+	rep := &AuditReport{Entries: len(lines)}
+	chained := false
+	for i, line := range lines {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(line, &m) != nil {
+			rep.Torn = append(rep.Torn, i+1)
+			continue
+		}
+		raw, has := m["prev"]
+		if !has {
+			if chained {
+				rep.Breaks = append(rep.Breaks, i+1)
+			} else {
+				rep.Unchained++
+			}
+			continue
+		}
+		chained = true
+		var prev *string
+		if json.Unmarshal(raw, &prev) != nil {
+			rep.Breaks = append(rep.Breaks, i+1)
+			continue
+		}
+		switch {
+		case i == 0 && prev != nil, i > 0 && (prev == nil || *prev != lineHash(lines[i-1])):
+			rep.Breaks = append(rep.Breaks, i+1)
+		}
+	}
+	return rep, nil
 }
 
 // Close closes the file.

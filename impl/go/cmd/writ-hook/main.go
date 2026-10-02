@@ -813,10 +813,20 @@ func (e *env) receipts(out io.Writer) (bool, error) {
 			fmt.Fprintf(out, "  %-24s %d\n", n, m[n])
 		}
 	}
-	refusals := 0
+	refusals, linked := 0, true
 	if b, err := os.ReadFile(e.path("audit.jsonl")); err == nil {
 		refusals = bytes.Count(b, []byte(`"outcome":"failed"`)) + bytes.Count(b, []byte(`"outcome":"rejected"`)) - byOutcome["failed"]
+		// Each entry links to the one before it (spec 9.3), so an entry
+		// edited or removed since it was written shows here.
+		if rep, err := exec.VerifyAudit(bytes.NewReader(b)); err == nil {
+			linked = len(rep.Breaks) == 0
+			if linked {
+				fmt.Fprintf(out, "audit record: %d entries, every link intact\n", rep.Entries)
+			} else {
+				fmt.Fprintf(out, "audit record: %d entries, links broken at line(s) %v: an entry was edited, removed, or reordered\n", rep.Entries, rep.Breaks)
+			}
+		}
 	}
 	fmt.Fprintf(out, "%d refusal(s) in the audit record\n", refusals)
-	return invalid == 0, nil
+	return invalid == 0 && linked, nil
 }

@@ -120,7 +120,8 @@ func TestGrantIsEnforcedAndEveryCallReceipted(t *testing.T) {
 
 	ok, report := receipts(t, e)
 	if !ok || !strings.Contains(report, "3 receipt(s) verified, 0 invalid, 0 call(s) still unfinished") ||
-		!strings.Contains(report, "failed                   1") || !strings.Contains(report, "8 refusal(s)") {
+		!strings.Contains(report, "failed                   1") || !strings.Contains(report, "8 refusal(s)") ||
+		!strings.Contains(report, "11 entries, every link intact") {
 		t.Fatalf("receipts:\n%s", report)
 	}
 	audit, _ := os.ReadFile(e.path("audit.jsonl"))

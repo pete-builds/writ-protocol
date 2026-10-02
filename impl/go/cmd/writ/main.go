@@ -10,6 +10,7 @@
 //	writ approve -chain <writ.json,...> -op <op> -args <json>          print who can approve a refused call
 //	writ approve -seed <hex> -chain <writ.json,...> -op <op> -args <json> -exp <unix> [-at <i>] > approval.json
 //	writ inspect <object.json>                       print type, identity, and signer
+//	writ audit <audit.jsonl>                         check the audit record's links, exit non-zero on a break
 //	writ conformance <dir>                           run every vector, exit non-zero on failure
 //	writ scenarios <dir>                             run every executor scenario, exit non-zero on failure
 package main
@@ -24,6 +25,7 @@ import (
 	"strings"
 
 	"writproto/conformance"
+	"writproto/exec"
 	"writproto/httpbind"
 	"writproto/keys"
 	"writproto/wire"
@@ -75,7 +77,7 @@ func emit(v any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ <keygen|issue|call|send|verify|revoke|approve|inspect|conformance|scenarios> ...")
+		die("usage: writ <keygen|issue|call|send|verify|revoke|approve|inspect|audit|conformance|scenarios> ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -234,6 +236,23 @@ func main() {
 			die("%v", err)
 		}
 		emit(r.Raw)
+	case "audit":
+		if len(args) != 1 {
+			die("usage: writ audit <audit.jsonl>")
+		}
+		f, err := os.Open(args[0])
+		if err != nil {
+			die("%v", err)
+		}
+		rep, err := exec.VerifyAudit(f)
+		f.Close()
+		if err != nil {
+			die("%v", err)
+		}
+		emit(map[string]any{"entries": rep.Entries, "unchained": rep.Unchained, "torn": rep.Torn, "breaks": rep.Breaks})
+		if len(rep.Breaks) > 0 {
+			os.Exit(1)
+		}
 	case "inspect":
 		if len(args) != 1 {
 			die("usage: writ inspect <file>")

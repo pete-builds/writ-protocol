@@ -884,16 +884,33 @@ class AuditTest(Base):
         self.assertEqual(self.rows(), [("call", "ok", None, BK.did, "spiffe://b/agent")])
 
     def test_audit_log_appends_json_lines(self):
-        from writ.audit import AuditLog
+        from writ.audit import AuditLog, line_hash
         path = os.path.join(self.dir, "audit.jsonl")
         for i in range(2):
             log = AuditLog(path)
             log.record({"at": i, "kind": "call", "peer": None, "outcome": "ok"})
             log.close()
-        with open(path, encoding="utf-8") as f:
+        with open(path, "rb") as f:
             lines = f.read().splitlines()
         self.assertEqual(len(lines), 2)
-        self.assertEqual(json.loads(lines[1]), {"at": 1, "kind": "call", "peer": None, "outcome": "ok"})
+        self.assertEqual(json.loads(lines[1]), {"at": 1, "kind": "call", "peer": None, "outcome": "ok",
+                                                "prev": line_hash(lines[0])})
+        self.assertIsNone(json.loads(lines[0])["prev"])
+
+    def test_audit_log_links_across_a_torn_line(self):
+        """Section 9.3: a line a crash cut short stays, and the next entry
+        links to its bytes."""
+        from writ.audit import AuditLog, line_hash
+        path = os.path.join(self.dir, "audit.jsonl")
+        with open(path, "wb") as f:
+            f.write(b'{"at":0,"prev":null}\n{"at":1,"ki')
+        log = AuditLog(path)
+        log.record({"at": 2})
+        log.close()
+        with open(path, "rb") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(json.loads(lines[2])["prev"], line_hash(b'{"at":1,"ki'))
 
 
 # ------------------------------------------------------- delegating onward
