@@ -22,7 +22,7 @@ func setup(t *testing.T, tools []string, under string, uses int64) *env {
 	if err := e.initKeys(&out); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.grant(&out, "default", tools, under, uses, time.Hour); err != nil {
+	if err := e.grant(&out, "default", tools, under, uses, time.Hour, 0); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -145,7 +145,11 @@ func TestTamperedReceiptIsCaught(t *testing.T) {
 	if ok, report := receipts(t, e); !ok {
 		t.Fatalf("an untouched receipt failed:\n%s", report)
 	}
-	b, _ := os.ReadFile(e.path("store.json"))
+	stores, _ := filepath.Glob(filepath.Join(e.dir, "stores", "*.json"))
+	if len(stores) != 1 {
+		t.Fatalf("%d stores, want 1", len(stores))
+	}
+	b, _ := os.ReadFile(stores[0])
 	var st map[string]any
 	if err := json.Unmarshal(b, &st); err != nil {
 		t.Fatal(err)
@@ -160,7 +164,7 @@ func TestTamperedReceiptIsCaught(t *testing.T) {
 		t.Fatalf("tampered with %d tallies, want 1", tampered)
 	}
 	b, _ = json.Marshal(st)
-	if err := os.WriteFile(e.path("store.json"), b, 0o600); err != nil {
+	if err := os.WriteFile(stores[0], b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if ok, report := receipts(t, e); ok || !strings.Contains(report, "INVALID receipt") {
@@ -202,7 +206,7 @@ func TestRecoverResolvesUnfinishedCalls(t *testing.T) {
 		t.Fatalf("before recover:\n%s", report)
 	}
 	var out bytes.Buffer
-	if err := e.recover(&out); err != nil || !strings.Contains(out.String(), "resolved 1") {
+	if err := e.recover(&out, nil); err != nil || !strings.Contains(out.String(), "resolved 1") {
 		t.Fatalf("recover: %v %s", err, out.String())
 	}
 	if ok, report := receipts(t, e); !ok || !strings.Contains(report, "1 receipt(s) verified") {
@@ -222,7 +226,7 @@ func TestNoGrantDeniesEverything(t *testing.T) {
 	if r := pre(t, e, "Read", "toolu_1", map[string]any{"file_path": "/a"}); !strings.Contains(r, "no grant") {
 		t.Fatalf("with no grant: %q, want a deny naming the missing grant", r)
 	}
-	if err := e.grant(&out, "default", nil, "", 0, 25*time.Hour); err == nil {
+	if err := e.grant(&out, "default", nil, "", 0, 25*time.Hour, 0); err == nil {
 		t.Fatal("a 25-hour grant was signed")
 	}
 }
@@ -233,10 +237,10 @@ func TestNamedGrantsPerTool(t *testing.T) {
 	proj := "/work/project"
 	e := setup(t, []string{"Read", "Edit"}, proj, 0)
 	var out bytes.Buffer
-	if err := e.grant(&out, "search", []string{"Grep", "Glob"}, "", 5, time.Hour); err != nil {
+	if err := e.grant(&out, "search", []string{"Grep", "Glob"}, "", 5, time.Hour, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.grant(&out, "Bad Name", nil, "", 0, time.Hour); err == nil {
+	if err := e.grant(&out, "Bad Name", nil, "", 0, time.Hour, 0); err == nil {
 		t.Fatal("a grant name with spaces and capitals was accepted")
 	}
 	if r := pre(t, e, "Grep", "toolu_1", map[string]any{"pattern": "x", "path": "/anywhere"}); r != "" {
