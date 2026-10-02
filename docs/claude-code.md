@@ -34,6 +34,8 @@ writ-hook grant -name search -tools Grep,Glob -uses 200 -ttl 8h
 
 A tool no grant lists is checked under the first grant without a `-tools` list, or failing that the first grant by name, which refuses it with its reason.
 
+When a call is refused for its arguments or its operation and a writ above the one that refused it would allow it, the reason names that writ's signer, usually you, and tells the model to ask rather than retry. You approve exactly that call, once, with `writ approve` ([approval.md](approval.md)).
+
 | Flag | Bound it signs | Meaning |
 |---|---|---|
 | `-name` | none | the grant's name, lowercase letters, digits, and dashes; granting the same name again replaces it |

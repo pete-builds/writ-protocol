@@ -504,7 +504,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 		if errObj, ok := rep.Tally["err"].(map[string]any); ok {
 			code, _ = errObj["code"].(string)
 		}
-		return deny(explain(code, h.ToolName, chain[0], args)), nil
+		return deny(explain(code, h.ToolName, chain[0], args) + approvable(code, chain, k)), nil
 	}
 	if err := writeJSON(e.pendingPath(h.ToolUseID), k.Raw); err != nil {
 		return nil, err
@@ -552,6 +552,21 @@ func explain(code, tool string, grant *writ.Writ, args map[string]any) string {
 		return code
 	}
 	return code + ": " + why
+}
+
+// approvable says who can approve a call refused for its operation or its
+// arguments, when a writ in the chain above the one that refused it would
+// allow it (docs/approval.md). Approval is a one-use writ for exactly this
+// call, so the model is told who to ask, not how to get around the grant.
+func approvable(code string, chain []*writ.Writ, k *writ.Call) string {
+	if code != "out_of_bounds" && code != "forbidden_op" && code != "missing_arg" {
+		return ""
+	}
+	j := writ.ApprovalPoint(chain, k.Op, k.Args)
+	if j < 0 {
+		return ""
+	}
+	return fmt.Sprintf(". The signer of the grant, %s, can approve exactly this one call with `writ approve` (docs/approval.md); ask the person, do not retry", chain[j].Iss)
 }
 
 // auditRefusal records a call this program refuses before it reaches the

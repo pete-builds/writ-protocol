@@ -91,7 +91,7 @@ func TestGrantIsEnforcedAndEveryCallReceipted(t *testing.T) {
 		in       map[string]any
 		want     string
 	}{
-		{"Read", "toolu_2", map[string]any{"file_path": "/etc/passwd"}, "out_of_bounds: an argument is outside what the grant allows (files must be under /work/project)"},
+		{"Read", "toolu_2", map[string]any{"file_path": "/etc/passwd"}, "out_of_bounds: an argument is outside what the grant allows (files must be under /work/project); the grant allows only Read, Edit. The signer of the grant, did:key:"},
 		{"Write", "toolu_3", map[string]any{"file_path": proj + "/x", "content": "hi"}, "out_of_bounds"},
 		{"Bash", "toolu_4", map[string]any{"command": "ls"}, "missing_arg: this grant requires file_path on every call and a Bash call has none; the grant allows only Read, Edit"},
 		{"Read", "toolu_5", map[string]any{"file_path": proj + "/../secret"}, "not a clean path"},

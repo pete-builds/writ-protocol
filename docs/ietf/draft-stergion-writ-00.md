@@ -763,3 +763,11 @@ For tooling and standards bodies that expect JOSE, a Writ object may travel as t
 - The JWS signature is a second Ed25519 signature by that same key over the JWS signing input. It lets JOSE tooling authenticate the envelope; it is not a substitute for the object's own signature, which a Writ verifier checks exactly as section 6.1 says, ignoring the envelope.
 
 So a JWS-carried object and a bare one are the same object: a verifier unwraps, checks that `kid` is the object's signer, and verifies the object. The reference implementation is `impl/go/jws`, whose output an unrelated Ed25519 implementation (Python's `cryptography`) verified as ordinary JWS on 2026-09-30.
+
+# Approval as delegation (non-normative)
+
+A deployment that wants a person to approve an action above an agent's limits needs nothing beyond sections 4 and 7. The agent's writ is its limit, and each writ above it in the chain is at least as wide (section 4). When a forward call is refused with `forbidden_op`, `missing_arg`, or `out_of_bounds`, the first writ in the chain, root first, whose `act` and application bounds do not admit the call names the approver: its `iss`, who holds the writ above it, or for a root, issued it. Every writ above it admits the call, and every writ below it refuses.
+
+The approver issues a writ in that one's place to the same holder, as a child of the writ above (none for a root): `act` the call's `op`; every bound of the writ above pinned to the call's argument; every other argument pinned by a one-element `set`; a `count` of 1; and an `exp` no later than the writ above. Each holder below re-issues its own writ under it the same way, and the call is made again under the new chain. The executor applies sections 4 and 7 as always. The approval cannot exceed what its approver holds, because section 4 refuses a child that widens its parent, and the approver's signature stays in the chain of every tally done under it.
+
+Two pins are ceilings, not values, because a child keeps its parent's bound types: a `max` or `total` pinned to an amount admits any smaller amount, and an `act` pinned to an operation admits the operations below it (section 3.1). With the `count` of 1 and every other argument pinned, the approval admits one action of at most that size.

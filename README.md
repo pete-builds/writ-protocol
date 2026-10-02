@@ -279,13 +279,13 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `keys` | did:key Ed25519, base58btc | W3C spec vector, Bitcoin base58 vectors |
 | `bound` | the six bound types, narrows and satisfies | 40 comparisons in both directions; `total` through the corpus |
 | `wire` | the signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
-| `writ` | objects, chain attenuation, tally-tree verification, issuance | happy path plus 45 reason-coded rejections |
-| `exec` | the executor: durable stores, count across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, the audit record, and operations performed outside the executor (`Begin` and `Complete`) | 27 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, the unsaved key-wide revoke, audit, and `Begin`/`Complete` tests from 2026-09-30, a revoke answering for calls running outside the executor, and a peer the transport could not name binding nothing |
+| `writ` | objects, chain attenuation, tally-tree verification, issuance, and approval as delegation (`ApprovalPoint`, `Approve`, [docs/approval.md](docs/approval.md)) | happy path plus 45 reason-coded rejections; approval pinned to one call, bounded by the approver, and its two ceilings |
+| `exec` | the executor: durable stores, count and total across the chain, atomic replay and count, undo serialized and durably claimed, tallies lookup, revoke with in-flight cancel, crash recovery that keeps delegation evidence, standing calls after expiry and revocation, peer binding, the audit record, and operations performed outside the executor (`Begin` and `Complete`) | 27 tests, including concurrency, store-failure, and revoke-flooding regressions from the security review, the crash, revoke-race, and accounting regressions from the 2026-09-29 review, the unsaved key-wide revoke, audit, and `Begin`/`Complete` tests from 2026-09-30, a revoke answering for calls running outside the executor, and a peer the transport could not name binding nothing |
 | `httpbind` | one POST endpoint that passes the transport-authenticated peer to the executor and audits what it rejects before decoding, the well-known document, a client | round trip, request size and nesting limits, peer binding and the 503 for an unsaved revoke, audit entries, a per-peer rate limit, mTLS peers and directory bindings through a real TLS handshake, and certificates with no usable identity failing closed against a captured-call replay |
 | `jws` | the JWS profile of spec Appendix D: a Writ object as the payload of a compact JWS, for JOSE tooling | 2 tests; its output verified by Python's `cryptography` as plain JWS |
 | `filebind` | a second transport: calls and revokes as files in a directory, claimed by rename, recovered after a crash; `writ-agent -files DIR` | 1 test including both crash cases |
 | `conformance` | vector and scenario runners | |
-| `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, inspect, conformance | |
+| `cmd/writ` | CLI: keygen, issue, call, send, verify, revoke, approve, inspect, conformance | |
 | `mcpbind`, `cmd/writ-mcp` | Writ over MCP: the call in `tools/call` `_meta`, the tally in the result, a stdio MCP server that enforces it ([docs/bindings.md](docs/bindings.md)) | 5 tests, including every way a result can contradict its tally; also run with Claude Code as the MCP client |
 | `cmd/writ-gate` | a reverse proxy that enforces Writ in front of an API that has never heard of it ([docs/writ-gate.md](docs/writ-gate.md)) | 8 tests: end to end against a fake orders API, including undo, a request contract checked against an API that decodes like `encoding/json` (case aliases, duplicates, trailing JSON, unbound members, query strings, path parameters, method overrides), and the API credential held by the gate alone |
 | `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call; optionally lists and calls only pinned tool definitions and refuses arguments the grant does not bound | 17 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
@@ -352,13 +352,14 @@ docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
 docs/writ-gate.md                  writ-gate: Writ in front of an existing API
+docs/approval.md                   a call above an agent's limits, approved as a one-use delegation
 docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
 docs/aims-audit-mapping.md         a receipt tree mapped to the WIMSE AIMS audit requirements, gaps included
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text
 conformance/vectors/               269 vectors
-conformance/scenarios/             24 executor scenarios
+conformance/scenarios/             25 executor scenarios
 conformance/ADVERSARIAL.md         threat seeds mapped to vectors and tests
 demo/run.sh                        three-process demo; transcript in demo/out/ (generated)
 scripts/build-release.sh           builds the release archives; .github/workflows/release.yml publishes them on a v* tag
