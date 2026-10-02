@@ -10,7 +10,12 @@
 //	claude/agent.seed      signs each call on the session's behalf
 //	claude/gate.seed       enforces the grant and signs every receipt
 //	claude/grants/*.json   the grants, root to agent, one per name
-//	claude/store.json      the executor's stores; claude/audit.jsonl the audit record
+//	claude/stores/*.json   the executor's stores, one per grant, named by its identity
+//	claude/audit.jsonl     the audit record, one for every grant
+//
+// A store is read and written whole on every call, so each grant keeps its
+// own: a grant lasts at most a day and a renewed grant starts a fresh store,
+// which keeps the file a hook rewrites as small as one grant's calls.
 //
 // The model never holds a key and never writes a receipt: this program does,
 // outside the model, which is the enforcement point spec section 12 requires.
@@ -35,6 +40,7 @@ import (
 	"time"
 
 	"writproto/exec"
+	"writproto/jcs"
 	"writproto/keys"
 	"writproto/wire"
 	"writproto/writ"
@@ -49,6 +55,12 @@ const maxInline = 1024
 // maxGrant is the longest grant the grant command signs: spec 12 asks
 // issuers to keep root writs short-lived and verifiers to doubt longer ones.
 const maxGrant = 24 * time.Hour
+
+// staleAfter is how old an unfinished call must be before a session other
+// than its own resolves it. A session resolves its own unfinished calls when
+// it starts, since none of them can still be running; another session's may
+// be, so they wait until no grant could still cover them.
+const staleAfter = maxGrant
 
 var toolUseID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -86,7 +98,11 @@ func main() {
 	if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
 		switch os.Args[1] {
 		case "pre", "post", "recover", "receipts":
-			ok, err := remote(socket, os.Args[1], os.Stdin, os.Stdout)
+			var in io.Reader = os.Stdin
+			if os.Args[1] == "recover" && !piped(os.Stdin) {
+				in = strings.NewReader("")
+			}
+			ok, err := remote(socket, os.Args[1], in, os.Stdout)
 			if err != nil {
 				die("writ-hook: %v", err)
 			}
@@ -115,14 +131,18 @@ func main() {
 		uses := fs.Int64("uses", 0, "most tool calls the grant allows (0 for no limit)")
 		ttl := fs.Duration("ttl", 8*time.Hour, "how long the grant lasts, at most 24h")
 		name := fs.String("name", "default", "the grant's name; a tool call is checked under the grant that lists its tool")
+		renew := fs.Duration("renew-before", 0, "keep the grant of this name, unsigned again, while it has the same bounds and more than this left to run")
 		_ = fs.Parse(os.Args[2:])
-		err = e.grant(os.Stdout, *name, splitList(*tools), *under, *uses, *ttl)
+		err = e.grant(os.Stdout, *name, splitList(*tools), *under, *uses, *ttl, *renew)
 	case "pre":
 		err = e.hook(os.Stdin, os.Stdout, e.pre)
 	case "post":
 		err = e.hook(os.Stdin, os.Stdout, e.post)
 	case "recover":
-		err = e.recover(os.Stdout)
+		var h *hookInput
+		if h, err = sessionStart(os.Stdin); err == nil {
+			err = e.recover(os.Stdout, h)
+		}
 	case "receipts":
 		var ok bool
 		ok, err = e.receipts(os.Stdout)
@@ -213,12 +233,20 @@ func (e *env) initKeys(out io.Writer) error {
 
 var grantName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
-func (e *env) grant(out io.Writer, name string, tools []string, under string, uses int64, ttl time.Duration) error {
+// grant signs a grant from the grantor to the agent key and saves it under
+// name. With renew above zero, a grant already saved under name is kept when
+// the same grantor signed it to the same agent with the same bounds and it
+// has more than renew left to run, so the command can run at every session
+// start and keep a rolling grant without signing a new one each time.
+func (e *env) grant(out io.Writer, name string, tools []string, under string, uses int64, ttl, renew time.Duration) error {
 	if !grantName.MatchString(name) {
 		return fmt.Errorf("-name must be lowercase letters, digits, and dashes")
 	}
 	if ttl <= 0 || ttl > maxGrant {
 		return fmt.Errorf("-ttl must be more than 0 and at most %s", maxGrant)
+	}
+	if renew < 0 || renew >= ttl {
+		return fmt.Errorf("-renew-before must be at least 0 and less than -ttl")
 	}
 	if under != "" && (!filepath.IsAbs(under) || filepath.Clean(under) != under) {
 		return fmt.Errorf("-under must be a clean absolute path")
@@ -245,6 +273,14 @@ func (e *env) grant(out io.Writer, name string, tools []string, under string, us
 	if uses > 0 {
 		bnd["uses"] = map[string]any{"t": "count", "v": uses}
 	}
+	path := filepath.Join(e.path("grants"), name+".json")
+	if renew > 0 {
+		if w, err := readWrit(path); err == nil && w.Iss == root.DID() && w.Hld == agent.DID() &&
+			w.Exp-e.now() > int64(renew/time.Second) && sameBounds(w, bnd) {
+			fmt.Fprintf(out, "kept %q %s until %s\n", name, w.ID, time.Unix(w.Exp, 0).Format(time.RFC3339))
+			return nil
+		}
+	}
 	w, err := writ.Issue(root, agent.DID(), bnd, e.now()+int64(ttl/time.Second), nil)
 	if err != nil {
 		return err
@@ -257,11 +293,31 @@ func (e *env) grant(out io.Writer, name string, tools []string, under string, us
 	if err := os.MkdirAll(e.path("grants"), 0o700); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(e.path("grants"), name+".json"), w.Raw); err != nil {
+	if err := writeJSON(path, w.Raw); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "granted %q %s until %s\n", name, w.ID, time.Unix(w.Exp, 0).Format(time.RFC3339))
 	return nil
+}
+
+// sameBounds reports whether a saved grant carries exactly the bounds bnd
+// would sign, compared in canonical form.
+func sameBounds(w *writ.Writ, bnd map[string]any) bool {
+	have, err := jcs.Marshal(w.Raw["bnd"])
+	if err != nil {
+		return false
+	}
+	obj, err := wire.Decode(mustJSON(map[string]any{"bnd": bnd}))
+	if err != nil {
+		return false
+	}
+	want, err := jcs.Marshal(obj["bnd"])
+	return err == nil && bytes.Equal(have, want)
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func writeJSON(path string, v any) error {
@@ -318,8 +374,36 @@ type gate struct {
 
 func (g *gate) close() { g.audit.Close() }
 
-// openGate loads the keys and opens the executor over the store. It must run
-// under lock.
+// storeFor is the store of the calls made under the grant with identity id,
+// which is base64url and so a safe file name.
+func (e *env) storeFor(id string) string {
+	return filepath.Join(e.dir, "stores", id+".json")
+}
+
+// use opens the executor over the store of the grant with identity id. It
+// must run under lock.
+func (g *gate) use(id string) error {
+	if err := os.MkdirAll(filepath.Join(g.env.dir, "stores"), 0o700); err != nil {
+		return err
+	}
+	st, err := exec.OpenFileStore(g.env.storeFor(id))
+	if err != nil {
+		return err
+	}
+	x := exec.New(g.id, st)
+	x.Now = g.env.now
+	x.AcceptRoot = func(did string) bool { return did == g.rootID }
+	x.Audit = func(a exec.AuditEntry) {
+		if err := g.audit.Record(a); err != nil {
+			fmt.Fprintf(os.Stderr, "writ-hook: audit record not written: %v\n", err)
+		}
+	}
+	g.e = x
+	return nil
+}
+
+// openGate loads the keys and opens the audit record; use then opens the
+// store of one grant. It must run under lock.
 func (e *env) openGate() (*gate, error) {
 	gateID, err := loadKey(e.path("gate.seed"))
 	if err != nil {
@@ -333,24 +417,11 @@ func (e *env) openGate() (*gate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no trusted grantor; run writ-hook init (%v)", err)
 	}
-	st, err := exec.OpenFileStore(e.path("store.json"))
-	if err != nil {
-		return nil, err
-	}
 	al, err := exec.OpenAuditLog(e.path("audit.jsonl"))
 	if err != nil {
 		return nil, err
 	}
-	x := exec.New(gateID, st)
-	x.Now = e.now
-	root := strings.TrimSpace(string(rootDID))
-	x.AcceptRoot = func(did string) bool { return did == root }
-	x.Audit = func(a exec.AuditEntry) {
-		if err := al.Record(a); err != nil {
-			fmt.Fprintf(os.Stderr, "writ-hook: audit record not written: %v\n", err)
-		}
-	}
-	return &gate{e: x, env: e, id: gateID, agent: agent, rootID: root, audit: al}, nil
+	return &gate{env: e, id: gateID, agent: agent, rootID: strings.TrimSpace(string(rootDID)), audit: al}, nil
 }
 
 // chainFor picks the grant a call to tool is checked under: the first, by
@@ -427,6 +498,44 @@ type hookInput struct {
 	ToolUseID    string          `json:"tool_use_id"`
 	ToolResponse json.RawMessage `json:"tool_response"`
 	Error        json.RawMessage `json:"error"`
+	SessionID    string          `json:"session_id"`
+}
+
+// pendingCall is what pre keeps for a call it admitted, until post signs its
+// receipt or recover resolves it: the call, and the session that made it and
+// when, so a session starting up resolves only calls that cannot be running.
+type pendingCall struct {
+	Session string          `json:"session"`
+	At      int64           `json:"at"`
+	Call    json.RawMessage `json:"call"`
+}
+
+// readPending reads a pending file. A file written before pendingCall
+// existed holds the bare call, with no session and no time.
+func readPending(path string) (*pendingCall, wire.Object, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var p pendingCall
+	if err := json.Unmarshal(raw, &p); err != nil || len(p.Call) == 0 {
+		p = pendingCall{Call: raw}
+	}
+	obj, err := wire.Decode(p.Call)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &p, obj, nil
+}
+
+// grantOf is the identity of the grant a call was made under, which names
+// the store it lives in.
+func grantOf(obj wire.Object) (string, error) {
+	k, err := writ.ParseCall(obj)
+	if err != nil {
+		return "", err
+	}
+	return k.Chain[0].ID, nil
 }
 
 func (e *env) hook(in io.Reader, out io.Writer, f func(*hookInput) (any, error)) error {
@@ -491,6 +600,9 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err != nil {
 		return deny(err.Error()), nil
 	}
+	if err := g.use(chain[0].ID); err != nil {
+		return nil, err
+	}
 	k, err := writ.NewCall(g.agent, chain, "claude/"+h.ToolName, args)
 	if err != nil {
 		return deny("the tool input cannot be carried in a call: " + err.Error()), nil
@@ -506,7 +618,11 @@ func (e *env) admit(h *hookInput) (any, error) {
 		}
 		return deny(explain(code, h.ToolName, chain[0], args) + approvable(code, chain, k)), nil
 	}
-	if err := writeJSON(e.pendingPath(h.ToolUseID), k.Raw); err != nil {
+	call, err := json.Marshal(k.Raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, At: e.now(), Call: call}); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -613,14 +729,14 @@ func (e *env) post(h *hookInput) (any, error) {
 		return nil, err
 	}
 	defer unlock()
-	raw, err := os.ReadFile(e.pendingPath(h.ToolUseID))
+	_, obj, err := readPending(e.pendingPath(h.ToolUseID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil // not a call this gate admitted
 	}
 	if err != nil {
 		return nil, err
 	}
-	obj, err := wire.Decode(raw)
+	id, err := grantOf(obj)
 	if err != nil {
 		return nil, err
 	}
@@ -629,6 +745,9 @@ func (e *env) post(h *hookInput) (any, error) {
 		return nil, err
 	}
 	defer g.close()
+	if err := g.use(id); err != nil {
+		return nil, err
+	}
 	r := exec.Result{St: "ok"}
 	sum := sha256.Sum256(h.ToolResponse)
 	body := map[string]any{"tool_use_id": h.ToolUseID, "response_sha256": hex.EncodeToString(sum[:])}
@@ -695,13 +814,16 @@ func hasDotDot(p string) bool {
 // record. It matches text, so a shell command that builds the path at run
 // time gets past it: a grant that must hold does not allow a shell.
 func (e *env) touchesState(v any) string {
+	names := e.stateNames()
 	var found string
 	var walk func(any)
 	walk = func(v any) {
 		switch x := v.(type) {
 		case string:
-			if strings.Contains(x, e.home) || strings.Contains(x, "~/.writ") || strings.Contains(x, "$HOME/.writ") {
-				found = "the call names Writ's own keys and state, which no grant covers"
+			for _, n := range names {
+				if strings.Contains(x, n) {
+					found = "the call names Writ's own keys and state, which no grant covers"
+				}
 			}
 		case map[string]any:
 			for _, y := range x {
@@ -715,6 +837,20 @@ func (e *env) touchesState(v any) string {
 	}
 	walk(v)
 	return found
+}
+
+// stateNames are the ways a tool input names WRIT_HOME as text: the path
+// itself and, when it is under the home directory, its ~ and $HOME forms.
+// Only this gate's own home: text about another, such as "~/.writ" in this
+// project's documentation when WRIT_HOME is elsewhere, names nothing here.
+func (e *env) stateNames() []string {
+	names := []string{e.home}
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		if rel, ok := strings.CutPrefix(e.home, strings.TrimSuffix(h, "/")+"/"); ok {
+			names = append(names, "~/"+rel, "$HOME/"+rel, "${HOME}/"+rel)
+		}
+	}
+	return names
 }
 
 func shrink(v any) any {
@@ -738,10 +874,50 @@ func shrink(v any) any {
 
 // ---------------------------------------------------------------- upkeep
 
+// sessionStart reads the SessionStart hook input recover is given on stdin.
+// It returns nil when stdin is a terminal or empty: a recover run by hand.
+func sessionStart(in *os.File) (*hookInput, error) {
+	if !piped(in) {
+		return nil, nil
+	}
+	b, err := io.ReadAll(in)
+	if err != nil {
+		return nil, err
+	}
+	return parseSessionStart(b)
+}
+
+func parseSessionStart(b []byte) (*hookInput, error) {
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	var h hookInput
+	if err := json.Unmarshal(b, &h); err != nil {
+		return nil, fmt.Errorf("hook input: %v", err)
+	}
+	if h.SessionID == "" {
+		return nil, errors.New("the hook input names no session_id, so recover cannot tell this session's unfinished calls from another's")
+	}
+	return &h, nil
+}
+
+func piped(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice == 0
+}
+
 // recover resolves calls admitted and never reported, because the tool was
-// stopped or Claude Code exited, to unknown_outcome (spec 9). Run it at
-// session start, when no tool call is in flight.
-func (e *env) recover(out io.Writer) error {
+// stopped, the person declined it at the permission prompt, or Claude Code
+// exited, to unknown_outcome (spec 9).
+//
+// Run at a session start (h set), it resolves that session's own unfinished
+// calls, none of which can still be running, and any older than staleAfter.
+// Another session's recent calls are left alone: several sessions share one
+// gate, and one of them may be in the middle of a tool call. Run by hand (h
+// nil), when no session is live, it resolves every unfinished call in every
+// store, including one admitted by a pre that crashed before it saved its
+// pending file.
+func (e *env) recover(out io.Writer, h *hookInput) error {
 	unlock, err := e.lock()
 	if err != nil {
 		return err
@@ -752,16 +928,79 @@ func (e *env) recover(out io.Writer) error {
 		return err
 	}
 	defer g.close()
-	n := g.e.Recover()
+	unknown := exec.Result{St: "failed", ErrCode: string(writ.UnknownOutcome)}
+	n := 0
+	if h == nil {
+		// Each call is resolved through Complete rather than the executor's
+		// Recover, which signs the tally but writes no audit entry, so the
+		// audit record would hold one entry fewer than the store.
+		stores, _ := filepath.Glob(filepath.Join(e.dir, "stores", "*.json"))
+		for _, s := range stores {
+			if err := g.use(strings.TrimSuffix(filepath.Base(s), ".json")); err != nil {
+				return err
+			}
+			var open []wire.Object
+			for _, rec := range g.e.Store.Calls {
+				if rec.Tally == nil && rec.Call != nil {
+					open = append(open, rec.Call)
+				}
+			}
+			for _, obj := range open {
+				if rep, rej := g.e.Complete(context.Background(), obj, unknown); rep != nil && rej == nil {
+					n++
+				}
+			}
+		}
+	}
 	files, _ := filepath.Glob(filepath.Join(e.dir, "pending", "*.json"))
 	for _, f := range files {
+		p, obj, err := readPending(f)
+		if err != nil {
+			continue
+		}
+		at := p.At
+		if at == 0 { // a pending file from before sessions were recorded
+			if fi, err := os.Stat(f); err == nil {
+				at = fi.ModTime().Unix()
+			}
+		}
+		if h != nil && (p.Session == "" || p.Session != h.SessionID) && e.now()-at <= int64(staleAfter/time.Second) {
+			continue
+		}
+		id, err := grantOf(obj)
+		if err != nil {
+			continue
+		}
+		if err := g.use(id); err != nil {
+			return err
+		}
+		// A call already final, or never admitted, has nothing to resolve;
+		// Complete would only audit it a second time.
+		if g.isPending(obj) {
+			if _, rej := g.e.Complete(context.Background(), obj, unknown); rej != nil {
+				fmt.Fprintf(out, "could not resolve %s: %v\n", filepath.Base(f), rej)
+				continue
+			}
+			n++
+		}
 		_ = os.Remove(f)
 	}
 	fmt.Fprintf(out, "resolved %d unfinished call(s) to unknown_outcome\n", n)
 	return nil
 }
 
-// receipts verifies every receipt in the store against the chain it names,
+// isPending reports whether the store open in g holds obj's call as admitted
+// and not yet final. The call store is keyed "leaf|id" (exec.FileStore).
+func (g *gate) isPending(obj wire.Object) bool {
+	k, err := writ.ParseCall(obj)
+	if err != nil {
+		return false
+	}
+	rec, ok := g.e.Store.Calls[k.Leaf().ID+"|"+k.CID]
+	return ok && rec.Tally == nil
+}
+
+// receipts verifies every receipt in every store against the chain it names,
 // with the keys inside the objects and nothing else, and summarizes them.
 func (e *env) receipts(out io.Writer) (bool, error) {
 	unlock, err := e.lock()
@@ -774,14 +1013,26 @@ func (e *env) receipts(out io.Writer) (bool, error) {
 		return false, fmt.Errorf("no trusted grantor; run writ-hook init (%v)", err)
 	}
 	root := strings.TrimSpace(string(rootDID))
-	st, err := exec.OpenFileStore(e.path("store.json"))
-	if err != nil {
-		return false, err
+	// store.json is the single store of a gate from before stores were kept
+	// per grant.
+	paths, _ := filepath.Glob(filepath.Join(e.dir, "stores", "*.json"))
+	if _, err := os.Stat(e.path("store.json")); err == nil {
+		paths = append([]string{e.path("store.json")}, paths...)
+	}
+	var recs []*exec.Record
+	for _, p := range paths {
+		st, err := exec.OpenFileStore(p)
+		if err != nil {
+			return false, err
+		}
+		for _, rec := range st.Calls {
+			recs = append(recs, rec)
+		}
 	}
 	byOutcome := map[string]int{}
 	byTool := map[string]int{}
 	valid, invalid, pending := 0, 0, 0
-	for _, rec := range st.Calls {
+	for _, rec := range recs {
 		k, err := writ.ParseCall(rec.Call)
 		if err != nil {
 			invalid++

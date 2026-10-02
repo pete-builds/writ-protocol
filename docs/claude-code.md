@@ -43,6 +43,7 @@ When a call is refused for its arguments or its operation and a writ above the o
 | `-under` | `file_path`, a `prefix` | every call must carry a `file_path` under this folder |
 | `-uses` | `uses`, a `count` | the most tool calls the grant allows |
 | `-ttl` | the writ's `exp` | how long it lasts, at most 24 hours |
+| `-renew-before` | none | keep the grant already saved under this name, rather than sign a new one, while it has the same bounds and more than this left to run |
 
 Register the hooks in the project's `.claude/settings.json`. The empty matcher covers every tool, MCP tools included:
 
@@ -59,9 +60,36 @@ Register the hooks in the project's `.claude/settings.json`. The empty matcher c
 
 Set `WRIT_HOME` in the command to keep keys and state somewhere other than `~/.writ`.
 
+### A standing grant for every session
+
+A grant lasts at most a day, so a setup meant to stay on renews its own: run the same `grant` with `-renew-before` at every session start, every prompt, and after every tool call. It keeps the saved grant while more than that much of it is left, and signs a fresh one when not, so with `-ttl 24h -renew-before 22h` a new grant starts about every two hours of use and none runs out while you work:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [
+      {"type": "command", "command": "writ-hook grant -name session -uses 10000 -ttl 24h -renew-before 22h >/dev/null"},
+      {"type": "command", "command": "writ-hook recover >/dev/null"}]}],
+    "UserPromptSubmit": [{"hooks": [
+      {"type": "command", "command": "writ-hook grant -name session -uses 10000 -ttl 24h -renew-before 22h >/dev/null"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook pre"}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [
+      {"type": "command", "command": "writ-hook post"},
+      {"type": "command", "command": "writ-hook grant -name session -uses 10000 -ttl 24h -renew-before 22h >/dev/null"}]}],
+    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook post"}]}]
+  }
+}
+```
+
+The output goes to `/dev/null` because Claude Code adds what a `SessionStart` or `UserPromptSubmit` hook prints to the model's context. Renewing this way means the grantor's key signs without you at the keyboard, which is the trade a standing setup makes: the grant is a policy you wrote once, not a decision made each time.
+
+Each grant keeps its own store, `claude/stores/<grant identity>.json`, because a store is read and written whole on every call: a renewed grant starts a fresh file, so the one a hook rewrites holds a couple of hours of calls rather than every call ever made. `receipts` reads them all.
+
+Several sessions can share one `WRIT_HOME`. `recover`, given the `SessionStart` input on stdin as above, resolves only the starting session's own unfinished calls, which cannot still be running, and any call older than 24 hours; another session's call in flight is left to finish. Run by hand with no input, it resolves every unfinished call, so run it that way only when no session is live.
+
 ## Keep the keys out of Claude's reach
 
-Run as above, the gate opens its keys and state in the hook process, as your user, which is the user Claude Code's tools run as. A grant without a shell cannot reach them, because the gate refuses any input that names `~/.writ`. A grant with a shell can: a command that builds the path at run time gets past a text check. So for a grant that must hold, run the gate as its own process where your user cannot read its files, and let the hooks only carry each event to it:
+Run as above, the gate opens its keys and state in the hook process, as your user, which is the user Claude Code's tools run as. A grant without a shell cannot reach them, because the gate refuses any input that names its `WRIT_HOME`, written out, or with `~`, `$HOME`, or `${HOME}`. A grant with a shell can: a command that builds the path at run time gets past a text check. So for a grant that must hold, run the gate as its own process where your user cannot read its files, and let the hooks only carry each event to it:
 
 ```
 writ-hook serve -socket /run/writ/gate.sock
@@ -117,6 +145,8 @@ Refusals the hook makes before the executor sees a call, such as an input naming
 
 This was run against Claude Code on 2026-09-30: an allowed Read ran and was receipted, a Read outside the granted folder and a Bash call were both blocked, and a Read of a missing file produced a verified `failed` receipt through `PostToolUseFailure`. The same was run again with the gate as its own process behind `writ-hook serve`: the Read was receipted through the socket, and a `cat` of the grantor's key was blocked.
 
+On 2026-10-01 the standing setup above was run with two headless Claude Code sessions (2.1.287) sharing one `WRIT_HOME`: the first ran a 25-second foreground Bash command, and the second started and finished while it ran. The first call's pending record survived the second session's `recover` and was receipted `ok`. The same run with the binary from before this change (5203cf5) deleted the running call's pending record at the second session's start and receipted a command that printed its output as `failed`, `unknown_outcome`; it also reported `-1 refusal(s)`, because the executor's own recovery signed the tally without an audit entry. A `head` of the grantor's seed was blocked and an `echo` of text mentioning `~/.writ` ran, with `WRIT_HOME` elsewhere. A hook pair, `pre` and `post`, took about 40 ms.
+
 ## What it does not do
 
 - **A bound applies to every call under its grant.** `-under` adds a `file_path` bound, so a tool whose input has no `file_path` is refused under that grant: Bash, Grep and Glob (which use `path`), and NotebookEdit (which uses `notebook_path`). Give those tools their own named grant.
@@ -124,6 +154,6 @@ This was run against Claude Code on 2026-09-30: an allowed Read ran and was rece
 - **The keys live on the same machine as the tools.** A receipt proves what the gate admitted and what Claude Code reported back, signed by a key the model cannot reach through an allowed tool. It does not prove the tool's effect in the world, and anyone with access to `~/.writ` can do anything.
 - **Paths are checked as text.** Inputs with `.` or `..` segments are refused, but a symlink inside the granted folder can still point outside it.
 - **A revoke does not stop a tool already running**; it refuses every later call.
-- **A call Claude Code never reports back**, because you rejected it at the permission prompt or the session ended mid-tool, stays unfinished until the next `writ-hook recover`, which resolves it to `unknown_outcome`. Run one session per `WRIT_HOME` at a time, because `recover` resolves every unfinished call in it.
+- **A call Claude Code never reports back**, because you rejected it at the permission prompt or the session ended mid-tool, stays unfinished until that session starts again, or for 24 hours, and is then resolved to `unknown_outcome`. A call you declined at the permission prompt reads the same as one cut off mid-run: the gate admitted it, and Claude Code never said what happened.
 - **It fails closed before the tool, not after.** If the gate cannot check a call, the call is blocked. If signing a receipt fails after the tool ran, the call stays unfinished and `recover` resolves it.
 - **macOS and Linux only**, because it serializes hook processes with `flock`.

@@ -20,8 +20,8 @@ import (
 
 // request is one line a client sends; response is the one line it gets back.
 type request struct {
-	Cmd   string          `json:"cmd"` // pre, post, recover, receipts
-	Input json.RawMessage `json:"input,omitempty"`
+	Cmd   string          `json:"cmd"`             // pre, post, recover, receipts
+	Input json.RawMessage `json:"input,omitempty"` // the hook input; for recover, the SessionStart input or none
 }
 
 type response struct {
@@ -89,7 +89,10 @@ func (e *env) dispatch(req request) response {
 		err = e.hook(bytes.NewReader(req.Input), &out, e.post)
 		resp.Output = trimJSON(out.Bytes())
 	case "recover":
-		err = e.recover(&out)
+		var h *hookInput
+		if h, err = parseSessionStart(req.Input); err == nil {
+			err = e.recover(&out, h)
+		}
 		resp.Text, resp.OK = out.String(), err == nil
 	case "receipts":
 		resp.OK, err = e.receipts(&out)
@@ -138,7 +141,7 @@ func ask(socket string, req request) (*response, error) {
 // pre: an unreachable gate blocks the tool call.
 func remote(socket, cmd string, in io.Reader, out io.Writer) (bool, error) {
 	var input json.RawMessage
-	if cmd == "pre" || cmd == "post" {
+	if cmd == "pre" || cmd == "post" || cmd == "recover" {
 		b, err := io.ReadAll(in)
 		if err != nil {
 			return false, err
