@@ -144,17 +144,18 @@ The authority under a chain is the leaf writ's bounds. Because the attenuation r
 
 # Bounds
 
-`bnd` is an object whose members are bound names and whose values are objects `{"t": <type>, "v": <value>}` with no other members. Version 1 defines five types. A verifier MUST reject a bound of any other type, reason `unknown_bound`. A bound a verifier cannot compare is a bound it cannot enforce.
+`bnd` is an object whose members are bound names and whose values are objects `{"t": <type>, "v": <value>}` with no other members. Version 1 defines six types. A verifier MUST reject a bound of any other type, reason `unknown_bound`. A bound a verifier cannot compare is a bound it cannot enforce.
 
 | Type | Value | Child narrows parent when | Argument satisfies when |
 |---|---|---|---|
 | `max` | integer >= 0 | child <= parent | 0 <= arg <= v |
 | `count` | integer >= 0 | child <= parent | not by argument: consumed by the executor, section 7.3 |
+| `total` | integer >= 0 | child <= parent | 0 <= arg <= v; the sum of arguments across calls is consumed by the executor, section 7.3 |
 | `prefix` | string | parent matches child (section 3.1) | v matches arg (section 3.1) |
 | `set` | array of strings or integers, no duplicates | every child element is in parent | arg is an element of v |
 | `window` | `[lo, hi]` integers, lo <= hi | parent.lo <= child.lo and child.hi <= parent.hi | lo <= arg <= hi |
 
-A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max` or `count` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. A verifier checks one bound in this order and reports the first failure: it is an object, its members are exactly `t` and `v`, and `t` is a string (`malformed`); `t` is in this table (`unknown_bound`); `v` has the JSON type for `t` (`malformed`); the value rule (`noncanonical`). A `set` is checked element by element in array order, each element's type (`malformed`) before whether it repeats an earlier element (`noncanonical`). A `window` is checked for its shape, an array of two integers (`malformed`), before `lo` is compared with `hi`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it.
+A `set` element that is the integer 1 and one that is the string `"1"` are different elements; a set MAY mix strings and integers. Bound rejections are classified as follows: a bound that is not an object, has members other than exactly `t` and `v`, or whose `v` has the wrong JSON type for `t` is `malformed`; a `max`, `count`, or `total` below zero, a `window` with lo above hi, or a `set` with a duplicate element is `noncanonical`; a `t` outside this table is `unknown_bound`. A verifier checks one bound in this order and reports the first failure: it is an object, its members are exactly `t` and `v`, and `t` is a string (`malformed`); `t` is in this table (`unknown_bound`); `v` has the JSON type for `t` (`malformed`); the value rule (`noncanonical`). A `set` is checked element by element in array order, each element's type (`malformed`) before whether it repeats an earlier element (`noncanonical`). A `window` is checked for its shape, an array of two integers (`malformed`), before `lo` is compared with `hi`. The "argument satisfies" column is not defined for `count`, and section 7.2 never applies it. For `total`, section 7.2 applies the column to one call's argument, and section 7 step 10 applies the running sum.
 
 ## Prefix matching
 
@@ -242,7 +243,7 @@ A tally is the executor's signed account of one call.
 | `st` | string | yes | `ok`, `failed`, `canceled`, or `pending` |
 | `err` | object or null | yes | null when `st` is `ok`; otherwise `{"code": <reason>}` with optional `ref` (a hash) |
 | `out` | hash or null | yes | hash of the canonical form of the result body, or null when there is none |
-| `used` | object | yes | for each `max` bound name in the leaf writ that the operation consumed, the integer consumed, including what was consumed under the writs this executor issued for it, so never less than the sum over the tallies in `sub` (see below); absent names mean zero |
+| `used` | object | yes | for each `max` or `total` bound name in the leaf writ that the operation consumed, the integer consumed, including what was consumed under the writs this executor issued for it, so never less than the sum over the tallies in `sub` (see below); absent names mean zero |
 | `rev` | object or null | yes | `{"until": <time>}` when the effect can be reversed by `sys/undo` until that time; else null |
 | `sub` | array of tally | yes | every tally this executor received from calls it made under child writs, signed members only; empty array if none |
 | `wrt` | array of writ | yes | every writ this executor issued under the leaf writ; empty array if none |
@@ -296,12 +297,12 @@ A verifier V that made a call K under a chain whose leaf writ is W, and received
 4. `T.op` equals `K.op`. Reason `tally_mismatch`.
 5. If `T.op` does not begin with `sys/`: `T.acc` < `W.exp`. Reason `expired`. A tally for a standing operation is not bound to `W.exp`, because the operation was authorized after it (section 7 step 4); its time bound is operation-specific (section 8), and a verifier that holds the target of a `sys/undo` MAY additionally check the undo tally's `acc` against that target's `rev.until`.
 6. If R is present, `T.out` is not null and equals the hash of R's canonical form. Reason `tally_mismatch`. A non-null `out` with no R is accepted; the verifier simply has no body to check.
-7. For each `max` bound N in `W.bnd`: `T.used[N]` (zero if absent) <= `W.bnd[N].v`. Reason `out_of_bounds`.
+7. For each `max` or `total` bound N in `W.bnd`: `T.used[N]` (zero if absent) <= `W.bnd[N].v`. Reason `out_of_bounds`.
 8. Every writ X in `T.wrt`, in array order: X passes section 6.1; X is a valid child of W under section 4 steps 1 to 5; and section 4's `depth` rule holds over the chain to W followed by X. The chain to W is `K.chain`; at step 9, the chain to a sub-tally's writ X is the chain to its parent's writ followed by X. Each writ is checked completely before the next. Reason as reported.
 9. Every tally S in `T.sub`, in array order: S is an object whose `writ` member names a writ X in `T.wrt` (`sub_unmatched` otherwise, checked before anything else about S); S passes section 6.1 with signer `X.hld`; then steps 3, 5, 7, 8, 9, and 10 apply to S with X in place of W and are completed for S's whole subtree before the next element of `T.sub` is examined.
-10. After every element of `T.sub`: for each `max` bound N in `W.bnd`, the sum of `S.used[N]` over the tallies in `T.sub` <= `T.used[N]` (zero if absent). Reason `out_of_bounds`. Because step 7 applies to every tally in the tree and each tally's `used` covers its sub-tallies', everything reported anywhere below W is bounded by `W.bnd[N].v`, however deep the tree. This is the executors' own accounting and it is evidence, not enforcement (section 7.3).
+10. After every element of `T.sub`: for each `max` or `total` bound N in `W.bnd`, the sum of `S.used[N]` over the tallies in `T.sub` <= `T.used[N]` (zero if absent). Reason `out_of_bounds`. Because step 7 applies to every tally in the tree and each tally's `used` covers its sub-tallies', everything reported anywhere below W is bounded by `W.bnd[N].v`, however deep the tree. This is the executors' own accounting and it is evidence, not enforcement (section 7.3).
 
-Names in `used` that are not `max` bounds of the writ are ignored. This procedure does not compare `S.op` against `X.act`; that check was the sub-executor's job at request time (section 7), and a sub-executor that signed a tally for an operation outside its writ has produced a signed admission.
+Names in `used` that are not `max` or `total` bounds of the writ are ignored. This procedure does not compare `S.op` against `X.act`; that check was the sub-executor's job at request time (section 7), and a sub-executor that signed a tally for an operation outside its writ has produced a signed admission.
 
 A verifier cannot check `S.call` for a sub-tally because it does not hold the call B made; the sub-tally binds C to a call that B can produce in a dispute.
 
@@ -322,13 +323,13 @@ An executor E receiving a call K over a transport binding (section 10) proceeds 
 7. Forward call only: no writ in the chain is revoked in E's store, by identity or by a key-wide revoke of its issuer (section 9). Reason `revoked`. A standing call skips this step.
 8. Both kinds: when the transport authenticated the peer that delivered K (section 10), E holds a binding of that peer to `K.from` (section 7.6) (`peer_mismatch`). Then, forward call: `K.from` equals the leaf `iss` (`no_standing`); `K.op` does not begin with `sys/` and is matched by the leaf `act` (`forbidden_op`); section 7.2 holds. Standing call: `K.from` is the `iss` of some writ in the chain (`no_standing`); `K.op` is an operation defined in section 8 (`forbidden_op`). The operation's own checks (sections 8.1 and 8.2) are part of performing it at step 11, after replay: a failure among them is the operation's `failed` outcome, signed, stored, and answered to a retry like any other.
 9. Replay: if E's call store has an entry for (identity of leaf writ, `K.id`), E does not execute. An entry holding a final tally is answered with that tally, byte for byte, and the result body stored with it. An entry still pending is answered with a pending tally (section 6) carrying the entry's `acc`. Otherwise E records the entry with state pending.
-10. `count`, forward call only: for every writ in the chain that carries a `count` bound, E's count store entry for that writ's identity is below the value of every `count` bound that writ carries, so a writ with several is limited by the smallest (`count_exhausted`); E increments each such entry once. Rejection at this step consumes nothing and leaves no entry in the call store.
+10. `count` and `total`, forward call only. First, for every writ in the chain that carries a `count` bound, E's count store entry for that writ's identity is below the value of every `count` bound that writ carries, so a writ with several is limited by the smallest (`count_exhausted`). Then, for every writ in the chain and every `total` bound N it carries, E's total store entry for that writ's identity and N, plus `K.args[N]`, is at most the bound's value (`total_exhausted`). Only when every check passes does E increment each such count entry once, add `K.args[N]` to each such total entry, and record step 9's pending entry. Rejection at this step consumes nothing and leaves no entry in the call store. `K.args[N]` is present and within the leaf's value, because section 4 step 4 puts every `total` bound of the chain on the leaf and step 8 has checked the leaf's bounds.
 11. E records `acc` = now, persists the pending record, and performs the operation.
 12. E signs and persists the tally, then returns it with the result body.
 
 Steps 4 and 7 are what end forward authority: at `exp`, and on revocation, no forward call is accepted anywhere, and nothing in this section reopens that. A standing call is exempt from both because it does not exercise the authority the chain grants; it exercises the standing the chain proves, which is a fact about the past. The chain still has to be structurally valid, signed, attenuated, rooted at an accepted issuer, and addressed to this executor (steps 1 to 3, 5, 6), `from` still has to be an issuer on it and bound to the peer that delivered the call, and the operation's own checks (section 8) still bound what it may do. The alternative, checking expiry for every call, made `sys/undo` impossible after the leaf expired even when `rev.until` was later, made `sys/tallies` useless for recovering the tally of a call whose writ has since expired, and let a revoke that raced a completion lock the revoker out of reversing the completed effect.
 
-Steps 9 and 10 are one atomic operation with respect to other calls: two calls with the same (leaf writ identity, `id`) MUST NOT both pass step 9, even when they arrive at the same instant, and two calls whose chains share a writ with a `count` bound MUST NOT both consume its last use. A refusal signed at steps 3 to 10 is returned and not recorded in any store (section 9).
+Steps 9 and 10 are one atomic operation with respect to other calls: two calls with the same (leaf writ identity, `id`) MUST NOT both pass step 9, even when they arrive at the same instant, two calls whose chains share a writ with a `count` bound MUST NOT both consume its last use, and two calls whose chains share a writ with a `total` bound MUST NOT together take it past its value. A refusal signed at steps 3 to 10 is returned and not recorded in any store (section 9).
 
 Steps 7 to 11 of a forward call are likewise atomic with respect to recording a revoke (section 9.1). Either the revoke is recorded first and the call is refused at step 7, or the call is accepted first and is among the calls the revoke answers for and tells to stop. No forward call may pass step 7 before a revoke is recorded, miss that revoke's answer, and run.
 
@@ -345,13 +346,15 @@ Let the application bounds be every member N of the leaf's `bnd` other than `act
 
 Presence is checked for all bounds before satisfaction is checked for any, so a missing argument is always reported before an out-of-range one.
 
-Members of `args` with no corresponding bound are unconstrained.
+Members of `args` with no corresponding bound are unconstrained. A `total` bound is an application bound: here its argument is checked against its value one call at a time, and the running sum at section 7 step 10.
 
-## What `count` and `max` mean
+## What `count`, `total`, and `max` mean
 
 `count` N on a writ means: each executor performs at most N operations under that writ or any writ below it, for as long as the executor's count store persists. It is consumed at acceptance, against every writ in the chain, so a holder cannot reset it by delegating to itself.
 
-`max` is checked per call against the leaf writ, and `count` is consumed per executor. Neither is a global limit. A holder that has been given `count` 1 can issue two children to two different executors and each executor, seeing only its own store, will accept one call; the same holds for `max`. The protocol does not enforce a sum across sibling writs or sibling executors at request time, and cannot without coordination between executors, which it does not define. A delegator that needs a total across several delegations issues one writ per delegation with the total split between them, or names one executor in `hld`. Cross-executor fan-out is detected after the fact, and only if evidence surfaces: a verifier audits totals from `used` in the tally tree, where every tally's `used` must cover its sub-tallies' (section 6.2 step 10), so consumption over a bound anywhere in a complete tree surfaces as `out_of_bounds` at the writ it exceeds; and `sys/tallies` lets it ask any executor it learns of. An honest holder's tally lists every child it issued in `wrt`; a dishonest one's omission is a signed false statement, but the verifier cannot find it without a second source.
+A `total` bound named N with value v on a writ means: at each executor, the arguments named N of all the operations it accepts under that writ or any writ below it sum to at most v, for as long as the executor's total store persists. Like `count`, it is consumed at acceptance against every writ in the chain that carries it, so a holder cannot reset it by delegating to itself, and a child's smaller `total` is a share that still draws on every ancestor's. What is consumed is the argument, at acceptance, not what the operation later reports in `used`: an operation that fails, consumes less than its argument, or is reversed by `sys/undo` does not give any of it back. The tally's `used` reports what the operation consumed, as it does for a `max` bound, and may be less than the argument the total store took. A total therefore never overspends and may underspend; a delegator that wants the remainder back issues a new writ.
+
+`max` is checked per call against the leaf writ, and `count` and `total` are consumed per executor. None of them is a global limit. A holder that has been given `count` 1 can issue two children to two different executors and each executor, seeing only its own store, will accept one call; the same holds for `max` and for `total`. The protocol does not enforce a sum across sibling writs or sibling executors at request time, and cannot without coordination between executors, which it does not define. A delegator that needs a total across several delegations issues one writ per delegation with the total split between them, or names one executor in `hld`. Cross-executor fan-out is detected after the fact, and only if evidence surfaces: a verifier audits totals from `used` in the tally tree, where every tally's `used` must cover its sub-tallies' (section 6.2 step 10), so consumption over a bound anywhere in a complete tree surfaces as `out_of_bounds` at the writ it exceeds; and `sys/tallies` lets it ask any executor it learns of. An honest holder's tally lists every child it issued in `wrt`; a dishonest one's omission is a signed false statement, but the verifier cannot find it without a second source.
 
 Nothing in this protocol is exactly-once. An executor executes at most once per (leaf writ identity, `id`) while its call store persists, and at most `count` times per writ while its count store persists. A caller retries the identical signed bytes until it holds a final tally or the leaf expires. When an executor cannot determine whether an effect occurred, it says so with `st` `pending` or `err.code` `unknown_outcome`; store loss is never proof that nothing happened.
 
@@ -399,13 +402,14 @@ Returns every tally the executor still holds whose chain included a given writ. 
 |---|---|---|---|---|
 | call store | (leaf writ identity, `id`) with state pending or the final tally; while pending, the writs issued and sub-tallies received for the call (section 7.5) | forward call: until leaf `exp`; standing call: as long as the tally store retains any record under that leaf | MUST survive restart | a retried call may execute twice; the protocol does not hide this |
 | count store | writ identity, integer consumed | until that writ's `exp` | MUST survive restart | `count` may be exceeded |
+| total store | writ identity and bound name, integer consumed | until that writ's `exp` | MUST survive restart | `total` may be exceeded |
 | tally store | tally identity; indexed by every writ identity in its chain | until the later of leaf `exp` and `rev.until`, and SHOULD be longer where recovery matters | MUST survive restart | `sys/undo` and `sys/tallies` fail with `not_reversible` or return less |
 | revoke store | writ identity; for a key-wide revoke, the revoking key | until that writ's `exp`; a key-wide revoke is kept indefinitely, because it covers writs issued after it arrived | MUST survive restart | a revoked writ is honored again until `exp`; a withdrawn key is honored again with no end |
 | reversal store | target tally identity: that a reversal began and under which call, or that one succeeded and its result body | as long as the tally store holds the target | MUST survive restart | a reversal may run twice |
 
 A pending call record found after a restart MUST be resolved to a final tally: `ok` or `failed` when the outcome can be determined, otherwise `failed` with `unknown_outcome`. The resolved tally keeps the record's `acc`, carries in `wrt` and `sub` every writ and sub-tally persisted for the call (section 7.5), with a `used` that covers those sub-tallies, is stored in the call store and the tally store like any final tally, and answers every later retry of the call.
 
-An executor that cannot write its call store or count store at section 7 steps 9 and 10 MUST NOT perform the operation. It refuses with a signed `failed` tally whose `err.code` is an implementation code (section 11), recording nothing. An executor that performed the operation and then cannot persist the final tally MUST NOT answer as if it had: it answers with a pending tally, which is what its durable record will resolve to after a restart.
+An executor persists what step 10 consumes from its count and total stores no later than step 9's pending entry, so a crash between the two writes leaves a use or an amount consumed with nothing run, which underspends, and never an operation running against a limit it did not record. An executor that cannot write its call store, count store, or total store at section 7 steps 9 and 10 MUST NOT perform the operation. It refuses with a signed `failed` tally whose `err.code` is an implementation code (section 11), recording nothing. An executor that performed the operation and then cannot persist the final tally MUST NOT answer as if it had: it answers with a pending tally, which is what its durable record will resolve to after a restart.
 
 An executor that cannot persist a revoke MUST keep honoring it for as long as it runs and MUST NOT answer as if it were recorded: it answers with an unsigned error whose code is an implementation code (section 11), and the sender retries. A revoke lost at a restart silently re-admits what it withdrew: a writ until its `exp`, and a stolen or retired key with no end.
 
@@ -533,6 +537,7 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 | `missing_arg` | a bound name absent from `args` |
 | `out_of_bounds` | an argument or a `used` value violates a bound |
 | `count_exhausted` | a `count` bound in the chain is used up |
+| `total_exhausted` | the call's argument would take a `total` bound in the chain past its value at this executor (section 7.3) |
 | `tally_mismatch` | a tally does not name the expected call, writ, op, or output |
 | `sub_unmatched` | a sub-tally names a writ absent from `wrt` |
 | `ack_mismatch` | an ack does not name the revoke, or its body does not hash to its `out` (section 9.4) |
@@ -589,10 +594,10 @@ Application failures use `failed` with a code outside this table; such codes SHO
 | task lifecycle, streaming, push | A2A tasks, MCP Tasks extension | a Writ call is one unit of work inside a task; the tally is the task's evidence |
 | tool schemas | MCP | `op` and `args` are opaque to Writ |
 | structured permission values | OAuth RAR ({{RFC9396}}) | `bnd` reuses the idea and adds the comparison |
-| delegation with attenuation | UCAN, Biscuit, macaroons, ZCAP-LD, Tenuo | Writ is the JSON-only, DID-key-only, five-comparison subset, plus receipt trees |
+| delegation with attenuation | UCAN, Biscuit, macaroons, ZCAP-LD, Tenuo | Writ is the JSON-only, DID-key-only, six-comparison subset, plus receipt trees |
 | receipts | UCAN Receipt, in-toto, SCITT | a UCAN Receipt signs an invocation's result and the tasks it enqueues; a tally also embeds the tallies of the work delegated below it and accounts for consumption across them. A tally can be wrapped as an in-toto statement or registered with a SCITT log by an extension |
 | payment mandates | AP2 | an AP2 mandate can be carried as an application bound; Writ does not settle payments |
-| hash-linked attenuated agent delegation | draft-asor-wimse-agent-delegation-chain, draft-hamr-oauth-agent-delegation, AgentROA, AIP/IBCT | same shape (parent hash, subset per hop, offline check); Writ differs in carrying no OAuth or JWT envelope, in a closed five-type bound algebra, and in binding the receipt tree to the chain. A JWS profile is the bridge |
+| hash-linked attenuated agent delegation | draft-asor-wimse-agent-delegation-chain, draft-hamr-oauth-agent-delegation, AgentROA, AIP/IBCT | same shape (parent hash, subset per hop, offline check); Writ differs in carrying no OAuth or JWT envelope, in a closed six-type bound algebra, and in binding the receipt tree to the chain. A JWS profile is the bridge |
 | per-action authorization receipts and tool-call binding | draft-schrock-ep-authorization-receipts, draft-das-agentic-tool-binding | pre-execution approval of one action; a tally is post-execution and MAY carry such a receipt's hash in `err.ref` or the result body |
 
 Bindings for MCP (`_meta` members on `tools/call` and its result) and A2A (a `DataPart` of media type `application/writ+json` and an Agent Card extension) are specified in the adoption document and are not part of this core.
@@ -642,7 +647,7 @@ According to {{RFC7942}}, "this will allow reviewers and working groups to assig
 
 {{RFC7942}} asks for this section just before the Security Considerations. It is placed here instead so that every section number matches the repository text this document is generated from.
 
-The conformance corpus is in the repository: 241 vectors of section 14 and 24 executor scenarios of section 14.1, with JSON schemas for both.
+The conformance corpus is in the repository: 269 vectors of section 14 and 25 executor scenarios of section 14.1, with JSON schemas for both.
 
 ## Go reference implementation
 
@@ -666,7 +671,7 @@ The conformance corpus is in the repository: 241 vectors of section 14 and 24 ex
 - Coverage: sections 1 to 11, the ack of section 9.4 included, and the conformance harness of section 14. It passes every vector and every scenario, and serves the HTTP binding well enough to stand in for the Go executor in the three-agent demonstration.
 - Version compatibility: this version (-00).
 - Licensing: Apache License 2.0.
-- Implementation experience: writing the executor found ten places where the text was unclear, each since answered in the specification. It comes from the same author's tooling as the Go implementation, so agreement between the two shows that the text can be read the same way twice, not that a stranger can build from it.
+- Implementation experience: writing the executor found ten places where the text was unclear, each since answered in the specification. The `total` bound type was added to both on 2026-10-01 the same way: an agent kept away from the Go code implemented it from the text alone, passed every vector and scenario on its first run, and named four places worth a sentence, three of which the text now answers. It comes from the same author's tooling as the Go implementation, so agreement between the two shows that the text can be read the same way twice, not that a stranger can build from it.
 - Contact: issues at https://github.com/pete-builds/writ-protocol.
 - Last updated: 2026-10-01.
 
@@ -677,7 +682,7 @@ The conformance corpus is in the repository: 241 vectors of section 14 and 24 ex
 - Description: a TypeScript verifier and executor written from the specification and the conformance corpus alone, without reading either implementation above, by an AI coding agent directed by its author, who discloses that it counts "as an independent reading of the text, not as a human stranger".
 - Maturity: prototype.
 - Coverage: the verifier passes all 213 vectors of the corpus at that commit, which were available while it was built. The executor was built with every scenario's expected answers removed, and its first run passed 19 of 22 scenarios (136 of 140 steps); the three failures had one cause in the implementation, which was then fixed.
-- Version compatibility: the repository text at commit 6552968 (2026-09-30), before the ack of section 9.4 was added. It does not yet sign acks, so its executor's answer to a revoke lacks the members section 10 now requires.
+- Version compatibility: the repository text at commit 6552968 (2026-09-30), before the ack of section 9.4 was added. It does not yet sign acks, so its executor's answer to a revoke lacks the members section 10 now requires, and it predates the `total` bound type of section 3, so it rejects the 28 vectors that carry one as `unknown_bound`.
 - Licensing: Apache License 2.0.
 - Implementation experience: it reported two places where the text was unclear, both confirmed: a `canceled` tally for a call not yet accepted names no error code (section 9.1), and "outermost value" in the nesting limit of section 1.1 is ambiguous.
 - Contact: https://github.com/pete-builds/writ-protocol/issues/22.
@@ -733,7 +738,9 @@ Why did:key only: the identifier is the key, so verification has no network step
 
 Why bare Ed25519 over canonical JSON instead of JWS or COSE: the objects stay readable in a log, there is no algorithm field to attack, and the whole envelope is four lines in any language. A JWS profile is the intended bridge to IETF bodies once the members are stable.
 
-Why five bound types and no policy language: each comparison is total and decidable; subset of a glob is not. New types enter only with two independent implementations and published vectors.
+Why six bound types and no policy language: each comparison is total and decidable; subset of a glob is not. New types enter only with two independent implementations and published vectors.
+
+Why `total` is a type and not a convention: a payment needs a running total, and `max` with `count` bounds only their product, so a delegator that meant "600 in all" had to choose between one call of 600 and several calls that could reach several times 600. `total` reuses `max`'s subset rule and `count`'s store, so it adds no new kind of comparison and no new kind of state. It entered on 2026-10-01 with both implementations and its vectors, as the note above requires.
 
 Why `count` needs state: any at-most-N rule does. The state is named, keyed, and given a lifetime, and the spec says what happens when it is lost.
 

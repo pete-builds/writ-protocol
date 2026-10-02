@@ -155,7 +155,7 @@ def check_standing_args(op, args, writs, ids, now, from_):
 
 
 def verify_call(data, now=None, executor=None, accepted_roots=None, revoked=None, standing_ops=True):
-    """Section 7 steps 1 to 8 without the call and count stores.
+    """Section 7 steps 1 to 8 without the call, count, and total stores.
 
     ``executor`` is the receiving key's did (step 6), ``accepted_roots`` an
     iterable of root issuer dids (step 5), ``revoked`` a set of revoked writ
@@ -302,15 +302,16 @@ def _accounted_for(body, t):
     return False
 
 
-def _max_bounds(writ):
+def _used_bounds(writ):
+    """The writ's max and total bounds, the ones used reports (section 6)."""
     bnd = writ["bnd"]
     return [(n, bnd[n]["v"]) for n in sorted(bnd, key=lambda k: k.encode("utf-16-be", "surrogatepass"))
-            if bnd[n]["t"] == "max"]
+            if bnd[n]["t"] in ("max", "total")]
 
 
 def _check_used(writ, used, who):
-    """Section 6.2 step 7: each max bound's used value is within the writ."""
-    for name, limit in _max_bounds(writ):
+    """Section 6.2 step 7: each max or total bound's used value is within the writ."""
+    for name, limit in _used_bounds(writ):
         u = used.get(name, 0)
         if u > limit:
             raise WritError("out_of_bounds", f"{who} used[{name}] = {u} exceeds bound {limit}")
@@ -357,7 +358,7 @@ def _tree(writ, writ_id, chain, tally, call=None, call_id=None, res=None):
         # Step 10: used is inclusive of the subtree, so T's own used must
         # cover its sub-tallies'. With step 7 at every level this bounds the
         # whole tree by the writ, however deep.
-        for name, _ in _max_bounds(writ):                                     # step 10
+        for name, _ in _used_bounds(writ):                                    # step 10
             total = 0
             for S in T["sub"]:
                 total += S["used"].get(name, 0)

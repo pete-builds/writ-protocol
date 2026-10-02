@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "max",
+   "v": 100
+  },
+  "parent": {
+   "t": "total",
+   "v": 100
+  }
+ },
+ "name": "total to max",
+ "op": "narrows",
+ "reason": "not_narrowed"
+}

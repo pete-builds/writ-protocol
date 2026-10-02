@@ -37,6 +37,7 @@ REASONS = (
     "missing_arg",
     "out_of_bounds",
     "count_exhausted",
+    "total_exhausted",
     "tally_mismatch",
     "sub_unmatched",
     "not_reversible",

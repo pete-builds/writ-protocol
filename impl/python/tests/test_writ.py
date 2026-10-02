@@ -234,6 +234,22 @@ class BoundsTest(Base):
         self.assertReason("malformed", B.validate, {"t": "max"})
         self.assertReason("malformed", B.validate, {"t": "set", "v": [True]})
 
+    def test_total_validates_narrows_and_satisfies_like_max(self):
+        # Section 3: value integer >= 0, child <= parent, 0 <= arg <= v.
+        B.validate({"t": "total", "v": 0})
+        self.assertReason("noncanonical", B.validate, {"t": "total", "v": -1})
+        self.assertReason("malformed", B.validate, {"t": "total", "v": "5"})
+        B.check_narrows({"t": "total", "v": 600}, {"t": "total", "v": 1000})
+        self.assertReason("not_narrowed", B.check_narrows, {"t": "total", "v": 1001}, {"t": "total", "v": 1000})
+        self.assertReason("not_narrowed", B.check_narrows, {"t": "max", "v": 5}, {"t": "total", "v": 5})
+        self.assertReason("not_narrowed", B.check_narrows, {"t": "total", "v": 5}, {"t": "count", "v": 5})
+        B.check_satisfies({"t": "total", "v": 5}, 5)
+        B.check_satisfies({"t": "total", "v": 5}, 0)
+        self.assertReason("out_of_bounds", B.check_satisfies, {"t": "total", "v": 5}, 6)
+        self.assertReason("out_of_bounds", B.check_satisfies, {"t": "total", "v": 5}, -1)
+        self.assertReason("out_of_bounds", B.check_satisfies, {"t": "total", "v": 5}, "3")
+        self.assertReason("out_of_bounds", B.check_satisfies, {"t": "total", "v": 5}, True)
+
 
 # ------------------------------------------------------------------ writ
 

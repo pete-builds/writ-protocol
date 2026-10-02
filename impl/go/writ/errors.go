@@ -27,6 +27,7 @@ const (
 	MissingArg          Reason = "missing_arg"
 	OutOfBounds         Reason = "out_of_bounds"
 	CountExhausted      Reason = "count_exhausted"
+	TotalExhausted      Reason = "total_exhausted"
 	TallyMismatch       Reason = "tally_mismatch"
 	SubUnmatched        Reason = "sub_unmatched"
 	AckMismatch         Reason = "ack_mismatch"

@@ -1,0 +1,12 @@
+{
+ "expect": "accept",
+ "input": {
+  "arg": 0,
+  "bound": {
+   "t": "total",
+   "v": 1000
+  }
+ },
+ "name": "total zero",
+ "op": "satisfies"
+}

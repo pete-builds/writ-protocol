@@ -1,0 +1,74 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {
+    "currency": "USD"
+   },
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "pay"
+      },
+      "amount": {
+       "t": "total",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDEwMw",
+     "prv": null,
+     "sig": "V4OQwqF3fTKUIDWJpuUXoI-vgYblx5mNtZXz9ueO-2lTfMSpZxbkktlQsbZAXrKBgcx6wLxHX24VMSykw7w4CA",
+     "typ": "writ",
+     "v": 1
+    },
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "pay"
+      },
+      "amount": {
+       "t": "total",
+       "v": 20000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+     "nnc": "bm9uY2UtMDAwMDAwMDEwNA",
+     "prv": "fKroHdQKVjFpAXYaiP0FlTRYuttrSFIIpqrLkiGQ5h4",
+     "sig": "cgi_TO5-tVeo8aQwGRR324cvSbKDaHSm9viKYUfrKyWNFpC705LU4JM84mPRnzDtczGpPuXv34Bg3Iw-XFCmBg",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "id": "bm9uY2UtMDAwMDAwMDEwNw",
+   "op": "pay",
+   "sig": "pZzNxeDrOpWDSWK4viAEAjI-QArI1Z_EHkyGBMzXwh_fc19B69chXfKevssLFGMx3SUy4bs5Y7e_seNjd9WcDA",
+   "typ": "call",
+   "v": 1
+  }
+ },
+ "name": "amount missing under a total",
+ "now": 1788400010,
+ "op": "verify_call",
+ "reason": "missing_arg"
+}

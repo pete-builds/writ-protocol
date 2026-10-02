@@ -1,0 +1,16 @@
+{
+ "expect": "reject",
+ "input": {
+  "child": {
+   "t": "total",
+   "v": "1000"
+  },
+  "parent": {
+   "t": "total",
+   "v": 1000
+  }
+ },
+ "name": "total value wrong json type",
+ "op": "narrows",
+ "reason": "malformed"
+}

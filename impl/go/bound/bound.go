@@ -1,9 +1,10 @@
-// Package bound implements the v0.1 bound registry: five constraint types with
+// Package bound implements the v0.1 bound registry: six constraint types with
 // fixed, mechanical comparison semantics. A bound is {"t": type, "v": value}.
 //
 //	type    value                    child narrows parent when         call value satisfies when
 //	max     integer                  child <= parent                   arg <= v
 //	count   integer                  child <= parent                   executions under leaf < v (executor state)
+//	total   integer                  child <= parent                   arg <= v; the sum of args <= v (executor state)
 //	prefix  string                   child starts with parent          arg starts with v
 //	set     array of string|integer  child is a subset of parent       arg is a member of v
 //	window  [lo, hi] integers        parent.lo <= child.lo, child.hi <= parent.hi   lo <= arg <= hi
@@ -63,7 +64,7 @@ func (e Elem) String() string {
 }
 
 // Types is the closed registry for protocol version 1.
-var Types = []string{"max", "count", "prefix", "set", "window"}
+var Types = []string{"max", "count", "total", "prefix", "set", "window"}
 
 const maxSafe = 1<<53 - 1
 
@@ -88,7 +89,7 @@ func Parse(v any) (Bound, error) {
 	}
 	b := Bound{T: t, Raw: val}
 	switch t {
-	case "max", "count":
+	case "max", "count", "total":
 		n, err := toInt(val)
 		if err != nil {
 			return Bound{}, shape("%s: %v", t, err)
@@ -148,7 +149,7 @@ func Narrows(child, parent Bound) error {
 		return fmt.Errorf("bound: type changed from %s to %s", parent.T, child.T)
 	}
 	switch child.T {
-	case "max", "count":
+	case "max", "count", "total":
 		if child.Int > parent.Int {
 			return fmt.Errorf("bound %s: child %d exceeds parent %d", child.T, child.Int, parent.Int)
 		}
@@ -174,16 +175,17 @@ func Narrows(child, parent Bound) error {
 
 // Satisfies reports whether a call argument value is permitted by the bound.
 // count is not checked here: it is consumed by executor state, not by an
-// argument value.
+// argument value. For total, only one call's argument is checked here; the
+// running sum is executor state too (spec 7 step 10).
 func Satisfies(b Bound, arg any) error {
 	switch b.T {
-	case "max":
+	case "max", "total":
 		n, err := toInt(arg)
 		if err != nil {
-			return fmt.Errorf("bound max: argument %w", err)
+			return fmt.Errorf("bound %s: argument %w", b.T, err)
 		}
 		if n < 0 || n > b.Int {
-			return fmt.Errorf("bound max: %d exceeds %d", n, b.Int)
+			return fmt.Errorf("bound %s: %d exceeds %d", b.T, n, b.Int)
 		}
 	case "count":
 		return errors.New("bound count: not satisfiable by an argument; consumed by the executor")
@@ -207,6 +209,10 @@ func Satisfies(b Bound, arg any) error {
 	}
 	return nil
 }
+
+// Int returns an argument's value as an integer under the rules a max bound
+// applies to it, for an executor that adds it to a total.
+func Int(v any) (int64, error) { return toInt(v) }
 
 func contains(set []Elem, e Elem) bool {
 	for _, s := range set {

@@ -23,12 +23,12 @@ Pass `-B`, so a stale `.pyc` can never stand in for the source. `tests/test_writ
 |---|---|
 | `writ/canon.py` | 1.1, 1.2: strict parse, RFC 8785 canonical form with the integer restriction |
 | `writ/keys.py` | 1.3, 1.4: did:key for Ed25519, base58btc, base64url, sign and verify |
-| `writ/bounds.py` | 3, 3.1: the five bound types, `narrows()`, `satisfies()` |
+| `writ/bounds.py` | 3, 3.1: the six bound types, `narrows()`, `satisfies()` |
 | `writ/objects.py` | 1.4 to 1.7, 2, 5, 6, 9.1: signing input, identity, limits, crit, section 6.1 |
 | `writ/chain.py` | 4: attenuation in the normative order, `hld`, `depth` |
 | `writ/verify.py` | 6.1, 2.1, 6.2, 7 steps 1 to 8, 8, 9.1: `verify_writ`, `verify_chain`, `verify_call`, `verify_tally`, `verify_revoke` |
 | `writ/issue.py` | builders: `issue_root`, `narrow`, `make_call`, `make_tally`, `make_revoke` |
-| `writ/stores.py` | 9: durable call, count, tally, and revoke stores, plus the 8.1 reversal state |
+| `writ/stores.py` | 9: durable call, count, total, tally, and revoke stores, plus the 8.1 reversal state |
 | `writ/executor.py` | 7, 7.1 to 7.5, 8, 9, 9.1, 9.2: the `Executor` |
 | `writ/cli.py` | `python3 -m writ.cli`, including the section 14 and 14.1 runners |
 
@@ -49,16 +49,16 @@ Answers take the shapes of spec sections 10 and 14.1. Your application, `my_app(
 
 How it behaves:
 
-- **Admission is atomic.** Steps 9 and 10 (replay and count) and the pending record of step 11 are admitted under one lock, shared with revocation. No two calls can pass replay with one id or spend one last use, and no revoke can slip between a call's step 7 and its admission.
+- **Admission is atomic.** Steps 9 and 10 (replay, count, and total) and the pending record of step 11 are admitted under one lock, shared with revocation. No two calls can pass replay with one id, spend one last use, or together take a `total` past its value, and no revoke can slip between a call's step 7 and its admission. Step 10 checks every `count` in the chain, then every `total`, and consumes nothing until all pass.
 - **Refusals are signed and forgotten.** A refusal at steps 3 to 10 is signed at the executor's clock and stored nowhere. A failure at steps 1 and 2 is the unsigned `{"error": ...}`.
 - **Standing operations check their own arguments when they run.** The checks of `sys/undo` and `sys/tallies` (sections 8.1 and 8.2) run when the operation is performed, after replay. A failure there is a stored outcome, so a retry of the same call gets it back.
 - **`sys/undo` reverses at most once** per target tally. It records that a reversal began before starting it, lets a failed reversal be retried, answers later undos with the successful reversal's body, and after a crash mid-reversal answers `unknown_outcome` for good. A second undo of a tally whose reversal is running waits for it.
 - **`sys/tallies` is scoped.** It names a writ the caller issued, or one below it.
 - **A revoke stops work in flight.** It answers with pending tallies for forward calls in flight under the revoked writ, in call identity order, and tells those operations to stop. Standing calls are neither stopped nor listed.
 - **Operations can delegate onward** (section 7.5). `op.issue()` narrows the held leaf into a child, `op.make_call()` signs a sub-call, and `op.receive_tally()` verifies a sub-tally under 6.2 and persists it before returning. Final and resolved tallies carry every issued writ in `wrt` and every sub-tally in `sub`. A valid revoke is passed to an optional `forward_revoke(revoke, holder)` for every holder of a writ issued under the revoked writ.
-- **Store failures never pass silently.** If the call or count store cannot be written at admission, the call is refused with `writ-py/store_write_failed` and nothing is recorded. If a final tally cannot be persisted, the answer is the pending tally the record resolves to after a restart.
+- **Store failures never pass silently.** If the call, count, or total store cannot be written at admission, the call is refused with `writ-py/store_write_failed` and nothing is recorded. If a final tally cannot be persisted, the answer is the pending tally the record resolves to after a restart.
 
-The stores live under one directory: `calls/`, `counts/`, `tallies/`, `revokes/`, and `reversals/`, with one fsynced, atomically renamed JSON file per record, named by the SHA-256 of its key. `Stores.prune(now)` applies the section 9 lifetimes; nothing prunes automatically.
+The stores live under one directory: `calls/`, `counts/`, `totals/`, `tallies/`, `revokes/`, and `reversals/`, with one fsynced, atomically renamed JSON file per record, named by the SHA-256 of its key. `Stores.prune(now)` applies the section 9 lifetimes; nothing prunes automatically.
 
 What it does not do:
 - the HTTP binding (section 10);

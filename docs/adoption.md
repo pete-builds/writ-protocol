@@ -12,7 +12,7 @@ Writ has five signed objects:
 - a `revoke`, which withdraws a writ;
 - an `ack`, an executor's signed record of when it recorded a revoke and which work under the writ it held then.
 
-Limits come from five bound types with fixed comparison rules (`max`, `count`, `prefix`, `set`, `window`). Keys are did:key, signatures are Ed25519 over canonical JSON (JCS), and no party ever has to be online for anyone to verify anything.
+Limits come from six bound types with fixed comparison rules (`max`, `count`, `total`, `prefix`, `set`, `window`). Keys are did:key, signatures are Ed25519 over canonical JSON (JCS), and no party ever has to be online for anyone to verify anything.
 
 Every adapter below inherits two rules from the core and must not weaken them:
 
@@ -209,7 +209,7 @@ None of these is a competitor. The way to keep it so is to say one accurate sent
 
 **OAuth, RFC 8693, RFC 9396.** A writ carries RAR-shaped details past the last authorization server, with a comparison rule so the resource can check narrowing offline. It does not grant access, and it does not replace the token that gets a client to an endpoint. Where an authorization server exists, its `authorization_details` are the natural root bounds, and a tally is the evidence RAR never defined.
 
-**UCAN.** Writ is a UCAN delegation profile for people who cannot ship IPLD, plus a receipt tree. UCAN already specifies a signed Receipt for an invocation, and ucanto runs it in production; an earlier version of this paragraph said UCAN had only a Promise, which was wrong (corrected 2026-09-29). What a tally adds is the tallies of the work delegated below it, embedded verbatim, with consumption accounted across them, and standing recovery and reversal by any upstream issuer. Writ should publish a mapping from a tally to a UCAN Receipt rather than present itself as a rival. The attenuation rule is the same idea, with five fixed comparisons instead of a policy language.
+**UCAN.** Writ is a UCAN delegation profile for people who cannot ship IPLD, plus a receipt tree. UCAN already specifies a signed Receipt for an invocation, and ucanto runs it in production; an earlier version of this paragraph said UCAN had only a Promise, which was wrong (corrected 2026-09-29). What a tally adds is the tallies of the work delegated below it, embedded verbatim, with consumption accounted across them, and standing recovery and reversal by any upstream issuer. Writ should publish a mapping from a tally to a UCAN Receipt rather than present itself as a rival. The attenuation rule is the same idea, with six fixed comparisons instead of a policy language.
 
 **Tenuo.** Tenuo ships task-scoped warrants that narrow at every hop, checked offline at the tool boundary, with MCP middleware and opt-in signed receipts of each authorization decision. For a team that needs only request-time narrowing inside its own deployment, Tenuo or gateway policy plus ordinary logs is the simpler choice. Writ's case rests on what comes back after the work: the receipt tree, the accounting across it, and recovery after expiry. Swapping test vectors with Tenuo is worth offering before claiming any difference.
 
@@ -221,7 +221,7 @@ None of these is a competitor. The way to keep it so is to say one accurate sent
 
 **The spec grows.** Every reviewer will find a bound type the registry lacks and a field the tally could use, and each addition is reasonable on its own. The guard is procedural and public. The mandatory core is capped at the architect's twenty-five pages, and nothing enters the mandatory set or the bound registry until two independent implementations agree and publish test vectors for it. Everything else is an extension with its own identifier, ignored by a verifier that does not know it. The exception is bound types, which are rejected when unknown, because a bound you cannot compare is a bound you cannot enforce.
 
-**The registry grows.** The registry has five types, and there will be pressure to add a sixth for globs, a seventh for regexes, an eighth for JSON Schema. None of those has a decidable subset relation, which means a verifier could not enforce narrowing with them. The guard is the admission test itself: a type enters only with a subset comparison that two implementations compute identically on the vector suite. A proposal without one is an extension field in `args`, not a bound.
+**The registry grows.** The registry has six types, the sixth, `total`, added on 2026-10-01 because a payment needs a running sum, and there will be pressure to add a seventh for globs, an eighth for regexes, a ninth for JSON Schema. None of those has a decidable subset relation, which means a verifier could not enforce narrowing with them. The guard is the admission test itself: a type enters only with a subset comparison that two implementations compute identically on the vector suite. A proposal without one is an extension field in `args`, not a bound.
 
 **A vendor forks it.** A large vendor adds a field, ships it to its customers, and the fork becomes the de facto spec. The guards:
 

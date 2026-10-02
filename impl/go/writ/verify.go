@@ -137,11 +137,12 @@ func verifyTree(W *Writ, chain []*Writ, T *Tally) error {
 	return nil
 }
 
-// maxNames returns the names of W's max bounds in canonical order.
+// maxNames returns the names of W's max and total bounds in canonical order:
+// the bounds a tally's used reports against (spec 6, 6.2 steps 7 and 10).
 func maxNames(W *Writ) []string {
 	var names []string
 	for name, b := range W.Bnd {
-		if b.T == "max" {
+		if b.T == "max" || b.T == "total" {
 			names = append(names, name)
 		}
 	}
