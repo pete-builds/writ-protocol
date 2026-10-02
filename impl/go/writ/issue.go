@@ -33,7 +33,7 @@ func normalize(obj wire.Object) (wire.Object, error) {
 // writ is a child of parent and MUST narrow it; Issue refuses otherwise, so an
 // implementation cannot accidentally sign a widened grant. bnd is the JSON
 // shape: name to {"t": type, "v": value}.
-func Issue(iss *keys.Identity, hld string, bnd map[string]any, exp int64, parent *Writ) (*Writ, error) {
+func Issue(iss keys.Signer, hld string, bnd map[string]any, exp int64, parent *Writ) (*Writ, error) {
 	obj := wire.Object{
 		"v": 1, "typ": "writ", "iss": iss.DID(), "hld": hld,
 		"bnd": bnd, "exp": exp, "nnc": Nonce(),
@@ -63,7 +63,7 @@ func Issue(iss *keys.Identity, hld string, bnd map[string]any, exp int64, parent
 }
 
 // NewCall builds and signs a call under chain.
-func NewCall(from *keys.Identity, chain []*Writ, op string, args map[string]any) (*Call, error) {
+func NewCall(from keys.Signer, chain []*Writ, op string, args map[string]any) (*Call, error) {
 	var raw []any
 	for _, w := range chain {
 		raw = append(raw, w.Raw)
@@ -103,7 +103,7 @@ type TallyInput struct {
 }
 
 // NewTally builds and signs a tally as the leaf holder.
-func NewTally(exe *keys.Identity, in TallyInput) (*Tally, any, error) {
+func NewTally(exe keys.Signer, in TallyInput) (*Tally, any, error) {
 	var errv any
 	if in.ErrCode != "" {
 		e := map[string]any{"code": in.ErrCode}
@@ -157,7 +157,7 @@ func NewTally(exe *keys.Identity, in TallyInput) (*Tally, any, error) {
 }
 
 // NewRevoke builds and signs a revoke of the leaf of chain (or "*" when chain is empty).
-func NewRevoke(iss *keys.Identity, chain []*Writ) (*Revoke, error) {
+func NewRevoke(iss keys.Signer, chain []*Writ) (*Revoke, error) {
 	raw := []any{}
 	target := "*"
 	for _, w := range chain {
