@@ -928,14 +928,28 @@ func (e *env) recover(out io.Writer, h *hookInput) error {
 		return err
 	}
 	defer g.close()
+	unknown := exec.Result{St: "failed", ErrCode: string(writ.UnknownOutcome)}
 	n := 0
 	if h == nil {
+		// Each call is resolved through Complete rather than the executor's
+		// Recover, which signs the tally but writes no audit entry, so the
+		// audit record would hold one entry fewer than the store.
 		stores, _ := filepath.Glob(filepath.Join(e.dir, "stores", "*.json"))
 		for _, s := range stores {
 			if err := g.use(strings.TrimSuffix(filepath.Base(s), ".json")); err != nil {
 				return err
 			}
-			n += g.e.Recover()
+			var open []wire.Object
+			for _, rec := range g.e.Store.Calls {
+				if rec.Tally == nil && rec.Call != nil {
+					open = append(open, rec.Call)
+				}
+			}
+			for _, obj := range open {
+				if rep, rej := g.e.Complete(context.Background(), obj, unknown); rep != nil && rej == nil {
+					n++
+				}
+			}
 		}
 	}
 	files, _ := filepath.Glob(filepath.Join(e.dir, "pending", "*.json"))
@@ -960,13 +974,13 @@ func (e *env) recover(out io.Writer, h *hookInput) error {
 		if err := g.use(id); err != nil {
 			return err
 		}
-		unfinished := g.isPending(obj)
-		rep, rej := g.e.Complete(context.Background(), obj, exec.Result{St: "failed", ErrCode: string(writ.UnknownOutcome)})
-		if rej != nil && rej.Code != writ.Reason(exec.NotAdmitted) {
-			fmt.Fprintf(out, "could not resolve %s: %v\n", filepath.Base(f), rej)
-			continue
-		}
-		if rep != nil && unfinished {
+		// A call already final, or never admitted, has nothing to resolve;
+		// Complete would only audit it a second time.
+		if g.isPending(obj) {
+			if _, rej := g.e.Complete(context.Background(), obj, unknown); rej != nil {
+				fmt.Fprintf(out, "could not resolve %s: %v\n", filepath.Base(f), rej)
+				continue
+			}
 			n++
 		}
 		_ = os.Remove(f)

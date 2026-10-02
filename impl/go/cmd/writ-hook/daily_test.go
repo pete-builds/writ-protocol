@@ -79,7 +79,8 @@ func TestSessionStartLeavesOtherSessionsCallsRunning(t *testing.T) {
 		t.Fatalf("session a resuming: %q, want its own call resolved", got)
 	}
 	if _, report := receipts(t, e); !strings.Contains(report, "2 receipt(s) verified, 0 invalid, 0 call(s) still unfinished") ||
-		!strings.Contains(report, "failed                   1") {
+		!strings.Contains(report, "failed                   1") || !strings.Contains(report, "2 entries, every link intact") ||
+		!strings.Contains(report, "0 refusal(s)") {
 		t.Fatalf("after session a resumed:\n%s", report)
 	}
 }

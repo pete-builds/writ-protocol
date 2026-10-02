@@ -209,7 +209,10 @@ func TestRecoverResolvesUnfinishedCalls(t *testing.T) {
 	if err := e.recover(&out, nil); err != nil || !strings.Contains(out.String(), "resolved 1") {
 		t.Fatalf("recover: %v %s", err, out.String())
 	}
-	if ok, report := receipts(t, e); !ok || !strings.Contains(report, "1 receipt(s) verified") {
+	// The resolution is audited like any other outcome, so the record and the
+	// store agree and no refusal is miscounted.
+	if ok, report := receipts(t, e); !ok || !strings.Contains(report, "1 receipt(s) verified") ||
+		!strings.Contains(report, "1 entries, every link intact") || !strings.Contains(report, "0 refusal(s)") {
 		t.Fatalf("after recover:\n%s", report)
 	}
 	post(t, e, "PostToolUse", "Read", "toolu_1") // a late report changes nothing
