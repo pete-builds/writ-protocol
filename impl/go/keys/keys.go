@@ -6,6 +6,7 @@
 package keys
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -57,6 +58,7 @@ func DIDFromPublicKey(pub ed25519.PublicKey) string {
 
 // PublicKeyFromDID parses an Ed25519 did:key. Any other DID method or key
 // type is rejected: v0.1 supports exactly one algorithm to avoid agility attacks.
+// So is a small-order key (spec 1.3), under which anyone can sign anything.
 func PublicKeyFromDID(did string) (ed25519.PublicKey, error) {
 	if !strings.HasPrefix(did, didKeyPrefix) {
 		return nil, errors.New("keys: not a did:key with base58btc encoding")
@@ -68,19 +70,60 @@ func PublicKeyFromDID(did string) (ed25519.PublicKey, error) {
 	if len(raw) != 2+ed25519.PublicKeySize || raw[0] != 0xed || raw[1] != 0x01 {
 		return nil, errors.New("keys: did:key is not an Ed25519 public key")
 	}
+	if isSmallOrder(raw[2:]) {
+		return nil, errors.New("keys: did:key is a small-order Ed25519 point")
+	}
 	return ed25519.PublicKey(raw[2:]), nil
 }
 
-// Verify checks a detached signature made by the holder of did over msg.
+// Verify checks a detached signature made by the holder of did over msg. A
+// signature whose R is a small-order encoding is refused (spec 1.4): only a
+// signer choosing r = 0 makes one, and libsodium rejects it where
+// crypto/ed25519 would accept it.
 func Verify(did string, msg, sig []byte) error {
 	pub, err := PublicKeyFromDID(did)
 	if err != nil {
 		return err
 	}
-	if len(sig) != ed25519.SignatureSize || !ed25519.Verify(pub, msg, sig) {
+	if len(sig) != ed25519.SignatureSize || isSmallOrder(sig[:32]) || !ed25519.Verify(pub, msg, sig) {
 		return errors.New("keys: signature verification failed")
 	}
 	return nil
+}
+
+// smallOrder holds, with the sign bit cleared, the seven y encodings of the
+// eight points of order 1, 2, 4, and 8: 0, 1, the two order-8 values, p-1, p,
+// and p+1 (spec 1.3). With either sign bit they are the fourteen 32-byte
+// strings crypto/ed25519 decodes to such a point, the non-canonical y >= p
+// and x = 0 with the sign bit set included. libsodium's has_small_order
+// table holds the same seven.
+var smallOrder = [7][32]byte{
+	{},
+	{0x01},
+	{0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0,
+		0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x05},
+	{0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f,
+		0x2a, 0x20, 0x53, 0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0x7a},
+	{0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+	{0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+	{0xee, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+}
+
+// isSmallOrder reports whether a 32-byte point encoding is one of the fourteen
+// that decode to a point of small order.
+func isSmallOrder(enc []byte) bool {
+	if len(enc) != 32 {
+		return false
+	}
+	for _, s := range smallOrder {
+		if bytes.Equal(enc[:31], s[:31]) && enc[31]&0x7f == s[31] {
+			return true
+		}
+	}
+	return false
 }
 
 const b58alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"

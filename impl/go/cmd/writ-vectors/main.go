@@ -4,9 +4,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -769,5 +772,96 @@ func main() {
 	tv("sub tallies over their parent used under a total", tw1, tkAB, must3(writ.NewTally(B, writ.TallyInput{Call: tkAB, Acc: now + 5, St: "ok", Used: usedOf(30000), Sub: []*writ.Tally{ttC, ttC2}, Wrt: []*writ.Writ{tw2}})).Raw, nil, writ.OutOfBounds)
 	tv("tally tree over the root total", tw1, tkAB, must3(writ.NewTally(B, writ.TallyInput{Call: tkAB, Acc: now + 5, St: "ok", Used: usedOf(60001), Sub: []*writ.Tally{ttC, ttC2}, Wrt: []*writ.Writ{tw2}})).Raw, nil, writ.OutOfBounds)
 
+	// Small-order keys (spec 1.3) and a small-order R (spec 1.4), added
+	// 2026-10-04 at the end so earlier vectors keep their numbers. Z is the
+	// identity point: R = identity, S = 0 verifies under it for every message,
+	// so each object below "signed" by Z carries that one constant, and every
+	// one of them verified before the rule. Nothing here can come from
+	// writ.Issue or NewCall, which now refuse Z, so the objects are patched.
+	Z := keys.DIDFromPublicKey(append([]byte{1}, make([]byte, 31)...))
+	forge := func(o wire.Object) wire.Object {
+		o = re(o, nil)
+		o["sig"] = wire.B64.EncodeToString(append([]byte{1}, make([]byte, 63)...))
+		return o
+	}
+	hash := func(o wire.Object) string { return must(wire.Hash(o)) }
+	rw("small order issuer with a forged signature", forge(resign(w1, nil, func(o wire.Object) { o["iss"] = Z })), writ.BadKey)
+	wAZ := resign(w1, A, func(o wire.Object) { o["hld"] = Z })
+	wZC := forge(resign(w2, nil, func(o wire.Object) { o["iss"] = Z; o["prv"] = hash(wAZ) }))
+	cv("small order holder delegates and calls with forged signatures", forge(rc(func(o wire.Object) {
+		o["from"] = Z
+		o["chain"] = []any{wAZ, wZC}
+	}, nil)), writ.BadKey)
+	// B delegates the charge to Z, and Z's tally, which anyone could have
+	// made, sits in B's tree with the writ B issued to Z in wrt.
+	wBZ := resign(w2, B, func(o wire.Object) { o["hld"] = Z })
+	kBZ := re(func() wire.Object { o := must(wire.Clone(kBC.Raw)); o["chain"] = []any{w1.Raw, wBZ}; return o }(), B)
+	tZ := forge(func() wire.Object {
+		o := must(wire.Clone(tC.Raw))
+		o["call"], o["writ"] = hash(kBZ), hash(wBZ)
+		return o
+	}())
+	tv("sub tally forged by a small order holder", w1, kAB, rt(func(o wire.Object) {
+		o["sub"] = []any{tZ}
+		o["wrt"] = []any{wBZ}
+	}, B), nil, writ.BadKey)
+	// Every encoding of every small-order point, as the holder of a writ A
+	// signs honestly: the canonical eight and the six non-canonical ones.
+	for _, so := range []struct{ name, hex string }{
+		{"order 4 y 0", "0000000000000000000000000000000000000000000000000000000000000000"},
+		{"order 4 y 0 sign bit set", "0000000000000000000000000000000000000000000000000000000000000080"},
+		{"order 4 y p", "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"},
+		{"order 4 y p sign bit set", "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+		{"identity", "0100000000000000000000000000000000000000000000000000000000000000"},
+		{"identity sign bit set", "0100000000000000000000000000000000000000000000000000000000000080"},
+		{"identity y p plus 1", "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"},
+		{"identity y p plus 1 sign bit set", "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+		{"first order 8", "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05"},
+		{"first order 8 sign bit set", "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85"},
+		{"second order 8", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"},
+		{"second order 8 sign bit set", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa"},
+		{"order 2", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"},
+		{"order 2 sign bit set", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+	} {
+		pub := must(hex.DecodeString(so.hex))
+		rw("small order holder "+so.name, resign(w1, A, func(o wire.Object) { o["hld"] = keys.DIDFromPublicKey(pub) }), writ.BadKey)
+	}
+	rw("small order key in an hld bound", resign(w1, A, func(o wire.Object) { o["bnd"].(map[string]any)["hld"] = b("set", []any{Z}) }), writ.BadKey)
+	// A writ A really signed, with r = 0, so R is the identity point and
+	// S = k*a mod L. crypto/ed25519 and OpenSSL accept it; libsodium does not.
+	rw("signature with a small order R", func() wire.Object {
+		o := must(wire.Clone(w1.Raw))
+		o["sig"] = wire.B64.EncodeToString(signWithIdentityR(A, must(wire.SigningInput(o))))
+		return o
+	}(), writ.BadSignature)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
+}
+
+// signWithIdentityR signs msg as id with the nonce r = 0, so R is the
+// identity point and S = k*a mod L, where a is id's clamped secret scalar and
+// k = SHA-512(R || A || msg) mod L. It satisfies the cofactorless equation
+// [S]B = R + [k]A, so only the small-order R rule of spec 1.4 refuses it.
+func signWithIdentityR(id *keys.Identity, msg []byte) []byte {
+	h := sha512.Sum512(id.Priv.Seed())
+	s := h[:32]
+	s[0] &= 248
+	s[31] &= 127
+	s[31] |= 64
+	a := new(big.Int).SetBytes(reversed(s))
+	L, _ := new(big.Int).SetString("7237005577332262213973186563042994240857116359379907606001950938285454250989", 10)
+	R := append([]byte{1}, make([]byte, 31)...)
+	kh := sha512.Sum512(append(append(append([]byte{}, R...), id.Pub...), msg...))
+	k := new(big.Int).Mod(new(big.Int).SetBytes(reversed(kh[:])), L)
+	S := make([]byte, 32)
+	new(big.Int).Mod(new(big.Int).Mul(k, a), L).FillBytes(S)
+	return append(R, reversed(S)...)
+}
+
+func reversed(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i := range b {
+		out[i] = b[len(b)-1-i]
+	}
+	return out
 }

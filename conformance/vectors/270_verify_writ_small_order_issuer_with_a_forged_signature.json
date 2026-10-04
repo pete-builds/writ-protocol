@@ -1,0 +1,51 @@
+{
+ "expect": "reject",
+ "input": {
+  "writ": {
+   "bnd": {
+    "act": {
+     "t": "prefix",
+     "v": "travel"
+    },
+    "amount": {
+     "t": "max",
+     "v": 60000
+    },
+    "currency": {
+     "t": "set",
+     "v": [
+      "USD"
+     ]
+    },
+    "date": {
+     "t": "window",
+     "v": [
+      20261015,
+      20261019
+     ]
+    },
+    "fare": {
+     "t": "set",
+     "v": [
+      "refundable"
+     ]
+    },
+    "uses": {
+     "t": "count",
+     "v": 1
+    }
+   },
+   "exp": 1788403600,
+   "hld": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+   "iss": "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj",
+   "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+   "prv": null,
+   "sig": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "typ": "writ",
+   "v": 1
+  }
+ },
+ "name": "small order issuer with a forged signature",
+ "op": "verify_writ",
+ "reason": "bad_key"
+}
