@@ -121,7 +121,7 @@ A writ is a written command that grants authority to act. The receipt is a **tal
 
 A review dated 2026-09-29 found that the tally-tree check summed consumption only one level down, so a complete receipt tree two levels deep could report twice the root's limit and still verify. The fix, its test vectors, and two executor fixes the same review prompted are in the specification's revision note for that day.
 
-What it does not have yet: anyone outside the project. Both implementations come from one author's tooling, so they show that the spec can be read the same way twice, not that a stranger can build from it. That stranger test is the next milestone (see the roadmap below).
+One implementation so far comes from outside the project, with caveats. Griffin Long's [writ-ts](https://github.com/griffinwork40/writ-ts), a TypeScript verifier and executor, was written by an AI coding agent he directed (a Claude model), from the spec and the corpus at commit 6552968 without reading either implementation here ([issue #22](https://github.com/pete-builds/writ-protocol/issues/22)). Its executor was built with every scenario's expected answer removed, and its first run passed 19 of 22 scenarios (136 of 140 steps); the three misses had one cause, in writ-ts. Its verifier passed all 213 vectors of that corpus, but it saw them while it was being built, so that count is not blind. And it no longer conforms: it predates the ack a revoke's answer now carries (spec section 9.4) and the `total` bound. The Go and Python implementations come from one author's tooling, so they show that the spec can be read the same way twice. An unaffiliated implementation that interoperates with the current text is still the next milestone (see the roadmap below).
 
 ## Try it
 
@@ -158,14 +158,14 @@ Writ's own contribution is a compact protocol you can run: offline delegation th
 - At-most-once execution as normative text (draft-schrock-action-evidence-boundary-07, APS-03).
 - A normative first-failure order with named refusal codes, which five implementations by one author must agree on (decionis `agent-safe.verifying-provider/1`).
 - A signed receipt from the executor naming the invocation it ran, with its result and the tasks it enqueues: UCAN's Receipt specification, run in production by Storacha's ucanto. Earlier versions of this README said UCAN had a promise and no receipt; that was wrong.
-- Task-scoped warrants that narrow at every hop, bound to the holder's key, checked offline against a tool and its arguments, with MCP middleware and opt-in signed receipts of why a call was allowed or denied (Tenuo, v0.2).
+- Task-scoped warrants that narrow at every hop, bound to the holder's key, checked offline against a tool and its arguments, with MCP middleware and opt-in signed receipts of why a call was allowed or denied (Tenuo, v0.3.2). Each receipt can carry the hash of the one its signer issued before, and since v0.3.2 `receipt::verify_chain` checks that a run of them has one signer and no gap, so an enforcement point cannot quietly drop a decision.
 
 **Combined differently in Writ:**
 
 - One comparison table serves both narrowing and the executor's check of a call's arguments.
 - The delegator signs the bounds in a bare JSON envelope, with did:key as the only identity and no JWT.
 - A `count` is used up against every writ in the chain at every executor, much as APS-03 reserves spend against every bounded ancestor at one boundary.
-- The receipt is signed by the executor of each hop, as a UCAN Receipt is, rather than by an enforcement boundary. Unlike a UCAN Receipt it names the exact writ and carries the child writs and sub-receipts verbatim. Unlike a Tenuo receipt it is signed after the work, about what was done.
+- The receipt is signed by the executor of each hop, as a UCAN Receipt is, rather than by an enforcement boundary. Unlike a UCAN Receipt it names the exact writ and carries the child writs and sub-receipts verbatim. Unlike a Tenuo receipt it is signed after the work, about what was done. A Tenuo receipt chain is one enforcement point's allow and deny decisions in the order it made them; a Writ receipt tree is the receipts of every agent a delegation reached, each signed by the agent that did the work and embedded in the receipt of the agent that delegated to it.
 
 **Distinctive as of 2026-09-29:**
 
@@ -190,7 +190,7 @@ That last claim is narrower than it was: others pin an order too, and neither Wr
 - **No key rotation.** A did:key cannot rotate.
 - **Root acceptance is policy.** Whether a chain's first issuer matters is a decision each executor makes outside the protocol.
 
-The compressed comparison below is as of 2026-09-04, with the UCAN row corrected and a Tenuo row added on 2026-09-29. The full matrix, with citations and 31 rows including the six 2026 agent-delegation sources, is in docs/research/02-prior-art.md sections 2 and 7, re-checked against newer drafts on 2026-09-28 in section 8.
+The compressed comparison below is as of 2026-09-04, with the UCAN row corrected and a Tenuo row added on 2026-09-29, and the Tenuo row updated to v0.3.2 on 2026-10-04. The full matrix, with citations and 31 rows including the six 2026 agent-delegation sources, is in docs/research/02-prior-art.md sections 2 and 7, re-checked against newer drafts on 2026-09-28 in section 8.
 
 | | Identity | Authority object | Holder can narrow offline | Hash-linked chain | Executor enforces at request time | Signed receipt per hop | Sub-tree of receipts | Replay and failure named | Recovery and reversal | No online party |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -198,7 +198,7 @@ The compressed comparison below is as of 2026-09-04, with the UCAN row corrected
 | A2A 1.0 | signed Agent Card | out of scope | no | no | no | no | no | task id | cancel only | card host |
 | OAuth 2.1 + RAR + token exchange | AS-issued | RAR details | no, AS re-issues | no | yes, one hop | no | no | no | no | AS required |
 | UCAN 1.0 | DID | delegation | yes | yes, CID | yes | yes, Receipt names the invocation (ucanto ships it) | no, `fx` enqueues tasks rather than embedding receipts | invocation CID | revocation only | no |
-| Tenuo v0.2 (2026) | public key | warrant | yes | yes, chain to a trusted root | yes, tool and arguments | opt-in, of the authorization decision, not the outcome | no | per-call proof of possession in a short window | local revocation state | no |
+| Tenuo v0.3.2 (2026-10) | public key | warrant | yes | yes, chain to a trusted root | yes, tool and arguments | opt-in, of the authorization decision, not the outcome | no; `prev_receipt_hash` chains one signer's receipts in time order, not the receipts of the agents a warrant reached | per-call proof of possession in a short window | local revocation state | no |
 | Biscuit 3 | root key | token blocks | yes | block chain | yes | no | no | no | no | no |
 | AIP / IBCT (2026-03) | JWT or Biscuit ids | capability token | yes, Biscuit blocks | yes | resource | self-reported completion block | no | no | no | no |
 | AgentROA draft (2026-04) | registry | ROA envelope | yes, ARA per hop | yes | gateway | gateway execution receipt | no | session cache | revocation via registry | policy engine, registry |
@@ -237,7 +237,7 @@ The skeptic's walk-through (docs/research/03-skeptic-opening.md) hit the same fi
 - **Bare Ed25519 over canonical JSON is a new envelope.** The IETF has JWS and COSE. Refusing them keeps the wire readable and closes every existing working group's door at once. The JWS profile is planned, not built.
 - **Executors need durable state.** `count`, replay protection, and reversal need stores that survive a restart. Stateless deployments will drop those features, and a Writ without `count` is closer to a signed RAR than to a capability.
 - **A made-up sub-executor cannot be detected, by design.** A holder can delegate to a key it controls and produce a perfect tally tree. The protocol tells the truth about keys, and nothing about who holds them.
-- **Two implementations, one author.** The Python verifier and executor show that one author's tooling read the spec the same way twice. The executor was written by an agent kept away from the Go code, which found real gaps, but it is not a stranger. Until an unaffiliated implementer builds from the spec and interoperates, every claim above is a claim.
+- **Two implementations, one author; one outside, not current.** The Python verifier and executor show that one author's tooling read the spec the same way twice. The executor was written by an agent kept away from the Go code, which found real gaps, but it is not a stranger. writ-ts comes from outside the project, but an AI agent wrote it, possibly from the same model family as this project's tooling; its verifier saw the vectors it passes; its executor's blind first run passed 19 of 22 scenarios (136 of 140 steps); and it no longer conforms, since it does not sign the ack a revoke's answer now carries. Until an unaffiliated implementer builds from the current spec and interoperates, every claim above is a claim.
 - **The neighbors are close and better connected.**
   - draft-asor-wimse-agent-delegation-chain has chains narrowed offline and linked by hash, inside the JWT and DPoP ecosystem the IETF already runs.
   - draft-hamr has a comparator registry, and AgentROA has receipts.
@@ -312,7 +312,7 @@ The cross-runs, which CI repeats on every push:
 |---|---|
 | Python verifier on the 288 Go-generated vectors | 288 passed, 0 failed |
 | Go verifier on the 28 Python-generated vectors | 28 passed, 0 failed |
-| Go and Python executors on the 24 scenarios | 24 passed, 0 failed, each |
+| Go and Python executors on the 25 scenarios | 25 passed, 0 failed, each |
 | Python verifier on 20,000 inputs the Go verifier judged (fuzz, seed 1) | 20,000 passed, 0 failed |
 
 So the consistency claim rests on two implementations in two languages, written by one author from the same text without the second consulting the first. They agree on all 288 vectors, including the reason code for every rejection, on 25 executor scenarios byte for byte, and on 80,000 fuzzed inputs, and CI fails on any divergence. It is not yet a claim that unaffiliated implementers interoperate.
