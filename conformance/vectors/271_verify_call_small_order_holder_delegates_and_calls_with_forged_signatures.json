@@ -1,0 +1,110 @@
+{
+ "expect": "reject",
+ "input": {
+  "call": {
+   "args": {
+    "amount": 58900,
+    "currency": "USD",
+    "date": 20261015,
+    "fare": "refundable"
+   },
+   "chain": [
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel"
+      },
+      "amount": {
+       "t": "max",
+       "v": 60000
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261019
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788403600,
+     "hld": "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj",
+     "iss": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMQ",
+     "prv": null,
+     "sig": "i-wSi9HucWr6AY2uPlPqQPNFfrXzDBeBwwUypDCJj1G94q7DwZ5N6V73HUdh4lfFaQ8KK82wCVNpPBmI-sIgBg",
+     "typ": "writ",
+     "v": 1
+    },
+    {
+     "bnd": {
+      "act": {
+       "t": "prefix",
+       "v": "travel/charge"
+      },
+      "amount": {
+       "t": "max",
+       "v": 58900
+      },
+      "currency": {
+       "t": "set",
+       "v": [
+        "USD"
+       ]
+      },
+      "date": {
+       "t": "window",
+       "v": [
+        20261015,
+        20261015
+       ]
+      },
+      "fare": {
+       "t": "set",
+       "v": [
+        "refundable"
+       ]
+      },
+      "uses": {
+       "t": "count",
+       "v": 1
+      }
+     },
+     "exp": 1788401800,
+     "hld": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+     "iss": "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj",
+     "nnc": "bm9uY2UtMDAwMDAwMDAwMg",
+     "prv": "TYl7Kry0cw0LtF5SE3RKs12ZFAe0pRxcRU_B8scSAeg",
+     "sig": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "typ": "writ",
+     "v": 1
+    }
+   ],
+   "from": "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj",
+   "id": "bm9uY2UtMDAwMDAwMDA1NA",
+   "op": "travel/charge",
+   "sig": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "typ": "call",
+   "v": 1
+  }
+ },
+ "name": "small order holder delegates and calls with forged signatures",
+ "op": "verify_call",
+ "reason": "bad_key"
+}

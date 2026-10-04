@@ -2,7 +2,10 @@ package keys
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/sha512"
 	"encoding/hex"
+	"math/big"
 	"strings"
 	"testing"
 )
@@ -100,5 +103,103 @@ func TestRejectsOtherDIDs(t *testing.T) {
 		if _, err := PublicKeyFromDID(d); err == nil {
 			t.Errorf("%q: expected rejection", d)
 		}
+	}
+}
+
+// The fourteen encodings of the eight small-order points (spec 1.3), written
+// out in full rather than derived from the masked table in keys.go, so a slip
+// in that table or in the masking fails here. Derived from the curve equation
+// with a decoder that, like crypto/ed25519 and OpenSSL, accepts y >= p and x = 0
+// with the sign bit set.
+var smallOrderEncodings = []string{
+	"0000000000000000000000000000000000000000000000000000000000000000", // order 4
+	"0000000000000000000000000000000000000000000000000000000000000080", // order 4
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // order 4, y = p
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // order 4, y = p
+	"0100000000000000000000000000000000000000000000000000000000000000", // identity
+	"0100000000000000000000000000000000000000000000000000000000000080", // identity, x = -0
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // identity, y = p+1
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // identity, y = p+1, x = -0
+	"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", // order 8
+	"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85", // order 8
+	"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", // order 8
+	"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", // order 8
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // order 2
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // order 2, x = -0
+}
+
+// forgedSig is R = identity, S = 0: it verifies under the identity key for
+// every message, since [0]B = identity + [k]identity for any k.
+var forgedSig = append([]byte{1}, make([]byte, 63)...)
+
+func TestSmallOrderKeysRejected(t *testing.T) {
+	for _, h := range smallOrderEncodings {
+		pub, _ := hex.DecodeString(h)
+		did := DIDFromPublicKey(pub)
+		if _, err := PublicKeyFromDID(did); err == nil {
+			t.Errorf("%s (%s): small-order key accepted", h, did)
+		}
+	}
+	// The did:key from the 2026-09-30 report, accepted on 85a17fc.
+	const identity = "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj"
+	for _, msg := range []string{"writ/1\x00{}", "tally/1\x00anything at all"} {
+		if err := Verify(identity, []byte(msg), forgedSig); err == nil {
+			t.Errorf("forged signature verified under the identity key over %q", msg)
+		}
+	}
+	// Control: the same check leaves ordinary keys and signatures alone.
+	id, _ := FromSeed(bytes.Repeat([]byte{7}, 32))
+	if _, err := PublicKeyFromDID(id.DID()); err != nil {
+		t.Fatalf("ordinary key refused: %v", err)
+	}
+	if err := Verify(id.DID(), []byte("m"), id.Sign([]byte("m"))); err != nil {
+		t.Fatalf("ordinary signature refused: %v", err)
+	}
+	if err := Verify(id.DID(), []byte("m"), forgedSig); err == nil {
+		t.Fatal("forged signature verified under an ordinary key")
+	}
+	// A near miss of the identity encoding is not small order.
+	near, _ := hex.DecodeString("0100000000000000000000000000000000000000000000000000000000000001")
+	if _, err := PublicKeyFromDID(DIDFromPublicKey(near)); err != nil {
+		t.Fatalf("near miss of the identity refused: %v", err)
+	}
+}
+
+// signWithIdentityR signs msg as id with r = 0, so R is the identity point:
+// S = k*a mod L. A cofactorless verify accepts it, since [S]B = [k]A = R + [k]A.
+func signWithIdentityR(id *Identity, msg []byte) []byte {
+	h := sha512.Sum512(id.Priv.Seed())
+	s := h[:32]
+	s[0] &= 248
+	s[31] &= 127
+	s[31] |= 64
+	a := new(big.Int).SetBytes(reversed(s))
+	L, _ := new(big.Int).SetString("7237005577332262213973186563042994240857116359379907606001950938285454250989", 10)
+	R := append([]byte{1}, make([]byte, 31)...)
+	kh := sha512.Sum512(append(append(append([]byte{}, R...), id.Pub...), msg...))
+	k := new(big.Int).Mod(new(big.Int).SetBytes(reversed(kh[:])), L)
+	S := make([]byte, 32)
+	new(big.Int).Mod(new(big.Int).Mul(k, a), L).FillBytes(S)
+	return append(R, reversed(S)...)
+}
+
+func reversed(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i := range b {
+		out[i] = b[len(b)-1-i]
+	}
+	return out
+}
+
+func TestSmallOrderRRejected(t *testing.T) {
+	id, _ := FromSeed(bytes.Repeat([]byte{7}, 32))
+	msg := []byte("tally/1\x00crafted by the key holder")
+	sig := signWithIdentityR(id, msg)
+	// Control: the signature is genuine under the cofactorless equation.
+	if !ed25519.Verify(id.Pub, msg, sig) {
+		t.Fatal("crafted signature does not verify under crypto/ed25519; the test proves nothing")
+	}
+	if err := Verify(id.DID(), msg, sig); err == nil {
+		t.Fatal("signature with a small-order R accepted")
 	}
 }

@@ -126,6 +126,8 @@ def decode_did(did):
     pk = raw[2:]
     if encode_did(pk) != did:
         raise WritError("bad_key", "did:key is not canonical")
+    if is_small_order(pk):
+        raise WritError("bad_key", "did:key is a small-order Ed25519 point")
     return pk
 
 
@@ -135,6 +137,29 @@ def is_did(did):
         return True
     except WritError:
         return False
+
+
+# Section 1.3: the seven y encodings, sign bit cleared, of the eight points of
+# order 1, 2, 4, and 8 (0, 1, the two order-8 values, p-1, p, p+1). With either
+# sign bit they are the fourteen 32-byte strings that decode to such a point
+# when y >= p and a negative zero are not refused, which OpenSSL does not.
+_SMALL_ORDER = tuple(bytes.fromhex(h) for h in (
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+))
+
+
+def is_small_order(enc):
+    """True when 32 bytes encode a point of small order, under any encoding."""
+    if len(enc) != 32:
+        return False
+    masked = enc[:31] + bytes([enc[31] & 0x7F])
+    return masked in _SMALL_ORDER
 
 
 # ------------------------------------------------------------- key pairs
@@ -184,6 +209,8 @@ def verify(did, message, signature):
         raise WritError("bad_signature", str(e)) from None
     if len(raw) != 64:
         raise WritError("bad_signature", "signature is not 64 bytes")
+    if is_small_order(raw[:32]):
+        raise WritError("bad_signature", "signature R is a small-order point (section 1.4)")
     try:
         ed25519.Ed25519PublicKey.from_public_bytes(pk).verify(raw, message)
     except InvalidSignature:
