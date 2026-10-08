@@ -58,7 +58,7 @@ Register the hooks in the project's `.claude/settings.json`. The empty matcher c
 {
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "writ-hook recover"}]}],
-    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook pre"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook pre || exit 2"}]}],
     "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook post"}]}],
     "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook post"}]}]
   }
@@ -79,7 +79,7 @@ A grant lasts at most a day, so a setup meant to stay on renews its own: run the
       {"type": "command", "command": "writ-hook recover >/dev/null"}]}],
     "UserPromptSubmit": [{"hooks": [
       {"type": "command", "command": "writ-hook grant -name session -uses 10000 -ttl 24h -renew-before 22h >/dev/null"}]}],
-    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook pre"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "writ-hook pre || exit 2"}]}],
     "PostToolUse": [{"matcher": "", "hooks": [
       {"type": "command", "command": "writ-hook post"},
       {"type": "command", "command": "writ-hook grant -name session -uses 10000 -ttl 24h -renew-before 22h >/dev/null"}]}],
@@ -105,7 +105,7 @@ writ-hook serve -socket /run/writ/gate.sock
 The hook commands find it through `WRIT_HOOK_SOCKET`:
 
 ```json
-{"type": "command", "command": "WRIT_HOOK_SOCKET=/run/writ/gate.sock writ-hook pre"}
+{"type": "command", "command": "WRIT_HOOK_SOCKET=/run/writ/gate.sock writ-hook pre || exit 2"}
 ```
 
 Over the socket the gate answers `pre`, `post`, `recover`, and `receipts`, and nothing else. It never grants: granting is a local command run as the gate's own user, so a model with a shell and the socket still cannot grant itself. If the gate cannot be reached, `pre` blocks the call.
@@ -116,7 +116,7 @@ Where the gate runs is the choice that matters. The code is the same in each cas
 |---|---|---|
 | **A second OS user on the same machine** | the operating system: your user cannot read the gate user's files, and granting needs `sudo -u` | no; the socket and the gate are tested, but under one user |
 | **The same user, with Claude Code's own sandbox denying its tools the gate's directory** | the sandbox | no |
-| **Another machine**, reached over the network | the keys are never on the machine the tools run on | no; this would put an mTLS listener (docs/directories.md) in front of the gate, which is not built |
+| **Another machine**, reached over the network | the keys are never on the machine the tools run on | yes, on loopback: `serve -listen` with mutual TLS, run with Claude Code on 2026-10-02 ([central-gate.md](central-gate.md)) |
 
 On Linux or NixOS, the second-user setup is:
 
@@ -128,7 +128,26 @@ sudo -u writ writ-hook grant -name files -tools Read,Edit,Write -under /home/you
 sudo -u writ writ-hook serve -socket /run/writ/gate.sock               # or as a systemd service with User=writ
 ```
 
-On macOS the steps are the same with a standard account made for the gate and a socket under `/tmp`; they have not been run.
+On macOS, [scripts/writ-gate-macos.sh](../scripts/writ-gate-macos.sh) does the same with a hidden account, `_writ`, that has no shell and no password. It installs the binary root-owned at `/usr/local/bin/writ-hook`, so your user cannot swap the program the gate runs, makes fresh keys and a grant as `_writ` under `/var/db/writ/home` (mode 700), and starts two LaunchDaemons as `_writ`: the gate on `/var/db/writ/run/gate.sock`, and a renewal that runs the standing `grant` every 15 minutes, since over the socket nobody else can:
+
+```
+sudo bash scripts/writ-gate-macos.sh install ./writ-hook
+```
+
+The hooks then carry each event to the socket, and the grant hooks go away:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook recover >/dev/null"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook pre || exit 2"}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook post"}]}],
+    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook post"}]}]
+  }
+}
+```
+
+Moving from a gate that ran in place, `retire` moves the old `WRIT_HOME`'s three seed files into a root-only folder once the hooks point at the socket. Its receipts still verify, because `receipts` needs only `root.did`, but its keys can no longer sign. `uninstall` removes the daemons, the account, and the binary, and leaves the state.
 
 What the socket still allows: any local process can send `pre` and `post` events, so a model with a shell could report a false outcome for one of its own calls in flight, or spend its own grant's `uses`. It cannot widen a grant, read a key, or sign a receipt for work the gate did not admit.
 
@@ -162,5 +181,5 @@ On 2026-10-01 the standing setup above was run with two headless Claude Code ses
 - **Paths are checked as text.** Inputs with `.` or `..` segments are refused, but a symlink inside the granted folder can still point outside it.
 - **A revoke does not stop a tool already running**; it refuses every later call.
 - **A call Claude Code never reports back**, because you rejected it at the permission prompt or the session ended mid-tool, stays unfinished until that session starts again, or for 24 hours, and is then resolved to `unknown_outcome`. A call you declined at the permission prompt reads the same as one cut off mid-run: the gate admitted it, and Claude Code never said what happened.
-- **It fails closed before the tool, not after.** If the gate cannot check a call, the call is blocked. If signing a receipt fails after the tool ran, the call stays unfinished and `recover` resolves it.
+- **It fails closed before the tool, not after, given `|| exit 2`.** Claude Code runs the tool when a `PreToolUse` hook exits with any code but 2 and prints no decision, or times out. `writ-hook pre` turns every error it can catch, an unreachable gate included, into a deny, but a missing binary exits 127 and unreadable input exits 1, and either would let the call through; `|| exit 2` blocks those too. Tested on 2026-10-02: with the hook pointing at a missing binary, a Bash `touch` ran; with `|| exit 2`, it was blocked. A hook still running at its timeout (600 seconds unless set) lets the call through, which the gate's 30-second socket deadline keeps from happening. If signing a receipt fails after the tool ran, the call stays unfinished and `recover` resolves it.
 - **macOS and Linux only**, because it serializes hook processes with `flock`.
