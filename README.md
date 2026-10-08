@@ -8,6 +8,8 @@ In one line, next to the protocols it sits beside: TCP/IP moves packets between 
 
 ## Three ways in
 
+**Or start with no install at all:** the [playground](https://pete-builds.github.io/writ-protocol/) runs the travel example below in your browser. You set A's limit and try to cheat: widen a slip, overcharge, send a charge twice, fake a receipt, or lose B and undo through C. Every answer comes from the Go reference implementation compiled to WebAssembly (`impl/go/cmd/writ-playground`), with fresh keys each run.
+
 You need Go 1.25 or newer, or none at all for the programs themselves: every release on the repository's Releases page carries them built for Linux and macOS, amd64 and arm64, with SHA-256 checksums and, from the next release on, SLSA build provenance. The Python implementation also needs Python 3.12 or newer and `pip install "cryptography>=42,<47"`.
 
 1. **Watch it run, about ten minutes.**
