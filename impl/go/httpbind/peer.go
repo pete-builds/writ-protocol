@@ -1,10 +1,13 @@
 package httpbind
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"strings"
+
+	"writproto/exec"
 )
 
 // ClientCert reads the peer from a verified mTLS client certificate: its one
@@ -33,6 +36,21 @@ func ClientCert(r *http.Request) (peer string, keys []string, ok bool) {
 		return "", nil, false
 	}
 	return peer, keys, true
+}
+
+// MTLSContext carries the peer of a request served over mTLS into ctx, by the
+// rules of spec 7.6: the verified client certificate's one URI that is not a
+// did:key is the peer, and its did:key URIs are keys the CA vouches it speaks
+// for. A request without a verified certificate naming exactly one peer
+// carries an unidentified peer, so the executor refuses every call over it
+// before replay (exec.WithUnidentifiedPeer). It returns the peer, or for an
+// unidentified one its audit label, and whether the peer was identified.
+func MTLSContext(ctx context.Context, r *http.Request) (context.Context, string, bool) {
+	if p, keys, ok := ClientCert(r); ok {
+		return exec.WithAttestedKeys(exec.WithPeer(ctx, p), keys), p, true
+	}
+	label := unidentifiedLabel(r)
+	return exec.WithUnidentifiedPeer(ctx, label), label, false
 }
 
 // unidentifiedLabel names, for the audit record, a connection that mTLS

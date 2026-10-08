@@ -28,7 +28,7 @@ func startGate(t *testing.T, e *env) string {
 func remotePre(t *testing.T, socket, tool, id string, in map[string]any) string {
 	t.Helper()
 	var out bytes.Buffer
-	if _, err := remote(socket, "pre", strings.NewReader(input("PreToolUse", tool, id, in)), &out); err != nil {
+	if _, err := remote(socket, viaSocket(socket), "pre", strings.NewReader(input("PreToolUse", tool, id, in)), &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.Len() == 0 {
@@ -54,14 +54,14 @@ func TestGateOverSocket(t *testing.T) {
 		t.Fatalf("an allowed Read through the gate was denied: %s", r)
 	}
 	var out bytes.Buffer
-	if _, err := remote(socket, "post", strings.NewReader(input("PostToolUse", "Read", "toolu_1", nil)), &out); err != nil || out.Len() != 0 {
+	if _, err := remote(socket, viaSocket(socket), "post", strings.NewReader(input("PostToolUse", "Read", "toolu_1", nil)), &out); err != nil || out.Len() != 0 {
 		t.Fatalf("post through the gate: %v %q", err, out.String())
 	}
 	if r := remotePre(t, socket, "Read", "toolu_2", map[string]any{"file_path": "/etc/passwd"}); !strings.HasPrefix(r, "Writ: out_of_bounds") {
 		t.Fatalf("a Read outside the folder through the gate: %q", r)
 	}
 	out.Reset()
-	ok, err := remote(socket, "receipts", nil, &out)
+	ok, err := remote(socket, viaSocket(socket), "receipts", nil, &out)
 	if err != nil || !ok || !strings.Contains(out.String(), "1 receipt(s) verified, 0 invalid") {
 		t.Fatalf("receipts through the gate: %v %v\n%s", ok, err, out.String())
 	}
@@ -80,7 +80,7 @@ func TestUnreachableGateFailsClosed(t *testing.T) {
 		t.Fatalf("pre with no gate: %q", r)
 	}
 	var out bytes.Buffer
-	if _, err := remote(socket, "post", strings.NewReader(input("PostToolUse", "Read", "toolu_1", nil)), &out); err == nil {
+	if _, err := remote(socket, viaSocket(socket), "post", strings.NewReader(input("PostToolUse", "Read", "toolu_1", nil)), &out); err == nil {
 		t.Fatal("post with no gate reported success")
 	}
 }
