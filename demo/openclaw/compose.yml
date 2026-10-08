@@ -1,0 +1,39 @@
+# A, B, and C on one host, each with only its own key, talking over private
+# networks. Only B reaches the internet, for the model. run.sh drives it.
+name: writ-openclaw-demo
+
+x-build: &build
+  context: ../..
+  dockerfile: demo/openclaw/Dockerfile
+
+services:
+  a:
+    build: { <<: *build, target: tools }
+    command: ["sleep", "infinity"]
+    volumes: ["./state/a:/home/agent/a"]
+    networks: [ab, ac]
+
+  b:
+    build: { <<: *build, target: openclaw }
+    command:
+      - sh
+      - -c
+      - exec writ-openclaw -seed-file /keys/b.seed -addr 0.0.0.0 -port 8081 -accept "$$(cat /keys/a.did)" -downstream http://c:8082 -model "$${WRIT_MODEL:-anthropic/claude-haiku-5-5}"
+    env_file: ["${WRIT_ENV_FILE:-.env}"]
+    volumes: ["./state/b:/keys:ro"]
+    networks: [ab, bc, egress]
+
+  c:
+    build: { <<: *build, target: tools }
+    command:
+      - sh
+      - -c
+      - exec writ-agent -role payment -addr 0.0.0.0 -port 8082 -seed "$$(cat /keys/c.seed)" -accept "$$(cat /keys/a.did)"
+    volumes: ["./state/c:/keys:ro"]
+    networks: [bc, ac]
+
+networks:
+  ab: { internal: true }
+  bc: { internal: true }
+  ac: { internal: true }
+  egress: {}
