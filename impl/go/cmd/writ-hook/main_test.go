@@ -260,3 +260,64 @@ func TestNamedGrantsPerTool(t *testing.T) {
 		t.Fatalf("receipts:\n%s", report)
 	}
 }
+
+// approveCmd runs writ-hook approve for id and returns what it printed.
+func approveCmd(t *testing.T, e *env, id string, yes bool) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := e.approve(&out, id, yes, 30*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+func TestApprovalRunsTheRefusedCallOnceAndLeavesTheGrantAlone(t *testing.T) {
+	proj := "/work/project"
+	e := setup(t, []string{"Edit"}, proj, 0)
+	outside := map[string]any{"file_path": "/work/notes.md", "old_string": "a", "new_string": "b"}
+
+	r := pre(t, e, "Edit", "toolu_1", outside)
+	if !strings.HasPrefix(r, "Writ: out_of_bounds") || !strings.Contains(r, "`writ-hook approve toolu_1`") {
+		t.Fatalf("refusal does not name the approve command: %q", r)
+	}
+	if shown := approveCmd(t, e, "toolu_1", false); !strings.Contains(shown, "/work/notes.md") || !strings.Contains(shown, "nothing signed") {
+		t.Fatalf("approve without -yes should show the call and sign nothing:\n%s", shown)
+	}
+	if r := pre(t, e, "Edit", "toolu_2", outside); !strings.HasPrefix(r, "Writ: out_of_bounds") {
+		t.Fatalf("the call ran before it was approved: %q", r)
+	}
+	if out := approveCmd(t, e, "toolu_1", true); !strings.Contains(out, "approved") {
+		t.Fatalf("approve -yes: %s", out)
+	}
+	other := map[string]any{"file_path": "/work/other.md", "old_string": "a", "new_string": "b"}
+	if r := pre(t, e, "Edit", "toolu_3", other); !strings.HasPrefix(r, "Writ: out_of_bounds") {
+		t.Fatalf("the approval admitted a call it does not name: %q", r)
+	}
+	if r := pre(t, e, "Edit", "toolu_4", outside); r != "" {
+		t.Fatalf("the approved call was refused: %q", r)
+	}
+	post(t, e, "PostToolUse", "Edit", "toolu_4")
+	if r := pre(t, e, "Edit", "toolu_5", outside); !strings.HasPrefix(r, "Writ: out_of_bounds") {
+		t.Fatalf("the approved call ran a second time: %q", r)
+	}
+	inside := map[string]any{"file_path": proj + "/app.go", "old_string": "a", "new_string": "b"}
+	if r := pre(t, e, "Edit", "toolu_6", inside); r != "" {
+		t.Fatalf("a call the grant allows was refused after an approval: %q", r)
+	}
+	post(t, e, "PostToolUse", "Edit", "toolu_6")
+	ok, report := receipts(t, e)
+	if !ok || !strings.Contains(report, "2 receipt(s) verified, 0 invalid") {
+		t.Fatalf("receipts:\n%s", report)
+	}
+}
+
+func TestApprovalExpires(t *testing.T) {
+	e := setup(t, []string{"Edit"}, "/work/project", 0)
+	outside := map[string]any{"file_path": "/work/notes.md", "old_string": "a", "new_string": "b"}
+	pre(t, e, "Edit", "toolu_1", outside)
+	approveCmd(t, e, "toolu_1", true)
+	e.now = func() int64 { return t0 + 31*60 }
+	if r := pre(t, e, "Edit", "toolu_2", outside); !strings.HasPrefix(r, "Writ: out_of_bounds") {
+		t.Fatalf("an expired approval admitted the call: %q", r)
+	}
+}
