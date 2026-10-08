@@ -279,6 +279,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 |---|---|---|
 | `jcs` | RFC 8785 canonical JSON, integers only, strict (duplicate keys and lone surrogates rejected), nesting limit of 64 levels | vectors from RFC 8785, nesting at 64 and 65 |
 | `keys` | did:key Ed25519, base58btc | W3C spec vector, Bitcoin base58 vectors |
+| `keys/vault` | a `keys.Signer` whose Ed25519 key stays in HashiCorp Vault transit: each signature is made by Vault and checked against the key before use; `writ-hook` uses it for the grantor and the gate ([docs/vault.md](docs/vault.md)) | 5 tests, one against a real Vault server, which the `vault` CI job runs; wrong-key and wrong-type keys, rotated versions, and Vault errors refused |
 | `bound` | the six bound types, narrows and satisfies | 40 comparisons in both directions; `total` through the corpus |
 | `wire` | the signed-object envelope, type-prefixed signing input, identity hash | tamper, reorder, padding |
 | `writ` | objects, chain attenuation, tally-tree verification, issuance, and approval as delegation (`ApprovalPoint`, `Approve`, [docs/approval.md](docs/approval.md)) | happy path plus 45 reason-coded rejections; approval pinned to one call, bounded by the approver, and its two ceilings |
@@ -292,7 +293,7 @@ The specification is docs/spec/writ-v0.1.md. The threat model, docs/design/05-th
 | `cmd/writ-gate` | a reverse proxy that enforces Writ in front of an API that has never heard of it ([docs/writ-gate.md](docs/writ-gate.md)) | 8 tests: end to end against a fake orders API, including undo, a request contract checked against an API that decodes like `encoding/json` (case aliases, duplicates, trailing JSON, unbound members, query strings, path parameters, method overrides), and the API credential held by the gate alone |
 | `cmd/writ-mcp-proxy` | the MCP client side for any client: fronts a real MCP server, signs each tool call under a grant, and passes a result on only if it verifies, rebuilt from what its tally authenticates; reads both sides at once, so the server can ask the client something mid-call; optionally lists and calls only pinned tool definitions and refuses arguments the grant does not bound | 17 tests, including forged results and bounded tests for server requests mid-call, interleaving, cancellation, and either side leaving; run with Claude Code as the client |
 | `a2abind` | Writ over A2A: the call in a message part or metadata, the tally as the task's last artifact | 1 test, message level |
-| `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 8 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, and the gate running as its own process behind a socket; also run against Claude Code itself |
+| `cmd/writ-hook` | the Claude Code adapter: a grant checked before every tool call, a signed receipt after it, and an audit record ([docs/claude-code.md](docs/claude-code.md)) | 18 tests, including parallel hook processes, a tampered receipt, failing closed, named grants per tool, the gate running as its own process behind a socket, and the grantor and gate signing through Vault; also run against Claude Code itself |
 | `cmd/writ-agent` | executor binary with booking and payment roles | |
 | `cmd/writ-demo` | agent A | |
 | `cmd/writ-vectors` | regenerates the vector corpus from fixed seeds | |
@@ -369,6 +370,7 @@ docs/approval.md                   a call above an agent's limits, approved as a
 docs/x402.md                       Writ as the authorization layer in front of an x402 signer: the field mapping
 docs/where-writ-stops.md           what bounds cannot stop, and how Writ sits beside injection defenses
 docs/aims-audit-mapping.md         a receipt tree mapped to the WIMSE AIMS audit requirements, gaps included
+docs/vault.md                      signing through HashiCorp Vault transit, so the private key never leaves Vault
 docs/ietf/                         the spec as an Internet-Draft, generated; not submitted
 impl/go/                           reference implementation and CLI
 impl/python/                       second implementation (verifier and executor), from the spec text

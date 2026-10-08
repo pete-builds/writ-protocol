@@ -9,6 +9,14 @@
 //	root.seed, root.did    the grantor, who signs grants
 //	claude/agent.seed      signs each call on the session's behalf
 //	claude/gate.seed       enforces the grant and signs every receipt
+//
+// The grantor and the gate can sign through HashiCorp Vault's transit engine
+// instead, so their private keys never leave Vault and there is no seed file
+// to steal: WRIT_VAULT_ROOT_KEY and WRIT_VAULT_GATE_KEY name the Ed25519
+// transit keys, VAULT_ADDR and VAULT_NAMESPACE where Vault is, VAULT_TOKEN or
+// the file WRIT_VAULT_TOKEN_FILE the token, and WRIT_VAULT_MOUNT the transit
+// mount (default "transit"). root.did still records the grantor's did:key.
+//
 //	claude/grants/*.json   the grants, root to agent, one per name
 //	claude/requests/*.json refused calls the grantor could approve, by tool_use_id
 //	claude/approvals/*.json one-use approvals, root to agent, checked before the grants
@@ -44,6 +52,7 @@ import (
 	"writproto/exec"
 	"writproto/jcs"
 	"writproto/keys"
+	"writproto/keys/vault"
 	"writproto/wire"
 	"writproto/writ"
 )
@@ -217,11 +226,42 @@ func loadKeyBytes(path string, b []byte) (*keys.Identity, error) {
 	return keys.FromSeed(seed)
 }
 
+// signer is the grantor's key (role ROOT) or the gate's (GATE). When
+// WRIT_VAULT_<role>_KEY names a transit key, it is that key in Vault and every
+// signature goes through Vault; no seed file is read or written. Otherwise it
+// is the seed file at path, created when create is set.
+func (e *env) signer(role, path string, create bool) (keys.Signer, error) {
+	name := os.Getenv("WRIT_VAULT_" + role + "_KEY")
+	if name == "" {
+		load := loadKey
+		if create {
+			load = loadOrCreateKey
+		}
+		id, err := load(path)
+		if err != nil {
+			return nil, err
+		}
+		return id, nil
+	}
+	token := os.Getenv("VAULT_TOKEN")
+	if f := os.Getenv("WRIT_VAULT_TOKEN_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		token = strings.TrimSpace(string(b))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return vault.New(ctx, vault.Config{Addr: os.Getenv("VAULT_ADDR"), Token: token,
+		Namespace: os.Getenv("VAULT_NAMESPACE"), Mount: os.Getenv("WRIT_VAULT_MOUNT"), Key: name})
+}
+
 func (e *env) initKeys(out io.Writer) error {
 	if err := os.MkdirAll(e.dir, 0o700); err != nil {
 		return err
 	}
-	root, err := loadOrCreateKey(filepath.Join(e.home, "root.seed"))
+	root, err := e.signer("ROOT", filepath.Join(e.home, "root.seed"), true)
 	if err != nil {
 		return err
 	}
@@ -232,7 +272,7 @@ func (e *env) initKeys(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	gate, err := loadOrCreateKey(e.path("gate.seed"))
+	gate, err := e.signer("GATE", e.path("gate.seed"), true)
 	if err != nil {
 		return err
 	}
@@ -262,7 +302,7 @@ func (e *env) grant(out io.Writer, name string, tools []string, under string, us
 	if under != "" && (!filepath.IsAbs(under) || filepath.Clean(under) != under) {
 		return fmt.Errorf("-under must be a clean absolute path")
 	}
-	root, err := loadKey(filepath.Join(e.home, "root.seed"))
+	root, err := e.signer("ROOT", filepath.Join(e.home, "root.seed"), false)
 	if err != nil {
 		return fmt.Errorf("no grantor key; run writ-hook init first (%v)", err)
 	}
@@ -377,7 +417,7 @@ func (e *env) lock() (func(), error) {
 type gate struct {
 	e      *exec.Executor
 	env    *env
-	id     *keys.Identity
+	id     keys.Signer
 	agent  *keys.Identity
 	rootID string
 	audit  *exec.AuditLog
@@ -416,9 +456,9 @@ func (g *gate) use(id string) error {
 // openGate loads the keys and opens the audit record; use then opens the
 // store of one grant. It must run under lock.
 func (e *env) openGate() (*gate, error) {
-	gateID, err := loadKey(e.path("gate.seed"))
+	gateID, err := e.signer("GATE", e.path("gate.seed"), false)
 	if err != nil {
-		return nil, fmt.Errorf("no gate key; run writ-hook init (%v)", err)
+		return nil, fmt.Errorf("the gate key could not be loaded; with none, run writ-hook init (%v)", err)
 	}
 	agent, err := loadKey(e.path("agent.seed"))
 	if err != nil {
@@ -970,10 +1010,21 @@ func (e *env) touchesState(v any) string {
 // itself and, when it is under the home directory, its ~ and $HOME forms.
 // Only this gate's own home: text about another, such as "~/.writ" in this
 // project's documentation when WRIT_HOME is elsewhere, names nothing here.
+// A Vault token file is named the same way, since its token signs as the
+// grantor and the gate.
 func (e *env) stateNames() []string {
-	names := []string{e.home}
-	if h, err := os.UserHomeDir(); err == nil && h != "" {
-		if rel, ok := strings.CutPrefix(e.home, strings.TrimSuffix(h, "/")+"/"); ok {
+	paths := []string{e.home}
+	if f := os.Getenv("WRIT_VAULT_TOKEN_FILE"); f != "" {
+		paths = append(paths, f)
+	}
+	var names []string
+	h, _ := os.UserHomeDir()
+	for _, p := range paths {
+		names = append(names, p)
+		if h == "" {
+			continue
+		}
+		if rel, ok := strings.CutPrefix(p, strings.TrimSuffix(h, "/")+"/"); ok {
 			names = append(names, "~/"+rel, "$HOME/"+rel, "${HOME}/"+rel)
 		}
 	}
