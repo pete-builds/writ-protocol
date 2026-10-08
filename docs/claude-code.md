@@ -34,7 +34,14 @@ writ-hook grant -name search -tools Grep,Glob -uses 200 -ttl 8h
 
 A tool no grant lists is checked under the first grant without a `-tools` list, or failing that the first grant by name, which refuses it with its reason.
 
-When a call is refused for its arguments or its operation and a writ above the one that refused it would allow it, the reason names that writ's signer, usually you, and tells the model to ask rather than retry. You approve exactly that call, once, with `writ approve` ([approval.md](approval.md)).
+When a call is refused for its arguments or its operation and a writ above the one that refused it would allow it, the reason names that writ's signer, usually you, and tells the model to ask rather than retry. When the signer is you, the refusal also names an ID, the call's `tool_use_id`, and you approve exactly that call, once ([approval.md](approval.md)):
+
+```
+writ-hook approve toolu_01AbC          # shows the refused call; signs nothing
+writ-hook approve -yes toolu_01AbC     # signs a one-use approval, 30 minutes by default (-ttl)
+```
+
+The approval is a writ from your grantor key for that tool and those arguments, every one pinned, with a single use. The gate tries approvals before the grants, uses one only for the call it names, and removes it once the call is admitted, so a second identical call is refused again and every other call is still checked under your grants. Its receipt carries the approval in its chain, signed by you. Like `grant`, `approve` is a local command for the grantor, never answered over the gate's socket.
 
 | Flag | Bound it signs | Meaning |
 |---|---|---|

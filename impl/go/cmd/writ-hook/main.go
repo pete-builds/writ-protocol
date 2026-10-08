@@ -10,6 +10,8 @@
 //	claude/agent.seed      signs each call on the session's behalf
 //	claude/gate.seed       enforces the grant and signs every receipt
 //	claude/grants/*.json   the grants, root to agent, one per name
+//	claude/requests/*.json refused calls the grantor could approve, by tool_use_id
+//	claude/approvals/*.json one-use approvals, root to agent, checked before the grants
 //	claude/stores/*.json   the executor's stores, one per grant, named by its identity
 //	claude/audit.jsonl     the audit record, one for every grant
 //
@@ -89,7 +91,7 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ-hook init | grant [flags] | serve -socket PATH | pre | post | recover | receipts")
+		die("usage: writ-hook init | grant [flags] | approve [-yes] [-ttl D] ID | serve -socket PATH | pre | post | recover | receipts")
 	}
 	e := newEnv()
 	var err error
@@ -134,6 +136,15 @@ func main() {
 		renew := fs.Duration("renew-before", 0, "keep the grant of this name, unsigned again, while it has the same bounds and more than this left to run")
 		_ = fs.Parse(os.Args[2:])
 		err = e.grant(os.Stdout, *name, splitList(*tools), *under, *uses, *ttl, *renew)
+	case "approve":
+		fs := flag.NewFlagSet("approve", flag.ExitOnError)
+		yes := fs.Bool("yes", false, "sign the approval; without it, only show what would be approved")
+		ttl := fs.Duration("ttl", 30*time.Minute, "how long the approval lasts, at most 24h")
+		_ = fs.Parse(os.Args[2:])
+		if fs.NArg() != 1 {
+			die("usage: writ-hook approve [-yes] [-ttl D] ID, where ID is the one a refusal named")
+		}
+		err = e.approve(os.Stdout, fs.Arg(0), *yes, *ttl)
 	case "pre":
 		err = e.hook(os.Stdin, os.Stdout, e.pre)
 	case "post":
@@ -429,7 +440,23 @@ func (e *env) openGate() (*gate, error) {
 // first of all, which the executor then refuses with its reason. It returns
 // the chain root, agent, gate, issuing the agent's delegation to the gate on
 // first use: the same bounds and expiry, since narrowing never widens (spec 4).
-func (g *gate) chainFor(tool string) ([]*writ.Writ, error) {
+//
+// An approval the grantor signed with writ-hook approve comes first, when it
+// admits exactly this call and has not expired, and the second return value
+// is then its file, which admit removes once the call is admitted. Any other
+// call is checked under the grants as before, so an approval never stands in
+// for the grant on the calls it does not name.
+func (g *gate) chainFor(tool, op string, args map[string]any) ([]*writ.Writ, string, error) {
+	approvals, _ := filepath.Glob(filepath.Join(g.env.path("approvals"), "*.json"))
+	sort.Strings(approvals)
+	for _, f := range approvals {
+		w, err := readWrit(f)
+		if err != nil || w.Iss != g.rootID || w.Hld != g.agent.DID() || w.Exp <= g.env.now() || !writ.Admits(w, op, args) {
+			continue
+		}
+		chain, err := g.withChild(w, "approval-"+filepath.Base(f))
+		return chain, f, err
+	}
 	files, _ := filepath.Glob(filepath.Join(g.env.path("grants"), "*.json"))
 	sort.Strings(files)
 	var pick, open, first string
@@ -464,28 +491,35 @@ func (g *gate) chainFor(tool string) ([]*writ.Writ, error) {
 		}
 		grant, err := readWrit(f)
 		if err != nil {
+			return nil, "", err
+		}
+		chain, err := g.withChild(grant, filepath.Base(f))
+		return chain, "", err
+	}
+	return nil, "", errors.New("no grant; run writ-hook grant")
+}
+
+// withChild returns the chain root, agent, gate for grant, issuing the
+// agent's delegation to the gate under children/name on first use.
+func (g *gate) withChild(grant *writ.Writ, name string) ([]*writ.Writ, error) {
+	childPath := filepath.Join(g.env.path("children"), name)
+	child, err := readWrit(childPath)
+	if err != nil || child.Prv != grant.ID || child.Hld != g.id.DID() {
+		bnd := map[string]any{}
+		for name, b := range grant.Bnd {
+			bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
+		}
+		if child, err = writ.Issue(g.agent, g.id.DID(), bnd, grant.Exp, grant); err != nil {
 			return nil, err
 		}
-		childPath := filepath.Join(g.env.path("children"), filepath.Base(f))
-		child, err := readWrit(childPath)
-		if err != nil || child.Prv != grant.ID || child.Hld != g.id.DID() {
-			bnd := map[string]any{}
-			for name, b := range grant.Bnd {
-				bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
-			}
-			if child, err = writ.Issue(g.agent, g.id.DID(), bnd, grant.Exp, grant); err != nil {
-				return nil, err
-			}
-			if err := os.MkdirAll(g.env.path("children"), 0o700); err != nil {
-				return nil, err
-			}
-			if err := writeJSON(childPath, child.Raw); err != nil {
-				return nil, err
-			}
+		if err := os.MkdirAll(g.env.path("children"), 0o700); err != nil {
+			return nil, err
 		}
-		return []*writ.Writ{grant, child}, nil
+		if err := writeJSON(childPath, child.Raw); err != nil {
+			return nil, err
+		}
 	}
-	return nil, errors.New("no grant; run writ-hook grant")
+	return []*writ.Writ{grant, child}, nil
 }
 
 // ---------------------------------------------------------------- hooks
@@ -596,7 +630,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err := os.MkdirAll(filepath.Join(e.dir, "pending"), 0o700); err != nil {
 		return nil, err
 	}
-	chain, err := g.chainFor(h.ToolName)
+	chain, approval, err := g.chainFor(h.ToolName, "claude/"+h.ToolName, args)
 	if err != nil {
 		return deny(err.Error()), nil
 	}
@@ -616,7 +650,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 		if errObj, ok := rep.Tally["err"].(map[string]any); ok {
 			code, _ = errObj["code"].(string)
 		}
-		return deny(explain(code, h.ToolName, chain[0], args) + approvable(code, chain, k)), nil
+		return deny(explain(code, h.ToolName, chain[0], args) + e.approvable(code, chain, k, h)), nil
 	}
 	call, err := json.Marshal(k.Raw)
 	if err != nil {
@@ -624,6 +658,13 @@ func (e *env) admit(h *hookInput) (any, error) {
 	}
 	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, At: e.now(), Call: call}); err != nil {
 		return nil, err
+	}
+	// The approval is used up: its count of one is now spent at this
+	// executor, and removing it keeps it from being tried for later calls.
+	if approval != "" {
+		if err := os.Remove(approval); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 	}
 	return nil, nil
 }
@@ -674,7 +715,10 @@ func explain(code, tool string, grant *writ.Writ, args map[string]any) string {
 // arguments, when a writ in the chain above the one that refused it would
 // allow it (docs/approval.md). Approval is a one-use writ for exactly this
 // call, so the model is told who to ask, not how to get around the grant.
-func approvable(code string, chain []*writ.Writ, k *writ.Call) string {
+// When the approver is the grantor, whose key this program holds, the call is
+// saved under requests/ by its tool_use_id for writ-hook approve. It must run
+// under lock.
+func (e *env) approvable(code string, chain []*writ.Writ, k *writ.Call, h *hookInput) string {
 	if code != "out_of_bounds" && code != "forbidden_op" && code != "missing_arg" {
 		return ""
 	}
@@ -682,7 +726,90 @@ func approvable(code string, chain []*writ.Writ, k *writ.Call) string {
 	if j < 0 {
 		return ""
 	}
+	if j == 0 {
+		req := approvalRequest{Tool: h.ToolName, Op: k.Op, Args: k.Args, Grant: chain[0].Raw, At: e.now()}
+		if err := os.MkdirAll(e.path("requests"), 0o700); err == nil && writeJSON(e.requestPath(h.ToolUseID), req) == nil {
+			return fmt.Sprintf(". The signer of the grant, %s, can approve exactly this one call by running `writ-hook approve %s` (docs/approval.md); ask the person, and do not retry until they say it is approved", chain[0].Iss, h.ToolUseID)
+		}
+	}
 	return fmt.Sprintf(". The signer of the grant, %s, can approve exactly this one call with `writ approve` (docs/approval.md); ask the person, do not retry", chain[j].Iss)
+}
+
+// approvalRequest is a refused call the grantor could approve: what the
+// person is shown, and what writ-hook approve signs a one-use writ for.
+type approvalRequest struct {
+	Tool  string         `json:"tool"`
+	Op    string         `json:"op"`
+	Args  map[string]any `json:"args"`
+	Grant wire.Object    `json:"grant"`
+	At    int64          `json:"at"`
+}
+
+func (e *env) requestPath(id string) string { return filepath.Join(e.path("requests"), id+".json") }
+
+// approve shows the refused call saved under id and, with yes, signs as the
+// grantor a writ for exactly that call, once (docs/approval.md), saved under
+// approvals/ where the gate tries it before the grants. Like grant, it is a
+// local command for the grantor, never answered over the gate's socket.
+func (e *env) approve(out io.Writer, id string, yes bool, ttl time.Duration) error {
+	if !toolUseID.MatchString(id) {
+		return fmt.Errorf("%q is not an ID a refusal names", id)
+	}
+	if ttl <= 0 || ttl > maxGrant {
+		return fmt.Errorf("-ttl must be more than 0 and at most %s", maxGrant)
+	}
+	unlock, err := e.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	b, err := os.ReadFile(e.requestPath(id))
+	if err != nil {
+		return fmt.Errorf("no refused call %s waits for approval (%v)", id, err)
+	}
+	// Decoded the way the protocol decodes, so integers stay integers and the
+	// approval pins exactly the values the refused call carried.
+	obj, err := wire.Decode(b)
+	if err != nil {
+		return fmt.Errorf("request %s: %v", id, err)
+	}
+	op, _ := obj["op"].(string)
+	args, okArgs := obj["args"].(map[string]any)
+	grantObj, okGrant := obj["grant"].(map[string]any)
+	atNum, _ := obj["at"].(json.Number)
+	at, _ := atNum.Int64()
+	if op == "" || !okArgs || !okGrant {
+		return fmt.Errorf("request %s is incomplete", id)
+	}
+	shown, _ := json.MarshalIndent(args, "  ", "  ")
+	fmt.Fprintf(out, "%s, refused %s, with:\n  %s\n", op, time.Unix(at, 0).Format(time.RFC3339), shown)
+	if !yes {
+		fmt.Fprintf(out, "nothing signed; run again with -yes to approve exactly this call, once, for %s\n", ttl)
+		return nil
+	}
+	root, err := loadKey(filepath.Join(e.home, "root.seed"))
+	if err != nil {
+		return fmt.Errorf("no grantor key; approve as the user that ran writ-hook init (%v)", err)
+	}
+	grant, err := writ.ParseWrit(grantObj)
+	if err != nil {
+		return fmt.Errorf("request %s: %v", id, err)
+	}
+	a, err := writ.Approve(root, nil, grant, op, args, e.now()+int64(ttl/time.Second))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(e.path("approvals"), 0o700); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(e.path("approvals"), id+".json"), a.Raw); err != nil {
+		return err
+	}
+	if err := os.Remove(e.requestPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Fprintf(out, "approved %s once, until %s; the same call will now run\n", a.ID, time.Unix(a.Exp, 0).Format(time.RFC3339))
+	return nil
 }
 
 // auditRefusal records a call this program refuses before it reaches the
