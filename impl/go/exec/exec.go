@@ -41,7 +41,7 @@ type Undoer func(ctx context.Context, t *writ.Tally, res any) Result
 
 // Executor holds one identity and its stores.
 type Executor struct {
-	ID         *keys.Identity
+	ID         keys.Signer
 	Store      *FileStore
 	AcceptRoot func(did string) bool
 	// PeerBinds reports whether a transport-authenticated peer speaks for a
@@ -83,7 +83,7 @@ type inflight struct {
 }
 
 // New returns an executor with a real clock and a memory store.
-func New(id *keys.Identity, store *FileStore) *Executor {
+func New(id keys.Signer, store *FileStore) *Executor {
 	if store == nil {
 		store, _ = OpenFileStore("")
 	}

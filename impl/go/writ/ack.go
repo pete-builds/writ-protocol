@@ -85,7 +85,7 @@ func ParseAck(obj wire.Object) (*Ack, error) {
 
 // NewAck signs, as exe, an ack of the revoke whose identity is revokeID,
 // recorded at rcv, committing to body (see AckBody).
-func NewAck(exe *keys.Identity, revokeID string, rcv int64, body map[string]any) (*Ack, error) {
+func NewAck(exe keys.Signer, revokeID string, rcv int64, body map[string]any) (*Ack, error) {
 	out, err := HashResult(body)
 	if err != nil {
 		return nil, err

@@ -62,7 +62,7 @@ func ApprovalPoint(chain []*Writ, op string, args map[string]any) int {
 // The holder of the approval re-issues, the same way, each writ that stood
 // below replaced; in the common chain of a person, their agent, and an
 // executor, that is the agent's one writ to the executor.
-func Approve(approver *keys.Identity, parent, replaced *Writ, op string, args map[string]any, exp int64) (*Writ, error) {
+func Approve(approver keys.Signer, parent, replaced *Writ, op string, args map[string]any, exp int64) (*Writ, error) {
 	if approver.DID() != replaced.Iss {
 		return nil, fmt.Errorf("approval: %s did not issue the writ it replaces; its issuer %s is the approver", approver.DID(), replaced.Iss)
 	}
