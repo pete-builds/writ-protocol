@@ -1,0 +1,9 @@
+# For a Docker host whose automatic address pools are used up ("all
+# predefined address pools have been fully subnetted"): fixed /28s for the
+# demo's four networks. run.sh adds this file when WRIT_SUBNETS=1. Change the
+# ranges if 10.213.7.0/24 is in use where you run it.
+networks:
+  ab: { ipam: { config: [{ subnet: 10.213.7.0/28 }] } }
+  bc: { ipam: { config: [{ subnet: 10.213.7.16/28 }] } }
+  ac: { ipam: { config: [{ subnet: 10.213.7.32/28 }] } }
+  egress: { ipam: { config: [{ subnet: 10.213.7.48/28 }] } }

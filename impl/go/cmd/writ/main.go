@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"writproto/conformance"
 	"writproto/exec"
@@ -179,13 +180,16 @@ func main() {
 	case "send":
 		endpoint := fs.String("endpoint", "", "executor endpoint URL")
 		call := fs.String("call", "", "call file")
+		timeout := fs.Duration("timeout", 30*time.Second, "how long to wait for the tally; an executor that runs a model may need minutes")
 		_ = fs.Parse(args)
 		obj := readObj(*call)
 		k, err := writ.ParseCall(obj)
 		if err != nil {
 			die("%v", err)
 		}
-		tally, res, err := httpbind.NewClient().Call(context.Background(), *endpoint, k)
+		client := httpbind.NewClient()
+		client.HTTP.Timeout = *timeout
+		tally, res, err := client.Call(context.Background(), *endpoint, k)
 		if err != nil {
 			die("%v", err)
 		}

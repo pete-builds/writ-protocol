@@ -61,3 +61,5 @@ Where to find each kind of evidence:
 | a write to the store that fails | `TestStoreWriteFailureRunsNothing` (nothing runs unrecorded) | an implementation code |
 | fan-out across executors under sibling writs | cannot be prevented at request time (spec 7.3); `sum of sub exceeds parent max` and `sys/tallies` are how it is detected at audit time | `out_of_bounds` |
 | a language model's output presented as a writ to sign | `Issue` narrows from a parent it holds and refuses to widen (`TestIssueRefusesWidening`); no API signs a writ object supplied by the caller | |
+| a key anyone can sign for: a small-order did:key, under which one fixed signature verifies for every message, as an issuer, a holder, a caller, or the signer of a sub-tally | vectors 270 to 287; Go `TestSmallOrderKeysRejected`; Python `test_small_order_keys_are_bad_keys` | `bad_key` (spec 1.3) |
+| a signature whose R is a small-order point, which a key holder makes by choosing the nonce r = 0 and which Ed25519 libraries disagree on | vector `signature with a small order R`; Go `TestSmallOrderRRejected`; Python `test_small_order_r_is_a_bad_signature` | `bad_signature` (spec 1.4) |

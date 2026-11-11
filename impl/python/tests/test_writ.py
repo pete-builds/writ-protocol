@@ -4,11 +4,14 @@
 """
 
 import contextlib
+import hashlib
 import io
 import json
 import os
 import sys
 import unittest
+
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -115,6 +118,54 @@ class KeysTest(Base):
         keys.verify(A.did, b"hello", sig)
         self.assertReason("bad_signature", keys.verify, BK.did, b"hello", sig)
         self.assertReason("bad_signature", keys.verify, A.did, b"hello!", sig)
+
+    # Section 1.3: the fourteen encodings of the eight small-order points, in
+    # full, so a slip in the masked table of keys.py fails here.
+    SMALL_ORDER = [
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    ]
+    # R = identity, S = 0: verifies under the identity key for every message.
+    FORGED = keys.b64u_encode(bytes([1]) + bytes(63))
+
+    def test_small_order_keys_are_bad_keys(self):
+        for h in self.SMALL_ORDER:
+            did = keys.encode_did(bytes.fromhex(h))
+            self.assertReason("bad_key", keys.decode_did, did)
+        identity = "did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj"
+        for msg in (b"writ/1\x00{}", b"tally/1\x00anything at all"):
+            self.assertReason("bad_key", keys.verify, identity, msg, self.FORGED)
+        # Control: ordinary keys and signatures pass; the forgery fails under them.
+        keys.verify(A.did, b"m", A.sign(b"m"))
+        self.assertReason("bad_signature", keys.verify, A.did, b"m", self.FORGED)
+        near = bytes.fromhex("01" + "00" * 30 + "01")
+        self.assertFalse(keys.is_small_order(near))
+
+    def test_small_order_r_is_a_bad_signature(self):
+        # A key holder who signs with r = 0 gets R = identity and S = k*a mod L,
+        # which OpenSSL accepts and libsodium refuses (section 1.4).
+        L = 2**252 + 27742317777372353535851937790883648493
+        h = hashlib.sha512(A.seed).digest()
+        a = int.from_bytes(h[:32], "little") & ((1 << 254) - 8) | (1 << 254)
+        msg = b"tally/1\x00crafted by the key holder"
+        R = (1).to_bytes(32, "little")
+        k = int.from_bytes(hashlib.sha512(R + A.public_bytes + msg).digest(), "little") % L
+        raw = R + (k * a % L).to_bytes(32, "little")
+        # Control: the signature is genuine under the cofactorless equation.
+        ed25519.Ed25519PublicKey.from_public_bytes(A.public_bytes).verify(raw, msg)
+        self.assertReason("bad_signature", keys.verify, A.did, msg, keys.b64u_encode(raw))
 
 
 # ----------------------------------------------------------------- canon
