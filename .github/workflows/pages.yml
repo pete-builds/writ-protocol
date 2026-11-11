@@ -1,0 +1,52 @@
+name: playground
+
+# Builds the browser playground from the Go reference implementation and
+# publishes it to GitHub Pages. The wasm is built here, never committed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "impl/go/**"
+      - "playground/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: impl/go/go.mod
+      - name: build the wasm and the site
+        working-directory: impl/go
+        run: |
+          go test ./cmd/writ-playground
+          mkdir -p ../../_site
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags='-s -w' -o ../../_site/writ.wasm ./cmd/writ-playground
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ../../_site/
+          cp ../../playground/index.html ../../_site/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
