@@ -69,7 +69,7 @@ func (f *standingFixture) code(t *testing.T, k *writ.Call, rep *Reply, rej *writ
 	return ""
 }
 
-func (f *standingFixture) undoCall(from *keys.Identity, chain []*writ.Writ) *writ.Call {
+func (f *standingFixture) undoCall(from keys.Signer, chain []*writ.Writ) *writ.Call {
 	k, _ := writ.NewCall(from, chain, "sys/undo", map[string]any{"tally": f.tally.Raw})
 	return k
 }
@@ -261,7 +261,7 @@ func TestStandingCallsStillFailClosed(t *testing.T) {
 	}
 
 	// Unauthorized: a stranger, and the executor itself, have no standing.
-	for _, from := range []*keys.Identity{S, f.e.ID} {
+	for _, from := range []keys.Signer{S, f.e.ID} {
 		kn := f.undoCall(from, []*writ.Writ{f.w1, f.w2})
 		rep, rej = f.e.Execute(context.Background(), kn.Raw)
 		if got := f.code(t, kn, rep, rej); got != string(writ.NoStanding) {

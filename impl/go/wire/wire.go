@@ -74,13 +74,17 @@ func SigningInput(obj Object) ([]byte, error) {
 }
 
 // Sign sets obj["sig"] to the Ed25519 signature over SigningInput(obj).
-func Sign(obj Object, id *keys.Identity) error {
+func Sign(obj Object, s keys.Signer) error {
 	delete(obj, "sig")
 	msg, err := SigningInput(obj)
 	if err != nil {
 		return err
 	}
-	obj["sig"] = B64.EncodeToString(id.Sign(msg))
+	sig, err := s.SignMessage(msg)
+	if err != nil {
+		return err
+	}
+	obj["sig"] = B64.EncodeToString(sig)
 	return nil
 }
 
