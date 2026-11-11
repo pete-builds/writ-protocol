@@ -73,14 +73,9 @@ func NewHandler(e *exec.Executor, wk WellKnown, o Options) http.Handler {
 		ctx := r.Context()
 		source := "host:" + remoteHost(r)
 		if o.MTLS {
-			if p, keys, ok := ClientCert(r); ok {
-				ctx = exec.WithAttestedKeys(exec.WithPeer(ctx, p), keys)
-				source = "peer:" + p
-			} else {
-				label := unidentifiedLabel(r)
-				ctx = exec.WithUnidentifiedPeer(ctx, label)
-				source = "peer:" + label
-			}
+			var p string
+			ctx, p, _ = MTLSContext(ctx, r)
+			source = "peer:" + p
 		} else if peerOf != nil {
 			if p, ok := peerOf(r); ok {
 				ctx = exec.WithPeer(ctx, p)
