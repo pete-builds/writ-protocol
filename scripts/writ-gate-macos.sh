@@ -181,7 +181,10 @@ remove_state() {
 	fi
 	for l in $LABELS; do rm -f "$LOG_DIR/$l.log"; done
 	rmdir "$GATE_HOME" "$RUN_DIR" "$LOG_DIR" "$STATE" 2>/dev/null || true
-	[ -e "$STATE" ] || [ -L "$STATE" ] || return 0
+	if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then
+		echo "removed $STATE"
+		return 0
+	fi
 	left=/var/db/writ-leftover-$(date -u +%Y%m%dT%H%M%SZ)-$$
 	[ ! -e "$left" ] || die "$left exists"
 	mv "$STATE" "$left"
@@ -374,7 +377,7 @@ uninstall_gate() {
 	rm -f "/usr/lib/cron/tabs/$GATE_USER"
 	rm -f "$BIN"
 	rmdir "$LIBEXEC" 2>/dev/null || true
-	echo "removed the daemons, the crontab, $STATE, $BIN, and $GATE_USER"
+	echo "removed the daemons, the crontab, $BIN, and $GATE_USER"
 }
 
 main() {
