@@ -8,7 +8,8 @@
 #
 # Run it from a fresh clone at a commit you reviewed, never from a working tree
 # the agent can write, and take SHA256 from somewhere the agent cannot write
-# either: a release page, or a build in that clean clone.
+# either: a release page, or a build in that clean clone (docs/claude-code.md
+# has the checklist).
 #
 # install creates a hidden account (_writ, no shell, no password), copies
 # BINARY into a root-owned folder (refusing it unless its SHA-256 matches),
@@ -19,15 +20,18 @@
 # root, and if any step fails or is interrupted it undoes what that run
 # created, so a first install either completes or leaves nothing behind.
 #
-# uninstall stops both daemons and removes the account and the binary. It
-# leaves the state directory, which holds the keys and receipts, in place,
-# owned by root, so no account later given the gate's uid can read it.
+# uninstall stops both daemons, kills anything left running as the gate, and
+# removes the account and the binary. It leaves the state directory, which
+# holds the keys and receipts, in place, owned by root, so no account later
+# given the gate's uid can read it.
 #
 # Two settings, for testing and narrowing, read from the environment:
-#   WRIT_GATE_LIBEXEC  the program folder (default /usr/local/libexec/writ)
+#   WRIT_GATE_LIBEXEC  the program folder (default /usr/local/libexec/writ);
+#                      uninstall needs the same value
 #   WRIT_GATE_GRANT    the standing grant the install signs and the renewal
 #                      keeps (default "grant -name session -uses 10000 -ttl
-#                      24h -renew-before 22h": any tool, any path)
+#                      24h -renew-before 22h": any tool, any path); it must
+#                      keep -name session and set -uses above 0
 set -eu
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -48,15 +52,35 @@ GRANT_ARGS=${WRIT_GATE_GRANT:-grant -name session -uses 10000 -ttl 24h -renew-be
 
 die() { echo "writ-gate-macos: $*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "run it with sudo"
-[ "$(uname -s)" = Darwin ] || die "macOS only; on Linux see docs/claude-code.md"
-case $LIBEXEC in /*) ;; *) die "WRIT_GATE_LIBEXEC must be an absolute path" ;; esac
-case $LIBEXEC in *[!A-Za-z0-9/._-]*) die "WRIT_GATE_LIBEXEC holds a character other than letters, digits, and / . _ -" ;; esac
-case $GRANT_ARGS in
-grant\ *) ;;
-*) die "WRIT_GATE_GRANT must start with \"grant \"" ;;
-esac
-case $GRANT_ARGS in *[!A-Za-z0-9\ ,._/-]*) die "WRIT_GATE_GRANT holds a character other than letters, digits, space, and , . _ / -" ;; esac
+check_settings() {
+	case $LIBEXEC in /*) ;; *) die "WRIT_GATE_LIBEXEC must be an absolute path" ;; esac
+	case $LIBEXEC in *[!A-Za-z0-9/._-]*) die "WRIT_GATE_LIBEXEC holds a character other than letters, digits, and / . _ -" ;; esac
+	case $LIBEXEC in */./* | */../* | */. | */..) die "WRIT_GATE_LIBEXEC must not hold . or .. segments" ;; esac
+	case $LIBEXEC in
+	/var/db/writ | /var/db/writ/* | /private/var/db/writ | /private/var/db/writ/*)
+		die "WRIT_GATE_LIBEXEC must not be inside the gate's state, $STATE" ;;
+	esac
+	case $GRANT_ARGS in *[!A-Za-z0-9\ ,._/-]*) die "WRIT_GATE_GRANT holds a character other than letters, digits, space, and , . _ / -" ;; esac
+	# shellcheck disable=SC2086 # split the word list; it holds no glob characters
+	set -- $GRANT_ARGS
+	[ "${1:-}" = grant ] || die "WRIT_GATE_GRANT must start with \"grant\""
+	shift
+	name='' uses=''
+	while [ $# -gt 0 ]; do
+		case $1 in
+		-name | --name) name=${2:-} ;;
+		-name=* | --name=*) name=${1#*=} ;;
+		-uses | --uses) uses=${2:-} ;;
+		-uses=* | --uses=*) uses=${1#*=} ;;
+		esac
+		shift
+	done
+	# Another name would leave the old any-tool session grant in force until
+	# it expires, up to 24 hours.
+	[ "$name" = session ] || die "WRIT_GATE_GRANT must keep -name session"
+	case $uses in '' | *[!0-9]*) die "WRIT_GATE_GRANT must set -uses to a number above 0; without it, or with 0, the grant has no limit" ;; esac
+	[ "$uses" -gt 0 ] || die "WRIT_GATE_GRANT must set -uses to a number above 0; 0 means no limit"
+}
 
 as_gate() {
 	sudo -u "$GATE_USER" env -i HOME="$STATE" WRIT_HOME="$GATE_HOME" "$BIN" "$@"
@@ -110,11 +134,40 @@ safe_dir() {
 	[ $((8#$mode & 8#022)) -eq 0 ] || die "$1 has mode $mode, writable by its group or by everyone, so they could replace the gate's program"
 }
 
-# user_attr NAME: one attribute of the gate account, as dscl prints it. dscl
-# prints an attribute it has no standard name for, such as IsHidden, with a
-# dsAttrTypeNative: prefix.
+# user_attr NAME, group_attr NAME: one attribute of the gate account or its
+# group, as dscl prints it. dscl prints an attribute it has no standard name
+# for, such as IsHidden, with a dsAttrTypeNative: prefix.
 user_attr() {
 	dscl . -read "/Users/$GATE_USER" "$1" 2>/dev/null | sed -n -e "s/^$1: //p" -e "s/^dsAttrTypeNative:$1: //p"
+}
+group_attr() {
+	dscl . -read "/Groups/$GATE_USER" "$1" 2>/dev/null | sed -n -e "s/^$1: //p" -e "s/^dsAttrTypeNative:$1: //p"
+}
+
+# unsafe_entries DIR...: every entry that is not a directory, a socket, or a
+# regular file with one name. A root chown follows a hard link to its inode,
+# so a name the gate linked to a root file would hand that file over.
+unsafe_entries() {
+	find "$@" -xdev ! -type d ! -type s ! \( -type f -links 1 \) -print
+}
+
+# own_state USER:GROUP DIR...: chown every directory, socket, and regular file
+# under DIR, never through a link. Run it only when nothing runs as the gate
+# and unsafe_entries is empty, so no name can change underneath it.
+own_state() {
+	who=$1
+	shift
+	find "$@" -xdev -depth \( -type d -o -type s -o -type f \) -exec chown -h "$who" {} +
+}
+
+# state_to_root: stop anything running as the gate, remove every name that
+# is not a directory, a socket, or a single-named regular file (removing a
+# name never touches the inode it points to), then make the rest root's.
+state_to_root() {
+	pkill -9 -U "$GATE_ID" 2>/dev/null || true
+	[ -d "$STATE" ] || return 0
+	find "$STATE" -xdev ! -type d ! -type s ! \( -type f -links 1 \) -exec rm -f {} +
+	own_state root:wheel "$STATE"
 }
 
 install_gate() {
@@ -133,12 +186,16 @@ install_gate() {
 		[ "$(user_attr UserShell)" = /usr/bin/false ] || die "$GATE_USER exists with shell $(user_attr UserShell), not /usr/bin/false"
 		[ "$(user_attr IsHidden)" = 1 ] || die "$GATE_USER exists and is not hidden"
 		[ "$(user_attr Password)" = '*' ] || die "$GATE_USER exists with password field \"$(user_attr Password)\", not \"*\""
+		[ "$(group_attr PrimaryGroupID)" = "$GATE_ID" ] || die "group $GATE_USER has gid $(group_attr PrimaryGroupID), not $GATE_ID"
+		[ -z "$(group_attr GroupMembership)" ] || die "group $GATE_USER has members: $(group_attr GroupMembership)"
 		have_user=1
 	else
+		! dscl . -read "/Groups/$GATE_USER" >/dev/null 2>&1 || die "a group $GATE_USER exists with no account $GATE_USER; remove it or find out who made it"
 		uids=$(dscl . -search /Users UniqueID "$GATE_ID") || die "could not search the accounts for uid $GATE_ID"
 		[ -z "$uids" ] || die "uid $GATE_ID is taken"
 		gids=$(dscl . -search /Groups PrimaryGroupID "$GATE_ID") || die "could not search the groups for gid $GATE_ID"
 		[ -z "$gids" ] || die "gid $GATE_ID is taken"
+		! pgrep -U "$GATE_ID" >/dev/null || die "processes run as uid $GATE_ID with no account $GATE_USER"
 	fi
 	missing=''
 	d=$LIBEXEC
@@ -201,11 +258,30 @@ install_gate() {
 	install -d -o root -g wheel -m 0755 "$STATE"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0700 "$GATE_HOME"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0755 "$RUN_DIR"
-	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0750 "$LOG_DIR"
-	# State kept by an uninstall is root's; hand it back to the gate.
-	chown -R "$GATE_USER:$GATE_USER" "$GATE_HOME" "$RUN_DIR" "$LOG_DIR"
+	# The log folder is root's: launchd, as root, opens the log files, so a
+	# link the gate could plant there would aim root at a file of its choice.
+	install -d -o root -g wheel -m 0755 "$LOG_DIR"
+	chown -h root:wheel "$LOG_DIR"
+	chmod 0755 "$LOG_DIR"
+	for l in "$GATE_LABEL" "$RENEW_LABEL"; do
+		rm -f "$LOG_DIR/$l.log"
+		: >"$LOG_DIR/$l.log"
+		chown "$GATE_USER:$GATE_USER" "$LOG_DIR/$l.log"
+		chmod 0640 "$LOG_DIR/$l.log"
+	done
+
+	# State kept by an uninstall is root's. Hand it back only to an account
+	# this run made, so nothing runs as the gate yet, and only when every name
+	# in it is a folder, a socket, or a single-named file.
+	if [ -n "$made_user" ]; then
+		! pgrep -U "$GATE_ID" >/dev/null || die "processes run as uid $GATE_ID before the gate started"
+		bad=$(unsafe_entries "$GATE_HOME" "$RUN_DIR" "$LOG_DIR")
+		[ -z "$bad" ] || die "the state holds links or special files, which a root chown could follow: $bad"
+		own_state "$GATE_USER:$GATE_USER" "$GATE_HOME" "$RUN_DIR"
+	fi
 
 	as_gate init
+	echo "standing grant: $GRANT_ARGS"
 	# shellcheck disable=SC2086 # GRANT_ARGS is a word list on purpose
 	as_gate $GRANT_ARGS
 
@@ -227,10 +303,11 @@ install_gate() {
 	while [ ! -S "$SOCKET" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 	[ -S "$SOCKET" ] || die "the gate did not open $SOCKET; see $LOG_DIR/$GATE_LABEL.log"
 	trap - EXIT INT TERM HUP
-	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$LIBEXEC" "$BIN"
+	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$LOG_DIR" "$LIBEXEC" "$BIN"
 	echo "gate listening on $SOCKET as $GATE_USER; set WRIT_HOOK_SOCKET=$SOCKET in the hooks"
 }
 
+# shellcheck disable=SC2329 # run by the EXIT trap in install_gate
 # rollback runs when install exits early. It removes only what this run
 # created, so a failed reinstall keeps the account, keys, and receipts that
 # were there before it.
@@ -246,6 +323,9 @@ rollback() {
 		done
 	fi
 	if [ -n "$made_user" ]; then
+		# State kept from before goes back to root, as uninstall left it,
+		# rather than stay owned by a uid with no account.
+		if [ -z "$made_state" ]; then state_to_root; else pkill -9 -U "$GATE_ID" 2>/dev/null || true; fi
 		dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 		dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
 	fi
@@ -264,26 +344,37 @@ uninstall_gate() {
 		launchctl bootout "system/$l" 2>/dev/null || true
 		rm -f "/Library/LaunchDaemons/$l.plist"
 	done
+	# The kept keys and receipts become root's, so an account later given
+	# uid $GATE_ID cannot read them.
+	state_to_root
 	rm -f "$BIN"
 	rmdir "$LIBEXEC" 2>/dev/null || true
 	dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 	dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
-	# The kept keys and receipts become root's, so an account later given
-	# uid $GATE_ID cannot read them.
-	[ ! -d "$STATE" ] || chown -R root:wheel "$STATE"
 	echo "removed the daemons, $BIN, and $GATE_USER; $STATE is left in place, owned by root"
 }
 
-case "${1:-}" in
-install)
-	if [ "${2:-}" = --no-checksum ]; then
-		[ $# -eq 3 ] || die "install --no-checksum BINARY"
-		install_gate "$3" ""
-	else
-		[ $# -eq 3 ] || die "install BINARY SHA256 (or install --no-checksum BINARY)"
-		install_gate "$2" "$3"
-	fi
-	;;
-uninstall) uninstall_gate ;;
-*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall" ;;
-esac
+main() {
+	[ "$(id -u)" -eq 0 ] || die "run it with sudo"
+	[ "$(uname -s)" = Darwin ] || die "macOS only; on Linux see docs/claude-code.md"
+	check_settings
+	echo "program folder: $LIBEXEC"
+	case "${1:-}" in
+	install)
+		if [ "${2:-}" = --no-checksum ]; then
+			[ $# -eq 3 ] || die "install --no-checksum BINARY"
+			install_gate "$3" ""
+		else
+			[ $# -eq 3 ] || die "install BINARY SHA256 (or install --no-checksum BINARY)"
+			install_gate "$2" "$3"
+		fi
+		;;
+	uninstall) uninstall_gate ;;
+	*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall" ;;
+	esac
+}
+
+# Bash reads a script as it runs it, so lines appended to this file while it
+# runs would run too; with everything in main and this the last line, bash
+# has read all of it before anything runs, and exits before reading more.
+main "$@"; exit

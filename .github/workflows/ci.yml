@@ -179,6 +179,33 @@ jobs:
           sudo rmdir "$gw"
           gone
           test ! -e /var/db/writ
+          # Settings that would put the program inside the gate's state, or
+          # leave a grant with no limit, are refused before anything is made.
+          for l in /var/db/writ/bin /usr/local/libexec/../libexec/writ; do
+            if out=$(sudo env WRIT_GATE_LIBEXEC="$l" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+              echo "::error::install accepted WRIT_GATE_LIBEXEC=$l"; exit 1
+            fi
+            echo "WRIT_GATE_LIBEXEC=$l: $out"
+            echo "$out" | grep -q 'WRIT_GATE_LIBEXEC must not'
+          done
+          for g in 'grant -name session -uses 0 -ttl 24h' 'grant -name session -ttl 24h' 'grant -name files -uses 10 -ttl 24h'; do
+            if out=$(sudo env WRIT_GATE_GRANT="$g" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+              echo "::error::install accepted WRIT_GATE_GRANT=$g"; exit 1
+            fi
+            echo "WRIT_GATE_GRANT=$g: $out"
+            echo "$out" | grep -q 'WRIT_GATE_GRANT must'
+          done
+          # A stray _writ group with no _writ account is not taken over.
+          sudo dscl . -create /Groups/_writ
+          sudo dscl . -create /Groups/_writ PrimaryGroupID 4242
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install took over a stray _writ group"; exit 1
+          fi
+          echo "stray group: $out"
+          echo "$out" | grep -q 'a group _writ exists with no account _writ'
+          sudo dscl . -delete /Groups/_writ
+          gone
+          test ! -e /var/db/writ
       - name: a failed install undoes itself
         run: |
           . "$RUNNER_TEMP/ci-helpers.sh"
@@ -208,6 +235,13 @@ jobs:
           test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC")" = "root:wheel 755"
           test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC/writ-hook")" = "root:wheel 755"
           sudo ls -ld /var/db/writ "$GATE_HOME"
+          # The log folder is root's, so the gate cannot plant a link where
+          # launchd, as root, opens its logs.
+          stat -f '%N %Su:%Sg %Lp' /var/db/writ/log /var/db/writ/log/org.writ.gate.log /var/db/writ/log/org.writ.renew.log
+          test "$(stat -f '%Su:%Sg %Lp' /var/db/writ/log)" = "root:wheel 755"
+          for l in gate renew; do
+            test "$(stat -f '%Su:%Sg %Lp' "/var/db/writ/log/org.writ.$l.log")" = "_writ:_writ 640"
+          done
       - name: control, the runner user cannot read the gate's keys, and root can
         run: |
           . "$RUNNER_TEMP/ci-helpers.sh"
@@ -310,6 +344,48 @@ jobs:
           echo "changed account: $out"
           echo "$out" | grep -q 'exists with shell /bin/zsh'
           sudo dscl . -create /Users/_writ UserShell /usr/bin/false
+      - name: a hard link the gate plants to a root file is never handed to it
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          hosts=/private/etc/hosts
+          own() { stat -f '%Su:%Sg' "$hosts"; }
+          show() { echo "$1: $hosts $(stat -f '%Su:%Sg links=%l' "$hosts")"; }
+          show before
+          test "$(own)" = root:wheel
+          # The plant works: _writ can hard-link a root file into its home.
+          sudo -u _writ ln "$hosts" "$GATE_HOME/planted"
+          echo "as _writ: ln $hosts $GATE_HOME/planted: succeeded"
+          show "after the plant"
+          test "$(stat -f '%l' "$hosts")" -ge 2
+          # A reinstall over the running gate leaves the file root's.
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
+          show "after a reinstall"
+          test "$(own)" = root:wheel
+          # Uninstall removes the planted name and leaves the file root's.
+          sudo /bin/bash "$SCRIPT" uninstall
+          show "after uninstall"
+          test "$(own)" = root:wheel
+          refuse sudo test -e "$GATE_HOME/planted"
+          echo "after uninstall: $GATE_HOME/planted is gone"
+          # A name that survived into kept state (planted here as root)
+          # makes the next install refuse, and its rollback removes it.
+          sudo ln "$hosts" "$GATE_HOME/planted"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install handed back state holding a hard link"; exit 1
+          fi
+          echo "$out" | grep 'links or special files\|undoing'
+          echo "$out" | grep -q 'the state holds links or special files'
+          show "after the refused install"
+          test "$(own)" = root:wheel
+          refuse sudo test -e "$GATE_HOME/planted"
+          gone
+          test -z "$(sudo find /var/db/writ ! -user root)"
+          # Then a clean install over the kept state, as before this step.
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
+          show "after uninstall and install"
+          test "$(own)" = root:wheel
+          "$LIBEXEC/writ-hook" receipts | grep '^1 receipt(s) verified, 0 invalid'
       - name: uninstall leaves no account, daemon, process, or binary, and the kept state is root's
         run: |
           . "$RUNNER_TEMP/ci-helpers.sh"
