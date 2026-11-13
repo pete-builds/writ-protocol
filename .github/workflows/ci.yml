@@ -74,6 +74,503 @@ jobs:
           grep -q -- '--- PASS: TestRealVault' vault.log
           grep -q -- '--- PASS: TestGateSignsThroughVault' vault.log
 
+  # scripts/writ-gate-macos.sh, run for real: a hosted macOS runner has
+  # passwordless sudo, so the gate gets its own account and LaunchDaemons as
+  # on a laptop. The runner user then plays the AI agent's user: it must be
+  # refused the gate's keys and its program, and its tool call must still be
+  # receipted through the socket. Each refusal is paired with the same act
+  # done as root, which must succeed, so a check that passes because a file
+  # is missing fails instead.
+  macos-gate:
+    name: macOS gate as its own user, real install with sudo
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      GATE_HOME: /var/db/writ/home
+      RUN_DIR: /var/db/writ/run
+      WRIT_HOOK_SOCKET: /var/db/writ/run/gate.sock
+      LIBEXEC: /usr/local/libexec/writ
+      SCRIPT: scripts/writ-gate-macos.sh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: build writ-hook and the writ verifier
+        working-directory: impl/go
+        run: |
+          go build -o "$RUNNER_TEMP/writ-hook" ./cmd/writ-hook
+          go build -o "$RUNNER_TEMP/writ" ./cmd/writ
+      - name: root never walks the state tree (static check, with a control)
+        run: |
+          sh scripts/check-gate-script.sh
+          cp scripts/writ-gate-macos.sh "$RUNNER_TEMP/gate-with-rm.sh"
+          # shellcheck disable=SC2016 # the line added is literal text
+          printf '\trm -rf "$STATE"\n' >>"$RUNNER_TEMP/gate-with-rm.sh"
+          if sh scripts/check-gate-script.sh "$RUNNER_TEMP/gate-with-rm.sh"; then
+            echo "::error::the static check passed a root-run rm -rf of the state"; exit 1
+          fi
+      - name: the runner user is not root, so it can stand in for the agent's user
+        run: |
+          cat >"$RUNNER_TEMP/ci-helpers.sh" <<'EOF'
+          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          # gone: no gate account, daemon, process, or program.
+          gone() {
+            refuse dscl . -read /Users/_writ
+            refuse dscl . -read /Groups/_writ
+            test -z "$(dscl . -search /Users UniqueID 350)"
+            refuse sudo launchctl print system/org.writ.gate
+            refuse sudo launchctl print system/org.writ.renew
+            test ! -e /Library/LaunchDaemons/org.writ.gate.plist
+            test ! -e /Library/LaunchDaemons/org.writ.renew.plist
+            refuse pgrep -U 350
+            test ! -e "$LIBEXEC/writ-hook"
+          }
+          sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+          # denied OUT TEXT: the runner's attempt failed, for permission.
+          denied() {
+            echo "as $(id -un): $1"
+            case $1 in *"Permission denied"*) ;; *) echo "::error::refused, but not for permission: $1"; exit 1 ;; esac
+          }
+          EOF
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          id
+          test "$(id -u)" -ne 0
+          refuse dscl . -read /Users/_writ
+          test ! -e /var/db/writ
+          stat -f '%N %Su:%Sg %Lp' / /usr /usr/local
+          if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi >"$RUNNER_TEMP/had-libexec"
+          echo "/usr/local/libexec before the job: $(cat "$RUNNER_TEMP/had-libexec")"
+      - name: install refuses a missing or wrong SHA-256, and leaves nothing
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" 2>&1); then
+            echo "::error::install ran with no checksum"; exit 1
+          fi
+          echo "no checksum: $out"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" "$(printf '0%.0s' {1..64})" 2>&1); then
+            echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
+          fi
+          echo "wrong checksum: $out"
+          echo "$out" | grep -q 'does not match SHA-256'
+          # A source that is a symbolic link is refused, so root never reads
+          # whatever a link points at.
+          ln -sf "$RUNNER_TEMP/writ-hook" "$RUNNER_TEMP/writ-hook-link"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook-link" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)" 2>&1); then
+            echo "::error::install read a source through a symbolic link"; exit 1
+          fi
+          echo "symlinked source: $out"
+          echo "$out" | grep -q 'must be a regular file, not a symbolic link'
+          gone
+          test ! -e "$LIBEXEC"
+          test ! -e /var/db/writ
+          test "$(if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi)" = "$(cat "$RUNNER_TEMP/had-libexec")"
+          echo "after both refusals: no _writ, no daemons, no $LIBEXEC, no /var/db/writ"
+      - name: install refuses a program folder another user could write
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          # A folder above owned by the runner user.
+          mkdir -p "$RUNNER_TEMP/unsafe"
+          if out=$(sudo env WRIT_GATE_LIBEXEC="$RUNNER_TEMP/unsafe/writ" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install used a folder under a runner-owned one"; exit 1
+          fi
+          echo "runner-owned parent: $out"
+          echo "$out" | grep -q 'is owned by runner, not root'
+          test ! -e "$RUNNER_TEMP/unsafe/writ"
+          # A root-owned folder above that its group can write: a new one,
+          # so no system folder's mode is changed.
+          gw=/usr/local/ci-group-writable
+          sudo install -d -o root -g wheel -m 0775 "$gw"
+          if out=$(sudo env WRIT_GATE_LIBEXEC="$gw/writ" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install used a folder under a group-writable one"; exit 1
+          fi
+          echo "group-writable parent: $out"
+          echo "$out" | grep -q 'has mode 775'
+          test ! -e "$gw/writ"
+          sudo rmdir "$gw"
+          gone
+          test ! -e /var/db/writ
+          # Settings that would put the program inside the gate's state, or
+          # leave a grant with no limit, are refused before anything is made.
+          for l in /var/db/writ/bin /usr/local/libexec/../libexec/writ //var/db/writ/bin /VAR/DB/WRIT/bin; do
+            if out=$(sudo env WRIT_GATE_LIBEXEC="$l" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+              echo "::error::install accepted WRIT_GATE_LIBEXEC=$l"; exit 1
+            fi
+            echo "WRIT_GATE_LIBEXEC=$l: $out"
+            echo "$out" | grep -q 'WRIT_GATE_LIBEXEC must not'
+          done
+          for g in 'grant -name session -uses 0 -ttl 24h' 'grant -name session -ttl 24h' 'grant -name files -uses 10 -ttl 24h' 'grant -name session -uses 0 x -uses 5'; do
+            if out=$(sudo env WRIT_GATE_GRANT="$g" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+              echo "::error::install accepted WRIT_GATE_GRANT=$g"; exit 1
+            fi
+            echo "WRIT_GATE_GRANT=$g: $out"
+            echo "$out" | grep -q 'writ-gate-macos: WRIT_GATE_GRANT'
+          done
+          # A stray _writ group with no _writ account is not taken over.
+          sudo dscl . -create /Groups/_writ
+          sudo dscl . -create /Groups/_writ PrimaryGroupID 4242
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install took over a stray _writ group"; exit 1
+          fi
+          echo "stray group: $out"
+          echo "$out" | grep -q 'a group _writ exists with no account _writ'
+          sudo dscl . -delete /Groups/_writ
+          gone
+          test ! -e /var/db/writ
+      - name: a failed install undoes itself
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          # /usr/bin/false as the program fails at key setup, after the
+          # folder, the binary, the account, and the state exist.
+          if out=$(sudo /bin/bash "$SCRIPT" install /usr/bin/false "$(sum /usr/bin/false)" 2>&1); then
+            echo "::error::install of a program that cannot run succeeded"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q 'created _writ (350)'
+          echo "$out" | grep -q 'undoing what this run created'
+          gone
+          test ! -e "$LIBEXEC"
+          test ! -e /var/db/writ
+          test "$(if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi)" = "$(cat "$RUNNER_TEMP/had-libexec")"
+          echo "after the failed install: no _writ, no daemons, no $LIBEXEC, no /var/db/writ"
+      - name: install, with sudo
+        run: sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)"
+      - name: the gate runs as _writ under launchd, from a root-owned folder
+        run: |
+          dscl . -read /Users/_writ UniqueID UserShell IsHidden
+          sudo launchctl print system/org.writ.gate | grep -E '^[[:space:]]*(state|pid|username) ='
+          sudo launchctl print system/org.writ.renew >/dev/null
+          ps -axo user=,command= | grep '[w]rit-hook serve'
+          test "$(ps -axo user=,command= | awk '/[w]rit-hook serve/ {print $1}')" = _writ
+          stat -f '%N %Su:%Sg %Lp' /usr/local/libexec "$LIBEXEC" "$LIBEXEC/writ-hook" "$WRIT_HOOK_SOCKET"
+          test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC")" = "root:wheel 755"
+          test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC/writ-hook")" = "root:wheel 755"
+          sudo ls -ld /var/db/writ "$GATE_HOME"
+          # The log folder is root's, so the gate cannot plant a link where
+          # launchd, as root, opens its logs.
+          stat -f '%N %Su:%Sg %Lp' /var/db/writ/log /var/db/writ/log/org.writ.gate.log /var/db/writ/log/org.writ.renew.log
+          test "$(stat -f '%Su:%Sg %Lp' /var/db/writ/log)" = "root:wheel 755"
+          for l in gate renew; do
+            test "$(stat -f '%Su:%Sg %Lp' "/var/db/writ/log/org.writ.$l.log")" = "_writ:_writ 640"
+          done
+          sudo ls -lde /var/db/writ "$GATE_HOME" /var/db/writ/run /var/db/writ/log
+          for d in /var/db/writ "$GATE_HOME" /var/db/writ/run /var/db/writ/log; do
+            test -z "$(sudo find "$d" -maxdepth 0 -acl)"
+          done
+      - name: control, the runner user cannot read the gate's keys, and root can
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          for f in root.seed claude/agent.seed claude/gate.seed; do
+            p=$GATE_HOME/$f
+            # Negative control: the file exists and root can read it, so the
+            # refusal below is a permission, not a missing file.
+            n=$(sudo cat "$p" | wc -c | tr -d ' ')
+            test "$n" -gt 0
+            echo "as root: read $p, $n bytes"
+            if out=$(cat "$p" 2>&1); then
+              echo "::error::the runner user read $p"; exit 1
+            fi
+            denied "$out"
+            m=$(sudo stat -f '%Lp %Su' "$p")
+            echo "as root: stat $p: $m"
+            test "$m" = "600 _writ"
+          done
+          if out=$(ls "$GATE_HOME" 2>&1); then
+            echo "::error::the runner user listed $GATE_HOME"; exit 1
+          fi
+          denied "$out"
+          echo "as root: $(sudo ls "$GATE_HOME" | tr '\n' ' ')"
+      - name: control, the runner user cannot replace the gate's program, and root can
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          b=$LIBEXEC/writ-hook
+          if out=$(mv "$b" "$b.moved" 2>&1); then
+            echo "::error::the runner user renamed $b"; exit 1
+          fi
+          denied "$out"
+          if out=$(cp /usr/bin/true "$b" 2>&1); then
+            echo "::error::the runner user overwrote $b"; exit 1
+          fi
+          denied "$out"
+          if out=$(cp /usr/bin/true "$LIBEXEC/other" 2>&1); then
+            echo "::error::the runner user wrote into $LIBEXEC"; exit 1
+          fi
+          denied "$out"
+          # Negative control: the same rename as root succeeds, so the
+          # refusals above are permissions.
+          sudo mv "$b" "$b.moved"
+          sudo mv "$b.moved" "$b"
+          echo "as root: mv $b and back, succeeded"
+          cmp "$b" "$RUNNER_TEMP/writ-hook"
+      - name: a tool call through the socket is admitted and receipted
+        run: |
+          pre='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1"}'
+          post='{"hook_event_name":"PostToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1","tool_response":"ci-response"}'
+          out=$(printf '%s' "$pre" | "$LIBEXEC/writ-hook" pre)
+          if [ -n "$out" ]; then echo "::error::pre did not admit the call: $out"; exit 1; fi
+          echo "pre toolu_ci_1: admitted (the gate printed no decision)"
+          out=$(printf '%s' "$post" | "$LIBEXEC/writ-hook" post)
+          if [ -n "$out" ]; then echo "::error::post: $out"; exit 1; fi
+          echo "post toolu_ci_1: done"
+          # A call naming the gate's own keys is refused by the gate itself.
+          bad='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/var/db/writ/home/root.seed"},"tool_use_id":"toolu_ci_2"}'
+          out=$(printf '%s' "$bad" | "$LIBEXEC/writ-hook" pre)
+          echo "pre toolu_ci_2: $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts.txt"
+          grep -q '^1 receipt(s) verified, 0 invalid, 0 call(s) still unfinished$' "$RUNNER_TEMP/receipts.txt"
+          grep -q '^1 refusal(s) in the audit record$' "$RUNNER_TEMP/receipts.txt"
+      - name: the receipt verifies with the writ verifier, outside the gate
+        run: |
+          # The store is the gate's private state; an auditor copies it out
+          # as root, then checks the receipt with nothing but the verifier.
+          d=$RUNNER_TEMP/receipt
+          mkdir -p "$d"
+          sudo sh -c "cat $GATE_HOME/claude/stores/*.json" >"$d/stores.json"
+          jq -s '[.[].calls[] | select(.tally != null)]' "$d/stores.json" >"$d/done.json"
+          jq -e 'length == 1' "$d/done.json"
+          jq '.[0].call' "$d/done.json" >"$d/call.json"
+          jq '.[0].call.chain[-1]' "$d/done.json" >"$d/leaf.json"
+          jq '.[0].tally' "$d/done.json" >"$d/tally.json"
+          # The grant is the gate's grantor's, not some other key's.
+          test "$(jq -r '.chain[0].iss' "$d/call.json")" = "$(sudo cat "$GATE_HOME/root.did" | tr -d '\n')"
+          # The receipt commits to the response this job sent, by hash.
+          sum=$(printf '%s' '"ci-response"' | shasum -a 256 | cut -d' ' -f1)
+          printf '{"tool_use_id":"toolu_ci_1","response_sha256":"%s"}' "$sum" >"$d/res.json"
+          "$RUNNER_TEMP/writ" verify -writ "$d/leaf.json" -call "$d/call.json" -tally "$d/tally.json" -res "$d/res.json" | tee "$d/verdict.json"
+          jq -e '.verdict == "valid" and .st == "ok"' "$d/verdict.json"
+          # Negative control: a different response must not verify.
+          bad=$(printf '%s' '"other-response"' | shasum -a 256 | cut -d' ' -f1)
+          printf '{"tool_use_id":"toolu_ci_1","response_sha256":"%s"}' "$bad" >"$d/res-bad.json"
+          if "$RUNNER_TEMP/writ" verify -writ "$d/leaf.json" -call "$d/call.json" -tally "$d/tally.json" -res "$d/res-bad.json"; then
+            echo "::error::the verifier accepted a receipt for a response it does not commit to"; exit 1
+          fi
+      - name: a reinstall over a running gate keeps its state; a changed account is refused
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")"
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts-reinstall.txt"
+          grep -q '^1 receipt(s) verified, 0 invalid' "$RUNNER_TEMP/receipts-reinstall.txt"
+          sudo dscl . -create /Users/_writ UserShell /bin/zsh
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install reused an account with a login shell"; exit 1
+          fi
+          echo "changed account: $out"
+          echo "$out" | grep -q 'exists with shell /bin/zsh'
+          sudo dscl . -create /Users/_writ UserShell /usr/bin/false
+      - name: whatever the gate plants, uninstall archives and deletes its state without touching what the plants point to
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          hosts=/private/etc/hosts
+          sock=/private/var/run/syslog
+          meta() { stat -f '%Su:%Sg %Lp links=%l' "$1"; }
+          hosts_before=$(meta "$hosts")
+          sock_before=$(meta "$sock")
+          echo "before: $hosts $hosts_before; $sock $sock_before"
+          W() { sudo -u _writ "$@"; }
+          # Everything here is done as _writ, and each must succeed, so the
+          # checks below test real plants.
+          W ln "$hosts" "$GATE_HOME/link-hosts"
+          W ln "$sock" "$GATE_HOME/link-syslog"
+          W ln -s "$hosts" "$GATE_HOME/symlink-hosts"
+          W mkfifo "$GATE_HOME/fifo"
+          W touch "$GATE_HOME/locked"
+          W chflags uchg "$GATE_HOME/locked"
+          W chmod +a "everyone allow add_file,add_subdirectory,delete_child" "$RUN_DIR"
+          W mkdir "$RUN_DIR/open"
+          W chmod 0777 "$RUN_DIR/open"
+          echo '* * * * * /usr/bin/true' | sudo -u _writ crontab -
+          echo "as _writ, crontab: $(sudo crontab -u _writ -l)"
+          sudo test -f /usr/lib/cron/tabs/_writ
+          echo "as _writ, planted:"
+          sudo ls -lOe "$GATE_HOME"
+          sudo ls -lde "$RUN_DIR" "$RUN_DIR/open"
+          echo "after the plants: $hosts $(meta "$hosts"); $sock $(meta "$sock")"
+          # A reinstall over the live gate refuses a run folder with an ACL.
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::a reinstall accepted a run folder with an ACL"; exit 1
+          fi
+          echo "reinstall: $out"
+          echo "$out" | grep -q 'carries an ACL'
+          ls /var/db/writ-archive-*.tar >"$RUNNER_TEMP/archives-before" 2>/dev/null || true
+          sudo /bin/bash "$SCRIPT" uninstall | tee "$RUNNER_TEMP/uninstall.txt"
+          echo "after uninstall: $hosts $(meta "$hosts"); $sock $(meta "$sock")"
+          test "$(meta "$hosts")" = "$hosts_before"
+          test "$(meta "$sock")" = "$sock_before"
+          refuse sudo test -e /var/db/writ
+          refuse sudo test -L /var/db/writ
+          echo "/var/db/writ is gone"
+          refuse sudo test -e /usr/lib/cron/tabs/_writ
+          echo "the crontab of _writ is gone"
+          gone
+          echo "no uid 350 process, account, daemon, or program"
+          archive=$(sed -n 's/^archived .* to \(.*\.tar\) (root only).*/\1/p' "$RUNNER_TEMP/uninstall.txt")
+          test -n "$archive"
+          refuse grep -qx "$archive" "$RUNNER_TEMP/archives-before"
+          echo "archive: $(stat -f '%N %Su:%Sg %Lp' "$archive")"
+          test "$(stat -f '%Su:%Sg %Lp' "$archive")" = "root:wheel 600"
+          refuse cat "$archive"
+          sudo tar -tvf "$archive" | grep -E 'link-|symlink-|fifo|locked|run/open' || true
+          # The audit record read back out of the archive still verifies.
+          sudo tar -xOf "$archive" writ/home/claude/audit.jsonl >"$RUNNER_TEMP/archived-audit.jsonl"
+          "$RUNNER_TEMP/writ" audit "$RUNNER_TEMP/archived-audit.jsonl"
+          # Leftover state with no account is refused, not adopted.
+          sudo install -d -o root -g wheel -m 0755 /var/db/writ
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install adopted a leftover /var/db/writ"; exit 1
+          fi
+          echo "leftover state: $out"
+          echo "$out" | grep -q 'exists with no _writ account'
+          sudo rmdir /var/db/writ
+          gone
+          # A crontab left for _writ is refused, not inherited.
+          sudo sh -c 'echo "* * * * * /usr/bin/true" >/usr/lib/cron/tabs/_writ'
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install went ahead with a crontab for _writ in place"; exit 1
+          fi
+          echo "planted crontab: $out"
+          echo "$out" | grep -q 'a crontab for _writ exists'
+          sudo rm -f /usr/lib/cron/tabs/_writ
+          gone
+          # A clean install makes a fresh tree the runner cannot write into.
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
+          ls -lde /var/db/writ "$RUN_DIR" /var/db/writ/log
+          for d in /var/db/writ "$RUN_DIR" /var/db/writ/log; do
+            test -z "$(find "$d" -maxdepth 0 -acl)"
+          done
+          if out=$(touch "$RUN_DIR/runner-file" 2>&1); then
+            echo "::error::the runner user created a file in $RUN_DIR"; exit 1
+          fi
+          denied "$out"
+          test "$(meta "$hosts")" = "$hosts_before"
+          test "$(meta "$sock")" = "$sock_before"
+          "$LIBEXEC/writ-hook" receipts | grep '^0 receipt(s) verified, 0 invalid'
+      - name: uninstall archives the state and leaves no account, daemon, process, or binary
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          # A file the gate cannot read makes its tar fail, and then nothing
+          # is removed.
+          # It must hold data: tar does not open an empty file.
+          (cd / && sudo -u _writ /bin/sh -c 'echo data >/var/db/writ/home/unreadable && chmod 000 /var/db/writ/home/unreadable')
+          sudo ls -l /var/db/writ/home/unreadable
+          n=$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)
+          if out=$(sudo /bin/bash "$SCRIPT" uninstall 2>&1); then
+            echo "$out"
+            echo "::error::uninstall went on after tar failed"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q 'so nothing was removed'
+          sudo test -s "$GATE_HOME/root.seed"
+          test "$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)" -eq "$n"
+          echo "after the failed tar: the keys are still in /var/db/writ, and no archive was left"
+          (cd / && sudo -u _writ chmod 600 /var/db/writ/home/unreadable)
+          sudo /bin/bash "$SCRIPT" uninstall
+          gone
+          test ! -e "$LIBEXEC"
+          refuse sudo test -e /var/db/writ
+          # With the gate gone, a hook fails closed.
+          out=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_3"}' | "$RUNNER_TEMP/writ-hook" pre)
+          echo "pre after uninstall: $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          ls -l /var/db/writ-archive-*.tar
+      - name: a fresh install makes new keys under a narrower grant, and uninstall --purge keeps nothing
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          sudo env WRIT_GATE_GRANT='grant -name session -tools Read -uses 100 -ttl 24h -renew-before 22h' /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")"
+          for f in root.seed claude/agent.seed claude/gate.seed; do
+            test "$(sudo stat -f '%Lp %Su' "$GATE_HOME/$f")" = "600 _writ"
+          done
+          read_in='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_4"}'
+          out=$(printf '%s' "$read_in" | "$LIBEXEC/writ-hook" pre)
+          if [ -n "$out" ]; then echo "::error::the narrower grant refused a Read: $out"; exit 1; fi
+          printf '%s' '{"hook_event_name":"PostToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_4","tool_response":"ci-response"}' | "$LIBEXEC/writ-hook" post
+          echo "pre toolu_ci_4 (Read): admitted"
+          out=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Bash","tool_input":{"command":"true"},"tool_use_id":"toolu_ci_5"}' | "$LIBEXEC/writ-hook" pre)
+          echo "pre toolu_ci_5 (Bash): $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          echo "$out" | grep -q 'allows only Read'
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts-fresh.txt"
+          grep -q '^1 receipt(s) verified, 0 invalid' "$RUNNER_TEMP/receipts-fresh.txt"
+          n=$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)
+          sudo /bin/bash "$SCRIPT" uninstall --purge
+          gone
+          refuse sudo test -e /var/db/writ
+          test "$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)" -eq "$n"
+          echo "uninstall --purge: no new archive, no /var/db/writ"
+      - name: a folder swapped for a symlink during uninstall cannot aim the deletion outside the tree
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          open=$RUN_DIR/open
+          victim=/private/var/tmp/writ-victim
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
+          # The gate leaves a folder anyone can write in, as in the step
+          # above; the runner user then works inside it.
+          sudo -u _writ mkdir "$open"
+          sudo -u _writ chmod 0777 "$open"
+          sudo install -d -o root -g wheel -m 0700 "$victim"
+          sudo sh -c "echo keep >$victim/sentinel"
+          victim_before=$(sudo stat -f '%Su:%Sg %Lp' "$victim")
+          echo "victim: $victim $victim_before, holding $(sudo ls -A "$victim")"
+          # A large folder keeps rm busy while the folders after it flip
+          # between real folders and symlinks to the victim.
+          mkdir -m 0777 "$open/a-big"
+          (cd "$open/a-big" && seq 1 30000 | sed 's/^/f/' | xargs touch)
+          for i in $(seq -w 0 19); do mkdir -m 0777 "$open/z$i"; touch "$open/z$i/x"; done
+          cat >"$RUNNER_TEMP/swapper.sh" <<'EOF'
+          open=$1 victim=$2
+          while :; do
+            for i in $(seq -w 0 19); do
+              mv "$open/z$i" "$open/old-$i-$RANDOM" 2>/dev/null
+              ln -s "$victim" "$open/z$i" 2>/dev/null
+            done
+            for i in $(seq -w 0 19); do
+              rm -f "$open/z$i" 2>/dev/null
+              mkdir -m 0777 "$open/z$i" 2>/dev/null && touch "$open/z$i/x" 2>/dev/null
+            done
+          done
+          EOF
+          bash "$RUNNER_TEMP/swapper.sh" "$open" "$victim" &
+          echo $! >"$RUNNER_TEMP/swapper.pid"
+          trap 'kill "$(cat "$RUNNER_TEMP/swapper.pid")" 2>/dev/null || true' EXIT
+          sleep 1
+          sudo /bin/bash "$SCRIPT" uninstall --purge 2>&1 | tee "$RUNNER_TEMP/uninstall-swap.txt"
+          kill "$(cat "$RUNNER_TEMP/swapper.pid")"
+          echo "victim after uninstall: $victim $(sudo stat -f '%Su:%Sg %Lp' "$victim"), holding $(sudo ls -A "$victim")"
+          test "$(sudo cat "$victim/sentinel")" = keep
+          test "$(sudo ls -A "$victim")" = sentinel
+          test "$(sudo stat -f '%Su:%Sg %Lp' "$victim")" = "$victim_before"
+          refuse sudo test -e /var/db/writ
+          gone
+          # The runner's own files there were not the gate's to delete, so
+          # the rest went to a root-only leftover folder.
+          for l in /var/db/writ-leftover-*; do
+            [ -e "$l" ] || continue
+            echo "leftover: $(stat -f '%N %Su:%Sg %Lp' "$l")"
+            test "$(stat -f '%Su:%Sg %Lp' "$l")" = "root:wheel 700"
+          done
+      - name: stop the swapper and remove what it left
+        if: always()
+        run: |
+          kill "$(cat "$RUNNER_TEMP/swapper.pid" 2>/dev/null)" 2>/dev/null || true
+          sudo rm -rf /private/var/tmp/writ-victim /var/db/writ-leftover-*
+      - name: gate logs, on failure
+        if: failure()
+        run: |
+          sudo sh -c 'cat /var/db/writ/log/*.log' || true
+          sudo launchctl print system/org.writ.gate || true
+          sudo launchctl print system/org.writ.renew || true
+
   python:
     name: python ${{ matrix.python }} unit tests
     runs-on: ubuntu-latest

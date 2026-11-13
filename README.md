@@ -363,6 +363,7 @@ docs/design/                       04 six architectures, 05 threat model, 06 kil
 docs/spec/writ-v0.1.md             the specification
 docs/adoption.md                   adoption strategy and adapter designs
 docs/claude-code.md                Writ for Claude Code: the writ-hook adapter
+docs/enterprise.md                 Writ across an organization: one recommended path, built parts marked
 docs/directories.md                connecting a directory: mTLS certificates and bindings files
 docs/central-gate.md               one writ-hook gate serving many machines over mTLS
 docs/bindings.md                   Writ over MCP and A2A: what is built and what was tested
