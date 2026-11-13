@@ -12,10 +12,12 @@
 # /var/db/writ, makes keys and a grant as _writ, and starts the gate and a
 # renewal as LaunchDaemons. It never adopts state it did not just create; run
 # over a live gate, it leaves the state as it is. A failed or interrupted
-# install removes what that run created. uninstall stops everything running
-# as the gate, archives /var/db/writ into a root-only tar file in /var/db
-# (unless --purge), deletes it, and removes the account and the program. Root
-# never changes the owner of anything the gate could have shaped.
+# install removes what that run created. uninstall removes the gate's
+# crontab, stops everything running as the gate, has the gate archive
+# /var/db/writ into a root-only tar file in /var/db (unless --purge) and
+# empty it, removes what is left by name, and removes the account and the
+# program. Root never changes the owner of, or walks, anything the gate could
+# have shaped.
 #
 # WRIT_GATE_LIBEXEC sets the program folder (default /usr/local/libexec/writ;
 # uninstall needs the same value). WRIT_GATE_GRANT sets the standing grant
@@ -74,10 +76,13 @@ check_settings() {
 	[ "$name" = session ] || die "WRIT_GATE_GRANT must keep -name session"
 	case $uses in '' | *[!0-9]*) die "WRIT_GATE_GRANT must set -uses to a number above 0; without it, or with 0, the grant has no limit" ;; esac
 	[ "$uses" -gt 0 ] || die "WRIT_GATE_GRANT must set -uses to a number above 0; 0 means no limit"
+	case $uses in 0*) die "WRIT_GATE_GRANT: -uses must not start with 0, which Go reads as octal" ;; esac
 }
 
+# as_gate CMD...: run CMD as the gate's account, with the fixed PATH and
+# without root's terminal.
 as_gate() {
-	sudo -u "$GATE_USER" env -i HOME="$STATE" WRIT_HOME="$GATE_HOME" "$BIN" "$@"
+	sudo -u "$GATE_USER" env -i PATH="$PATH" HOME="$STATE" WRIT_HOME="$GATE_HOME" "$@" </dev/null
 }
 
 # plist LABEL INTERVAL ARG...: a LaunchDaemon run as the gate user. INTERVAL 0
@@ -130,9 +135,8 @@ attr() {
 	dscl . -read "/$1/$GATE_USER" "$2" 2>/dev/null | sed -n -e "s/^$2: //p" -e "s/^dsAttrTypeNative:$2: //p"
 }
 
-# stop_gate: kill everything running as the gate's uid, and check it stays
-# dead. STOP first, so nothing can fork between the two.
-stop_gate() {
+# bootout_wait: stop both daemons, and wait until launchd has let them go.
+bootout_wait() {
 	for l in $LABELS; do
 		launchctl bootout "system/$l" 2>/dev/null || true
 		i=0
@@ -142,6 +146,15 @@ stop_gate() {
 			i=$((i + 1))
 		done
 	done
+}
+
+# stop_gate: remove the gate's crontab, so cron cannot start it again, stop
+# its daemons and any launchd domain of its own, then kill everything running
+# as its uid, STOP first so nothing can fork between the two.
+stop_gate() {
+	crontab -u "$GATE_USER" -r 2>/dev/null || true
+	launchctl bootout "user/$GATE_ID" 2>/dev/null || true
+	bootout_wait
 	i=0
 	while pgrep -U "$GATE_ID" >/dev/null; do
 		[ $i -lt 20 ] || die "processes still run as uid $GATE_ID: $(pgrep -U "$GATE_ID" | tr '\n' ' ')"
@@ -152,20 +165,36 @@ stop_gate() {
 	done
 }
 
-# remove_state: delete /var/db/writ without following a link. find -xdev
-# stays on this volume, chflags -h acts on a link itself, and rm -rf removes
-# names: it does not follow symbolic links, and removing a hard link's name
-# leaves the file it shares an inode with alone.
+# remove_state: delete /var/db/writ without root walking it, since a folder
+# swapped for a symbolic link mid-walk would aim root's rm elsewhere. The
+# gate's own account empties home and run, so a swap can only aim it at what
+# the gate could delete anyway. Root then removes the two log files and the
+# four folders by name. If anything is left, such as a file another user put
+# there, the whole folder is moved aside, closed to everyone but root.
 remove_state() {
 	[ -e "$STATE" ] || [ -L "$STATE" ] || return 0
-	find "$STATE" -xdev -exec chflags -h nouchg,nouappnd,noschg {} + 2>/dev/null || true
-	rm -rf "$STATE"
-	{ [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; } || die "could not remove $STATE"
+	if dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
+		for d in "$GATE_HOME" "$RUN_DIR"; do
+			# shellcheck disable=SC2016 # expanded by the gate's sh, not here
+			as_gate /bin/sh -c 'cd "$1" && { chflags -R nouchg,nouappnd . ; rm -rf ./* ./.[!.]* ./..?* ; }' sh "$d" 2>/dev/null || true
+		done
+	fi
+	for l in $LABELS; do rm -f "$LOG_DIR/$l.log"; done
+	rmdir "$GATE_HOME" "$RUN_DIR" "$LOG_DIR" "$STATE" 2>/dev/null || true
+	[ -e "$STATE" ] || [ -L "$STATE" ] || return 0
+	left=/var/db/writ-leftover-$(date -u +%Y%m%dT%H%M%SZ)-$$
+	[ ! -e "$left" ] || die "$left exists"
+	mv "$STATE" "$left"
+	{ [ -d "$left" ] && [ ! -L "$left" ]; } || die "$left is not a directory"
+	chown root:wheel "$left"
+	chmod 700 "$left"
+	echo "writ-gate-macos: $STATE held files the gate could not delete; moved it to $left, root only. Inspect it by name, as root, without following links or extracting anything from it." >&2
 }
 
 install_gate() {
 	src=$1 want=$2
 	[ -f "$src" ] || die "no binary at $src"
+	[ -n "$want" ] || { [ ! -L "$src" ] && [ "$(stat -f %Su "$src")" = root ]; } || die "--no-checksum takes only a root-owned file that is not a symbolic link"
 	if [ -n "$want" ]; then
 		case $want in *[!0-9a-f]*) die "SHA256 must be 64 lowercase hex digits" ;; esac
 		[ ${#want} -eq 64 ] || die "SHA256 must be 64 lowercase hex digits"
@@ -194,6 +223,8 @@ install_gate() {
 		gids=$(dscl . -search /Groups PrimaryGroupID "$GATE_ID") || die "could not search the groups for gid $GATE_ID"
 		[ -z "$gids" ] || die "gid $GATE_ID is taken"
 		! pgrep -U "$GATE_ID" >/dev/null || die "processes run as uid $GATE_ID with no account $GATE_USER"
+		[ ! -e "/usr/lib/cron/tabs/$GATE_USER" ] || die "a crontab for $GATE_USER exists, /usr/lib/cron/tabs/$GATE_USER; remove it first"
+		[ -z "$(find /usr/lib/cron/jobs -user "$GATE_ID" 2>/dev/null)" ] || die "at jobs owned by uid $GATE_ID exist in /usr/lib/cron/jobs; remove them first"
 	fi
 	missing=''
 	d=$LIBEXEC
@@ -263,18 +294,16 @@ install_gate() {
 		chmod -h 0640 "$LOG_DIR/$l.log"
 	done
 
-	as_gate init
+	as_gate "$BIN" init
 	echo "standing grant: $GRANT_ARGS"
 	# shellcheck disable=SC2086 # GRANT_ARGS is a word list on purpose
-	as_gate $GRANT_ARGS
+	as_gate "$BIN" $GRANT_ARGS
 
 	[ -n "$live" ] || made_daemons=1
 	# shellcheck disable=SC2086
 	plist org.writ.renew 900 $GRANT_ARGS >/Library/LaunchDaemons/org.writ.renew.plist
 	plist org.writ.gate 0 serve -socket "$SOCKET" >/Library/LaunchDaemons/org.writ.gate.plist
-	for l in $LABELS; do
-		launchctl bootout "system/$l" 2>/dev/null || true
-	done
+	bootout_wait
 	# A stopped gate leaves its socket file; remove it, so the wait below
 	# sees the new gate's socket and not the old one.
 	rm -f "$SOCKET"
@@ -295,7 +324,7 @@ install_gate() {
 }
 
 # rollback runs when install exits early. It removes only what this run
-# created; a tree it created is new and root-shaped, so plain removal is safe.
+# created, the fresh state through the same remove_state as uninstall.
 # shellcheck disable=SC2329 # run by the EXIT trap in install_gate
 rollback() {
 	rc=$?
@@ -310,6 +339,7 @@ rollback() {
 		remove_state
 		dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 		dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
+		rm -f "/usr/lib/cron/tabs/$GATE_USER"
 	fi
 	[ -z "$made_tmp" ] || rm -f "$made_tmp"
 	[ -z "$made_bin" ] || rm -f "$BIN"
@@ -324,14 +354,16 @@ uninstall_gate() {
 	purge=$1
 	stop_gate
 	for l in $LABELS; do rm -f "/Library/LaunchDaemons/$l.plist"; done
-	if { [ -e "$STATE" ] || [ -L "$STATE" ]; } && [ -z "$purge" ]; then
-		# Root reads the tree into a file only root can read, which hands
-		# nothing to anyone. bsdtar, the macOS tar, stores symbolic links as
-		# links (it follows them only with -L or -H), stores hard links as
-		# links, and skips sockets with a warning.
+	if [ -z "$purge" ] && [ -d "$STATE" ] && dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
+		# The gate's account makes the archive, so it holds nothing the gate
+		# could not read; root only creates the file, mode 600, and writes
+		# the stream into it.
 		archive=/var/db/writ-archive-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar
 		(umask 077 && set -C && : >"$archive") || die "could not create $archive"
-		tar -cf "$archive" -C /var/db writ || echo "writ-gate-macos: tar warned (it skips sockets); check the archive" >&2
+		if ! as_gate tar -cf - -C /var/db writ >"$archive" || ! tar -tf "$archive" >/dev/null; then
+			rm -f "$archive"
+			die "tar could not archive $STATE as $GATE_USER, so nothing was removed; fix what it names, or run uninstall --purge to delete it without an archive"
+		fi
 		tar -tf "$archive" | grep -q '^writ/home/' || die "$archive holds no writ/home; $STATE was not removed"
 		echo "archived $STATE to $archive (root only); to list it: sudo tar -tvf $archive"
 		echo "to read the audit record: sudo tar -xOf $archive writ/home/claude/audit.jsonl"
@@ -339,9 +371,10 @@ uninstall_gate() {
 	remove_state
 	dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 	dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
+	rm -f "/usr/lib/cron/tabs/$GATE_USER"
 	rm -f "$BIN"
 	rmdir "$LIBEXEC" 2>/dev/null || true
-	echo "removed the daemons, $STATE, $BIN, and $GATE_USER"
+	echo "removed the daemons, the crontab, $STATE, $BIN, and $GATE_USER"
 }
 
 main() {

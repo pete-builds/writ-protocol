@@ -371,6 +371,9 @@ jobs:
           W chmod +a "everyone allow add_file,add_subdirectory,delete_child" "$RUN_DIR"
           W mkdir "$RUN_DIR/open"
           W chmod 0777 "$RUN_DIR/open"
+          echo '* * * * * /usr/bin/true' | sudo -u _writ crontab -
+          echo "as _writ, crontab: $(sudo crontab -u _writ -l)"
+          sudo test -f /usr/lib/cron/tabs/_writ
           echo "as _writ, planted:"
           sudo ls -lOe "$GATE_HOME"
           sudo ls -lde "$RUN_DIR" "$RUN_DIR/open"
@@ -389,6 +392,8 @@ jobs:
           refuse sudo test -e /var/db/writ
           refuse sudo test -L /var/db/writ
           echo "/var/db/writ is gone"
+          refuse sudo test -e /usr/lib/cron/tabs/_writ
+          echo "the crontab of _writ is gone"
           gone
           echo "no uid 350 process, account, daemon, or program"
           archive=$(sed -n 's/^archived .* to \(.*\.tar\) (root only).*/\1/p' "$RUNNER_TEMP/uninstall.txt")
@@ -410,6 +415,15 @@ jobs:
           echo "$out" | grep -q 'exists with no _writ account'
           sudo rmdir /var/db/writ
           gone
+          # A crontab left for _writ is refused, not inherited.
+          sudo sh -c 'echo "* * * * * /usr/bin/true" >/usr/lib/cron/tabs/_writ'
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install went ahead with a crontab for _writ in place"; exit 1
+          fi
+          echo "planted crontab: $out"
+          echo "$out" | grep -q 'a crontab for _writ exists'
+          sudo rm -f /usr/lib/cron/tabs/_writ
+          gone
           # A clean install makes a fresh tree the runner cannot write into.
           sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
           ls -lde /var/db/writ "$RUN_DIR" /var/db/writ/log
@@ -426,6 +440,19 @@ jobs:
       - name: uninstall archives the state and leaves no account, daemon, process, or binary
         run: |
           . "$RUNNER_TEMP/ci-helpers.sh"
+          # A file the gate cannot read makes its tar fail, and then nothing
+          # is removed.
+          sudo -u _writ /bin/sh -c ': >/var/db/writ/home/unreadable && chmod 000 /var/db/writ/home/unreadable'
+          n=$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)
+          if out=$(sudo /bin/bash "$SCRIPT" uninstall 2>&1); then
+            echo "::error::uninstall went on after tar failed"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q 'so nothing was removed'
+          sudo test -s "$GATE_HOME/root.seed"
+          test "$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)" -eq "$n"
+          echo "after the failed tar: the keys are still in /var/db/writ, and no archive was left"
+          sudo -u _writ chmod 600 /var/db/writ/home/unreadable
           sudo /bin/bash "$SCRIPT" uninstall
           gone
           test ! -e "$LIBEXEC"
@@ -460,6 +487,63 @@ jobs:
           refuse sudo test -e /var/db/writ
           test "$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)" -eq "$n"
           echo "uninstall --purge: no new archive, no /var/db/writ"
+      - name: a folder swapped for a symlink during uninstall cannot aim the deletion outside the tree
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          open=$RUN_DIR/open
+          victim=/private/var/tmp/writ-victim
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" >/dev/null
+          # The gate leaves a folder anyone can write in, as in the step
+          # above; the runner user then works inside it.
+          sudo -u _writ mkdir "$open"
+          sudo -u _writ chmod 0777 "$open"
+          sudo install -d -o root -g wheel -m 0700 "$victim"
+          sudo sh -c "echo keep >$victim/sentinel"
+          victim_before=$(sudo stat -f '%Su:%Sg %Lp' "$victim")
+          echo "victim: $victim $victim_before, holding $(sudo ls -A "$victim")"
+          # A large folder keeps rm busy while the folders after it flip
+          # between real folders and symlinks to the victim.
+          mkdir -m 0777 "$open/a-big"
+          (cd "$open/a-big" && seq 1 30000 | sed 's/^/f/' | xargs touch)
+          for i in $(seq -w 0 19); do mkdir -m 0777 "$open/z$i"; touch "$open/z$i/x"; done
+          cat >"$RUNNER_TEMP/swapper.sh" <<'EOF'
+          open=$1 victim=$2
+          while :; do
+            for i in $(seq -w 0 19); do
+              mv "$open/z$i" "$open/old-$i-$RANDOM" 2>/dev/null
+              ln -s "$victim" "$open/z$i" 2>/dev/null
+            done
+            for i in $(seq -w 0 19); do
+              rm -f "$open/z$i" 2>/dev/null
+              mkdir -m 0777 "$open/z$i" 2>/dev/null && touch "$open/z$i/x" 2>/dev/null
+            done
+          done
+          EOF
+          bash "$RUNNER_TEMP/swapper.sh" "$open" "$victim" &
+          echo $! >"$RUNNER_TEMP/swapper.pid"
+          trap 'kill "$(cat "$RUNNER_TEMP/swapper.pid")" 2>/dev/null || true' EXIT
+          sleep 1
+          sudo /bin/bash "$SCRIPT" uninstall --purge 2>&1 | tee "$RUNNER_TEMP/uninstall-swap.txt"
+          kill "$(cat "$RUNNER_TEMP/swapper.pid")"
+          echo "victim after uninstall: $victim $(sudo stat -f '%Su:%Sg %Lp' "$victim"), holding $(sudo ls -A "$victim")"
+          test "$(sudo cat "$victim/sentinel")" = keep
+          test "$(sudo ls -A "$victim")" = sentinel
+          test "$(sudo stat -f '%Su:%Sg %Lp' "$victim")" = "$victim_before"
+          refuse sudo test -e /var/db/writ
+          gone
+          # The runner's own files there were not the gate's to delete, so
+          # the rest went to a root-only leftover folder.
+          for l in /var/db/writ-leftover-*; do
+            [ -e "$l" ] || continue
+            echo "leftover: $(stat -f '%N %Su:%Sg %Lp' "$l")"
+            test "$(stat -f '%Su:%Sg %Lp' "$l")" = "root:wheel 700"
+          done
+      - name: stop the swapper and remove what it left
+        if: always()
+        run: |
+          kill "$(cat "$RUNNER_TEMP/swapper.pid" 2>/dev/null)" 2>/dev/null || true
+          sudo rm -rf /private/var/tmp/writ-victim /var/db/writ-leftover-*
       - name: gate logs, on failure
         if: failure()
         run: |
