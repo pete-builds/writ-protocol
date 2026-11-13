@@ -74,6 +74,152 @@ jobs:
           grep -q -- '--- PASS: TestRealVault' vault.log
           grep -q -- '--- PASS: TestGateSignsThroughVault' vault.log
 
+  # scripts/writ-gate-macos.sh, run for real: a hosted macOS runner has
+  # passwordless sudo, so the gate gets its own account and LaunchDaemons as
+  # on a laptop. The runner user then plays the AI agent's user: it must be
+  # refused the gate's keys, and its tool call must still be receipted
+  # through the socket. Each refusal is paired with the same read done as
+  # root, which must succeed, so a check that passes because a file is
+  # missing fails instead.
+  macos-gate:
+    name: macOS gate as its own user, real install with sudo
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      GATE_HOME: /var/db/writ/home
+      WRIT_HOOK_SOCKET: /var/db/writ/run/gate.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: impl/go/go.mod
+          cache: false # zero dependencies, so there is no go.sum to key a cache on
+      - name: build writ-hook and the writ verifier
+        working-directory: impl/go
+        run: |
+          go build -o "$RUNNER_TEMP/writ-hook" ./cmd/writ-hook
+          go build -o "$RUNNER_TEMP/writ" ./cmd/writ
+      - name: the runner user is not root, so it can stand in for the agent's user
+        run: |
+          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          id
+          test "$(id -u)" -ne 0
+          refuse dscl . -read /Users/_writ
+      - name: install refuses a binary whose SHA-256 does not match, before creating anything
+        run: |
+          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          if sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook" "$(printf '0%.0s' {1..64})"; then
+            echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
+          fi
+          refuse dscl . -read /Users/_writ
+      - name: install, with sudo
+        run: sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)"
+      - name: the gate runs as _writ under launchd
+        run: |
+          dscl . -read /Users/_writ UniqueID UserShell
+          sudo launchctl print system/org.writ.gate | grep -E '^[[:space:]]*(state|pid|username) ='
+          sudo launchctl print system/org.writ.renew >/dev/null
+          ps -axo user=,command= | grep '[w]rit-hook serve'
+          test "$(ps -axo user=,command= | awk '/[w]rit-hook serve/ {print $1}')" = _writ
+          ls -l /usr/local/bin/writ-hook "$WRIT_HOOK_SOCKET"
+          sudo ls -ld /var/db/writ "$GATE_HOME"
+      - name: control, the runner user cannot read the gate's keys, and root can
+        run: |
+          for f in root.seed claude/agent.seed claude/gate.seed; do
+            p=$GATE_HOME/$f
+            # Negative control: the file exists and root can read it, so the
+            # refusal below is a permission, not a missing file.
+            n=$(sudo cat "$p" | wc -c | tr -d ' ')
+            test "$n" -gt 0
+            echo "as root: read $p, $n bytes"
+            if out=$(cat "$p" 2>&1); then
+              echo "::error::the runner user read $p"; exit 1
+            fi
+            echo "as $(id -un): $out"
+            case $out in *"Permission denied"*) ;; *) echo "::error::refused, but not for permission: $out"; exit 1 ;; esac
+          done
+          if out=$(ls "$GATE_HOME" 2>&1); then
+            echo "::error::the runner user listed $GATE_HOME"; exit 1
+          fi
+          echo "as $(id -un): $out"
+          echo "as root: $(sudo ls "$GATE_HOME" | tr '\n' ' ')"
+      - name: a tool call through the socket is admitted and receipted
+        run: |
+          pre='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1"}'
+          post='{"hook_event_name":"PostToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1","tool_response":"ci-response"}'
+          out=$(printf '%s' "$pre" | /usr/local/bin/writ-hook pre)
+          if [ -n "$out" ]; then echo "::error::pre did not admit the call: $out"; exit 1; fi
+          echo "pre toolu_ci_1: admitted (the gate printed no decision)"
+          out=$(printf '%s' "$post" | /usr/local/bin/writ-hook post)
+          if [ -n "$out" ]; then echo "::error::post: $out"; exit 1; fi
+          echo "post toolu_ci_1: done"
+          # A call naming the gate's own keys is refused by the gate itself.
+          bad='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/var/db/writ/home/root.seed"},"tool_use_id":"toolu_ci_2"}'
+          out=$(printf '%s' "$bad" | /usr/local/bin/writ-hook pre)
+          echo "pre toolu_ci_2: $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          /usr/local/bin/writ-hook receipts | tee "$RUNNER_TEMP/receipts.txt"
+          grep -q '^1 receipt(s) verified, 0 invalid, 0 call(s) still unfinished$' "$RUNNER_TEMP/receipts.txt"
+          grep -q '^1 refusal(s) in the audit record$' "$RUNNER_TEMP/receipts.txt"
+      - name: the receipt verifies with the writ verifier, outside the gate
+        run: |
+          # The store is the gate's private state; an auditor copies it out
+          # as root, then checks the receipt with nothing but the verifier.
+          d=$RUNNER_TEMP/receipt
+          mkdir -p "$d"
+          sudo sh -c "cat $GATE_HOME/claude/stores/*.json" >"$d/stores.json"
+          jq -s '[.[].calls[] | select(.tally != null)]' "$d/stores.json" >"$d/done.json"
+          jq -e 'length == 1' "$d/done.json"
+          jq '.[0].call' "$d/done.json" >"$d/call.json"
+          jq '.[0].call.chain[-1]' "$d/done.json" >"$d/leaf.json"
+          jq '.[0].tally' "$d/done.json" >"$d/tally.json"
+          # The grant is the gate's grantor's, not some other key's.
+          test "$(jq -r '.chain[0].iss' "$d/call.json")" = "$(sudo cat "$GATE_HOME/root.did" | tr -d '\n')"
+          # The receipt commits to the response this job sent, by hash.
+          sum=$(printf '%s' '"ci-response"' | shasum -a 256 | cut -d' ' -f1)
+          printf '{"tool_use_id":"toolu_ci_1","response_sha256":"%s"}' "$sum" >"$d/res.json"
+          "$RUNNER_TEMP/writ" verify -writ "$d/leaf.json" -call "$d/call.json" -tally "$d/tally.json" -res "$d/res.json" | tee "$d/verdict.json"
+          jq -e '.verdict == "valid" and .st == "ok"' "$d/verdict.json"
+          # Negative control: a different response must not verify.
+          bad=$(printf '%s' '"other-response"' | shasum -a 256 | cut -d' ' -f1)
+          printf '{"tool_use_id":"toolu_ci_1","response_sha256":"%s"}' "$bad" >"$d/res-bad.json"
+          if "$RUNNER_TEMP/writ" verify -writ "$d/leaf.json" -call "$d/call.json" -tally "$d/tally.json" -res "$d/res-bad.json"; then
+            echo "::error::the verifier accepted a receipt for a response it does not commit to"; exit 1
+          fi
+      - name: uninstall leaves no account, daemon, process, or binary
+        run: |
+          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          sudo bash scripts/writ-gate-macos.sh uninstall
+          refuse sudo launchctl print system/org.writ.gate
+          refuse sudo launchctl print system/org.writ.renew
+          test ! -e /Library/LaunchDaemons/org.writ.gate.plist
+          test ! -e /Library/LaunchDaemons/org.writ.renew.plist
+          test ! -e /usr/local/bin/writ-hook
+          refuse dscl . -read /Users/_writ
+          refuse dscl . -read /Groups/_writ
+          test -z "$(dscl . -search /Users UniqueID 350)"
+          refuse pgrep -U 350
+          # With the gate gone, a hook fails closed.
+          out=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_3"}' | "$RUNNER_TEMP/writ-hook" pre)
+          echo "pre after uninstall: $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          # The state stays by design (keys and receipts), still closed to
+          # the runner user.
+          sudo test -s "$GATE_HOME/root.seed"
+          refuse cat "$GATE_HOME/root.seed"
+          echo "left in place, as documented: $(sudo ls /var/db/writ | tr '\n' ' ')"
+      - name: gate logs, on failure
+        if: failure()
+        run: |
+          sudo sh -c 'cat /var/db/writ/log/*.log' || true
+          sudo launchctl print system/org.writ.gate || true
+          sudo launchctl print system/org.writ.renew || true
+
   python:
     name: python ${{ matrix.python }} unit tests
     runs-on: ubuntu-latest
