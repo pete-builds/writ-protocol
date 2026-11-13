@@ -114,7 +114,7 @@ Where the gate runs is the choice that matters. The code is the same in each cas
 
 | Where the gate runs | What keeps Claude out | Tested here |
 |---|---|---|
-| **A second OS user on the same machine** | the operating system: your user cannot read the gate user's files, and granting needs `sudo -u` | no; the socket and the gate are tested, but under one user |
+| **A second OS user on the same machine** | the operating system: your user cannot read the gate user's files, and granting needs `sudo -u` | yes on macOS, on every CI run: the `macos-gate` job in `.github/workflows/ci.yml` runs `scripts/writ-gate-macos.sh` with sudo on a GitHub-hosted Mac (below); the Linux steps have not been run |
 | **The same user, with Claude Code's own sandbox denying its tools the gate's directory** | the sandbox | no |
 | **Another machine**, reached over the network | the keys are never on the machine the tools run on | yes, on loopback: `serve -listen` with mutual TLS, run with Claude Code on 2026-10-02 ([central-gate.md](central-gate.md)) |
 
@@ -148,6 +148,8 @@ The hooks then carry each event to the socket, and the grant hooks go away:
 ```
 
 Moving from a gate that ran in place, `retire` moves the old `WRIT_HOME`'s three seed files into a root-only folder once the hooks point at the socket. Its receipts still verify, because `receipts` needs only `root.did`, but its keys can no longer sign. `uninstall` removes the daemons, the account, and the binary, and leaves the state.
+
+The `macos-gate` CI job runs `install` and `uninstall` for real on a GitHub-hosted macOS runner (first green on macOS 26.7.2, arm64), whose own user plays the user Claude Code's tools run as. It requires that user's `cat` of each of the three seeds under `/var/db/writ/home`, and its `ls` of that folder, to fail with `Permission denied`, while root reads the same files, so a missing file cannot pass as a refusal. It sends a Read call's `pre` and `post` events through the socket, as the hooks above would, and requires the call admitted, a call naming the gate's keys refused, `receipts` to report one verified receipt and an intact audit record, and the receipt, copied out as root, to verify with `writ verify` against the response it sent, while a different response must not. After `uninstall` it requires no `_writ` account, daemon, process, or binary, and `pre` to block the next call. The events are written by the job, not sent by a Claude Code session, and `retire` and `unretire` are not run.
 
 What the socket still allows: any local process can send `pre` and `post` events, so a model with a shell could report a false outcome for one of its own calls in flight, or spend its own grant's `uses`. It cannot widen a grant, read a key, or sign a receipt for work the gate did not admit.
 
