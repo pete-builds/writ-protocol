@@ -3,7 +3,8 @@ package jcs
 import "errors"
 
 // MaxDepth is the nesting limit of spec section 1.1 rule 7: arrays and
-// objects nest at most 64 levels, the outermost value being level 1.
+// objects nest at most 64 levels, the outermost array or object being level
+// 1; a scalar does not add a level.
 const MaxDepth = 64
 
 // ErrTooDeep is returned when a value nests deeper than MaxDepth. It maps to
