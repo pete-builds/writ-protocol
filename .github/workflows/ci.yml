@@ -117,6 +117,51 @@ jobs:
             echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
           fi
           refuse dscl . -read /Users/_writ
+      # A fresh Apple Silicon Mac may have no /usr/local/bin. The runner's is
+      # moved aside for this step and put back at its end (or by the next
+      # step, if this one fails).
+      - name: with no /usr/local/bin, a failed install undoes itself and a good one makes the folder
+        run: |
+          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          gone() {
+            refuse dscl . -read /Users/_writ
+            refuse dscl . -read /Groups/_writ
+            refuse sudo launchctl print system/org.writ.gate
+            refuse sudo launchctl print system/org.writ.renew
+            test ! -e /Library/LaunchDaemons/org.writ.gate.plist
+            test ! -e /Library/LaunchDaemons/org.writ.renew.plist
+            refuse pgrep -U 350
+          }
+          sudo mv /usr/local/bin /usr/local/bin.ci-aside
+          test ! -e /usr/local/bin
+          echo "/usr/local/bin moved aside"
+          # /usr/bin/false as the binary fails at key setup, after the folder,
+          # the binary, the account, and the state exist; all must go.
+          if sudo bash scripts/writ-gate-macos.sh install /usr/bin/false; then
+            echo "::error::install of a binary that cannot run succeeded"; exit 1
+          fi
+          gone
+          test ! -e /usr/local/bin
+          test ! -e /var/db/writ
+          echo "after the failed install: no _writ account, no daemons, no /usr/local/bin, no /var/db/writ"
+          sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook"
+          echo "made: $(stat -f '%N %Su:%Sg %Lp' /usr/local/bin)"
+          test "$(stat -f '%Su:%Sg %Lp' /usr/local/bin)" = "root:wheel 755"
+          sudo bash scripts/writ-gate-macos.sh uninstall
+          gone
+          test ! -e /usr/local/bin/writ-hook
+          echo "after uninstall: no _writ account, no daemons, no process, no binary"
+          # The runner as it was, and no state carried into the next install.
+          sudo rmdir /usr/local/bin
+          sudo mv /usr/local/bin.ci-aside /usr/local/bin
+          sudo rm -rf /var/db/writ
+      - name: put /usr/local/bin back, if the step above failed
+        if: failure()
+        run: |
+          if [ -d /usr/local/bin.ci-aside ]; then
+            sudo rm -rf /usr/local/bin
+            sudo mv /usr/local/bin.ci-aside /usr/local/bin
+          fi
       - name: install, with sudo
         run: sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)"
       - name: the gate runs as _writ under launchd

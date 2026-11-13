@@ -12,6 +12,8 @@
 # given), makes fresh keys and a rolling grant as _writ, and starts two
 # LaunchDaemons as _writ: the gate on a Unix socket, and a renewal that keeps
 # the grant fresh. Point the hooks at the socket afterwards (docs/claude-code.md).
+# It makes /usr/local/bin if the Mac has none, and if any step fails it undoes
+# what that run created, so a first install either completes or leaves nothing.
 #
 # retire moves the three seed files of a gate that ran in place, as your user,
 # into a root-only directory, so they can no longer sign; its receipts still
@@ -90,9 +92,31 @@ install_gate() {
 		[ "$got" = "$want" ] || die "$src has SHA-256 $got, not $want"
 	fi
 
-	if ! dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
+	have_user=
+	if dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
+		have_user=1
+	else
 		[ -z "$(dscl . -search /Users UniqueID "$GATE_ID")" ] || die "uid $GATE_ID is taken"
 		[ -z "$(dscl . -search /Groups PrimaryGroupID "$GATE_ID")" ] || die "gid $GATE_ID is taken"
+	fi
+
+	# From here on a failure undoes what this run created (rollback), so a
+	# first install either completes or leaves nothing behind.
+	made_bindir='' made_bin='' made_state='' made_user='' made_daemons=''
+	trap rollback EXIT
+
+	# A fresh Mac has no /usr/local/bin; make it as macOS does.
+	bindir=$(dirname "$BIN")
+	if [ ! -d "$bindir" ]; then
+		made_bindir=$bindir
+		install -d -o root -g wheel -m 0755 "$bindir"
+	fi
+	[ -e "$BIN" ] || made_bin=1
+	install -o root -g wheel -m 0755 "$src" "$BIN"
+	[ -e "$STATE" ] || made_state=1
+
+	if [ -z "$have_user" ]; then
+		made_user=1
 		dscl . -create "/Groups/$GATE_USER"
 		dscl . -create "/Groups/$GATE_USER" PrimaryGroupID "$GATE_ID"
 		dscl . -create "/Groups/$GATE_USER" RealName "Writ gate"
@@ -108,7 +132,6 @@ install_gate() {
 		echo "created $GATE_USER ($GATE_ID)"
 	fi
 
-	install -o root -g wheel -m 0755 "$src" "$BIN"
 	install -d -o root -g wheel -m 0755 "$STATE"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0700 "$GATE_HOME"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0755 "$RUN_DIR"
@@ -118,6 +141,7 @@ install_gate() {
 	# shellcheck disable=SC2086 # GRANT_ARGS is a word list on purpose
 	as_gate $GRANT_ARGS
 
+	[ -e "/Library/LaunchDaemons/$GATE_LABEL.plist" ] || [ -e "/Library/LaunchDaemons/$RENEW_LABEL.plist" ] || made_daemons=1
 	# shellcheck disable=SC2086
 	plist "$RENEW_LABEL" 900 $GRANT_ARGS >"/Library/LaunchDaemons/$RENEW_LABEL.plist"
 	plist "$GATE_LABEL" 0 serve -socket "$SOCKET" >"/Library/LaunchDaemons/$GATE_LABEL.plist"
@@ -131,8 +155,33 @@ install_gate() {
 	i=0
 	while [ ! -S "$SOCKET" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 	[ -S "$SOCKET" ] || die "the gate did not open $SOCKET; see $LOG_DIR/$GATE_LABEL.log"
+	trap - EXIT
 	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$BIN"
 	echo "gate listening on $SOCKET as $GATE_USER; set WRIT_HOOK_SOCKET=$SOCKET in the hooks"
+}
+
+# rollback runs when install exits early. It removes only what this run
+# created, so a failed reinstall keeps the account, keys, and receipts that
+# were there before it.
+rollback() {
+	rc=$?
+	[ "$rc" -ne 0 ] || return 0
+	echo "writ-gate-macos: install failed; undoing what this run created" >&2
+	if [ -n "$made_daemons" ]; then
+		for l in "$GATE_LABEL" "$RENEW_LABEL"; do
+			launchctl bootout "system/$l" 2>/dev/null || true
+			rm -f "/Library/LaunchDaemons/$l.plist"
+		done
+	fi
+	if [ -n "$made_user" ]; then
+		dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
+		dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
+	fi
+	[ -z "$made_state" ] || rm -rf "$STATE"
+	[ -z "$made_bin" ] || rm -f "$BIN"
+	[ -z "$made_bindir" ] || rmdir "$made_bindir" 2>/dev/null || true
+	echo "writ-gate-macos: undone" >&2
+	exit "$rc"
 }
 
 seeds() { echo "$1/root.seed $1/claude/agent.seed $1/claude/gate.seed"; }
