@@ -194,7 +194,7 @@ jobs:
               echo "::error::install accepted WRIT_GATE_GRANT=$g"; exit 1
             fi
             echo "WRIT_GATE_GRANT=$g: $out"
-            echo "$out" | grep -q 'WRIT_GATE_GRANT must'
+            echo "$out" | grep -q 'writ-gate-macos: WRIT_GATE_GRANT'
           done
           # A stray _writ group with no _writ account is not taken over.
           sudo dscl . -create /Groups/_writ
