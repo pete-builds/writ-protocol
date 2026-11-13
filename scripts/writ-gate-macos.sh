@@ -3,7 +3,6 @@
 # run as cannot read the gate's keys, grants, store, or audit record.
 #
 #   sudo /bin/bash writ-gate-macos.sh install BINARY SHA256
-#   sudo /bin/bash writ-gate-macos.sh install --no-checksum BINARY
 #   sudo /bin/bash writ-gate-macos.sh uninstall [--purge]
 #
 # Run it from a fresh clone at a commit you reviewed (docs/claude-code.md has
@@ -79,10 +78,20 @@ check_settings() {
 	case $uses in 0*) die "WRIT_GATE_GRANT: -uses must not start with 0, which Go reads as octal" ;; esac
 }
 
-# as_gate CMD...: run CMD as the gate's account, from /, with the fixed PATH
-# and without root's terminal.
+# as_gate CMD...: run CMD as the gate's account, from /, with the fixed PATH,
+# in a new session with no controlling terminal (setsid, through the system
+# perl), its stdin /dev/null and its stdout and stderr pipes, which cat
+# passes on; so it holds no descriptor for root's terminal and cannot open
+# /dev/tty. Its exit status is kept.
 as_gate() {
-	(cd / && sudo -u "$GATE_USER" env -i PATH="$PATH" HOME="$STATE" WRIT_HOME="$GATE_HOME" "$@" </dev/null)
+	(
+		set -o pipefail
+		cd /
+		# shellcheck disable=SC2016 # perl's own code
+		{ /usr/bin/perl -MPOSIX -e 'POSIX::setsid() != -1 or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' \
+			sudo -u "$GATE_USER" env -i PATH="$PATH" HOME="$STATE" WRIT_HOME="$GATE_HOME" "$@" \
+			</dev/null 2>&1 >&3 3>&- | cat >&2; } 3>&1 | cat
+	)
 }
 
 # plist LABEL INTERVAL ARG...: a LaunchDaemon run as the gate user. INTERVAL 0
@@ -117,6 +126,7 @@ safe_dir() {
 	owner=${info% *} mode=${info#* }
 	[ "$owner" = root ] || die "$1 is owned by $owner, not root, so that user could replace the gate's program; choose WRIT_GATE_LIBEXEC under root-owned folders"
 	[ $((8#$mode & 8#022)) -eq 0 ] || die "$1 has mode $mode, writable by its group or by everyone, so they could replace the gate's program"
+	[ -z "$(find "$1" -maxdepth 0 -acl)" ] || die "$1 carries an ACL, which could let another user replace the gate's program"
 }
 
 # expect_dir DIR OWNER:GROUP MODE: a tripwire for a live install, not a
@@ -196,12 +206,9 @@ remove_state() {
 
 install_gate() {
 	src=$1 want=$2
-	[ -f "$src" ] || die "no binary at $src"
-	[ -n "$want" ] || { [ ! -L "$src" ] && [ "$(stat -f %Su "$src")" = root ]; } || die "--no-checksum takes only a root-owned file that is not a symbolic link"
-	if [ -n "$want" ]; then
-		case $want in *[!0-9a-f]*) die "SHA256 must be 64 lowercase hex digits" ;; esac
-		[ ${#want} -eq 64 ] || die "SHA256 must be 64 lowercase hex digits"
-	fi
+	{ [ ! -L "$src" ] && [ -f "$src" ]; } || die "$src must be a regular file, not a symbolic link"
+	case $want in *[!0-9a-f]*) die "SHA256 must be 64 lowercase hex digits" ;; esac
+	[ ${#want} -eq 64 ] || die "SHA256 must be 64 lowercase hex digits"
 
 	# Every check that can refuse runs before anything is created.
 	live=''
@@ -256,13 +263,13 @@ install_gate() {
 	safe_dir "$LIBEXEC"
 
 	# Hash the copy root now holds, not the source, which its owner could
-	# change between the check and the copy.
+	# change between the check and the copy. The copy stops at 256 MiB, and
+	# a mismatch names no hash, so a source swapped for something else can
+	# neither fill the disk nor reveal what it was.
 	made_tmp=$(mktemp "$LIBEXEC/.writ-hook.XXXXXX")
-	cat "$src" >"$made_tmp"
-	if [ -n "$want" ]; then
-		got=$(shasum -a 256 "$made_tmp" | cut -d' ' -f1)
-		[ "$got" = "$want" ] || die "$src has SHA-256 $got, not $want"
-	fi
+	head -c 268435456 "$src" >"$made_tmp"
+	got=$(shasum -a 256 "$made_tmp" | cut -d' ' -f1)
+	[ "$got" = "$want" ] || die "$src does not match SHA-256 $want"
 	chown root:wheel "$made_tmp"
 	chmod 0755 "$made_tmp"
 	[ -e "$BIN" ] || made_bin=1
@@ -355,6 +362,8 @@ rollback() {
 
 uninstall_gate() {
 	purge=$1
+	! dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1 || [ "$(attr Users UniqueID)" = "$GATE_ID" ] ||
+		die "$GATE_USER has uid $(attr Users UniqueID), not $GATE_ID; nothing was changed"
 	stop_gate
 	for l in $LABELS; do rm -f "/Library/LaunchDaemons/$l.plist"; done
 	if [ -z "$purge" ] && [ -d "$STATE" ] && dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
@@ -369,15 +378,21 @@ uninstall_gate() {
 		fi
 		tar -tf "$archive" | grep -q '^writ/home/' || die "$archive holds no writ/home; $STATE was not removed"
 		echo "archived $STATE to $archive (root only); to list it: sudo tar -tvf $archive"
-		echo "to read the audit record: sudo tar -xOf $archive writ/home/claude/audit.jsonl"
+		echo "to check the audit record: sudo tar -xOf $archive writ/home/claude/audit.jsonl >audit.jsonl && writ audit audit.jsonl"
 	fi
 	remove_state
+	# A gate still running could have put its crontab back after the first
+	# removal, so remove it and kill once more.
+	! dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1 || stop_gate
 	dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 	dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
 	rm -f "/usr/lib/cron/tabs/$GATE_USER"
+	find /usr/lib/cron/jobs -maxdepth 1 -type f -user "$GATE_ID" -exec rm -f {} + 2>/dev/null || true
 	rm -f "$BIN"
 	rmdir "$LIBEXEC" 2>/dev/null || true
 	echo "removed the daemons, the crontab, $BIN, and $GATE_USER"
+	! pgrep -U "$GATE_ID" >/dev/null ||
+		echo "writ-gate-macos: WARNING: processes still run as uid $GATE_ID: $(pgrep -U "$GATE_ID" | tr '\n' ' ')" >&2
 }
 
 main() {
@@ -387,13 +402,8 @@ main() {
 	echo "program folder: $LIBEXEC"
 	case "${1:-}" in
 	install)
-		if [ "${2:-}" = --no-checksum ]; then
-			[ $# -eq 3 ] || die "install --no-checksum BINARY"
-			install_gate "$3" ""
-		else
-			[ $# -eq 3 ] || die "install BINARY SHA256 (or install --no-checksum BINARY)"
-			install_gate "$2" "$3"
-		fi
+		[ $# -eq 3 ] || die "install BINARY SHA256"
+		install_gate "$2" "$3"
 		;;
 	uninstall)
 		case "${2:-}" in
@@ -402,7 +412,7 @@ main() {
 		*) die "uninstall [--purge]" ;;
 		esac
 		;;
-	*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall [--purge]" ;;
+	*) die "usage: install BINARY SHA256 | uninstall [--purge]" ;;
 	esac
 }
 

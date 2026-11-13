@@ -107,6 +107,15 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/writ-hook" ./cmd/writ-hook
           go build -o "$RUNNER_TEMP/writ" ./cmd/writ
+      - name: root never walks the state tree (static check, with a control)
+        run: |
+          sh scripts/check-gate-script.sh
+          cp scripts/writ-gate-macos.sh "$RUNNER_TEMP/gate-with-rm.sh"
+          # shellcheck disable=SC2016 # the line added is literal text
+          printf '\trm -rf "$STATE"\n' >>"$RUNNER_TEMP/gate-with-rm.sh"
+          if sh scripts/check-gate-script.sh "$RUNNER_TEMP/gate-with-rm.sh"; then
+            echo "::error::the static check passed a root-run rm -rf of the state"; exit 1
+          fi
       - name: the runner user is not root, so it can stand in for the agent's user
         run: |
           cat >"$RUNNER_TEMP/ci-helpers.sh" <<'EOF'
@@ -142,14 +151,22 @@ jobs:
         run: |
           . "$RUNNER_TEMP/ci-helpers.sh"
           if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" 2>&1); then
-            echo "::error::install ran with no checksum and no --no-checksum"; exit 1
+            echo "::error::install ran with no checksum"; exit 1
           fi
           echo "no checksum: $out"
           if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" "$(printf '0%.0s' {1..64})" 2>&1); then
             echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
           fi
           echo "wrong checksum: $out"
-          echo "$out" | grep -q 'has SHA-256'
+          echo "$out" | grep -q 'does not match SHA-256'
+          # A source that is a symbolic link is refused, so root never reads
+          # whatever a link points at.
+          ln -sf "$RUNNER_TEMP/writ-hook" "$RUNNER_TEMP/writ-hook-link"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook-link" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)" 2>&1); then
+            echo "::error::install read a source through a symbolic link"; exit 1
+          fi
+          echo "symlinked source: $out"
+          echo "$out" | grep -q 'must be a regular file, not a symbolic link'
           gone
           test ! -e "$LIBEXEC"
           test ! -e /var/db/writ
