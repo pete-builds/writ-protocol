@@ -110,9 +110,11 @@ safe_dir() {
 	[ $((8#$mode & 8#022)) -eq 0 ] || die "$1 has mode $mode, writable by its group or by everyone, so they could replace the gate's program"
 }
 
-# user_attr NAME: one attribute of the gate account, as dscl prints it.
+# user_attr NAME: one attribute of the gate account, as dscl prints it. dscl
+# prints an attribute it has no standard name for, such as IsHidden, with a
+# dsAttrTypeNative: prefix.
 user_attr() {
-	dscl . -read "/Users/$GATE_USER" "$1" 2>/dev/null | sed -n "s/^$1: //p"
+	dscl . -read "/Users/$GATE_USER" "$1" 2>/dev/null | sed -n -e "s/^$1: //p" -e "s/^dsAttrTypeNative:$1: //p"
 }
 
 install_gate() {
@@ -130,7 +132,7 @@ install_gate() {
 		[ "$(user_attr PrimaryGroupID)" = "$GATE_ID" ] || die "$GATE_USER exists with primary group $(user_attr PrimaryGroupID), not $GATE_ID"
 		[ "$(user_attr UserShell)" = /usr/bin/false ] || die "$GATE_USER exists with shell $(user_attr UserShell), not /usr/bin/false"
 		[ "$(user_attr IsHidden)" = 1 ] || die "$GATE_USER exists and is not hidden"
-		[ "$(user_attr Password)" = '*' ] || die "$GATE_USER exists with a password"
+		[ "$(user_attr Password)" = '*' ] || die "$GATE_USER exists with password field \"$(user_attr Password)\", not \"*\""
 		have_user=1
 	else
 		uids=$(dscl . -search /Users UniqueID "$GATE_ID") || die "could not search the accounts for uid $GATE_ID"
