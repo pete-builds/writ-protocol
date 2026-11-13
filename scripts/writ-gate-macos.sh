@@ -2,45 +2,61 @@
 # Run the writ-hook gate as its own macOS user, so the user Claude Code's tools
 # run as cannot read the gate's keys, grants, store, or audit record.
 #
-#   sudo bash writ-gate-macos.sh install BINARY [SHA256]
-#   sudo bash writ-gate-macos.sh retire OLD_WRIT_HOME
-#   sudo bash writ-gate-macos.sh unretire OLD_WRIT_HOME
-#   sudo bash writ-gate-macos.sh uninstall
+#   sudo /bin/bash writ-gate-macos.sh install BINARY SHA256
+#   sudo /bin/bash writ-gate-macos.sh install --no-checksum BINARY
+#   sudo /bin/bash writ-gate-macos.sh uninstall
+#
+# Run it from a fresh clone at a commit you reviewed, never from a working tree
+# the agent can write, and take SHA256 from somewhere the agent cannot write
+# either: a release page, or a build in that clean clone.
 #
 # install creates a hidden account (_writ, no shell, no password), copies
-# BINARY to a root-owned path (refusing it unless its SHA-256 matches, when
-# given), makes fresh keys and a rolling grant as _writ, and starts two
-# LaunchDaemons as _writ: the gate on a Unix socket, and a renewal that keeps
-# the grant fresh. Point the hooks at the socket afterwards (docs/claude-code.md).
-# It makes /usr/local/bin if the Mac has none, and if any step fails it undoes
-# what that run created, so a first install either completes or leaves nothing.
-#
-# retire moves the three seed files of a gate that ran in place, as your user,
-# into a root-only directory, so they can no longer sign; its receipts still
-# verify, since `writ-hook receipts` needs only root.did. Run it after the
-# hooks point at the socket. unretire puts them back.
+# BINARY into a root-owned folder (refusing it unless its SHA-256 matches),
+# makes keys and a rolling grant as _writ, and starts two LaunchDaemons as
+# _writ: the gate on a Unix socket, and a renewal that keeps the grant fresh.
+# Point the hooks at the socket afterwards (docs/claude-code.md). It refuses a
+# program folder that any directory above makes writable by someone other than
+# root, and if any step fails or is interrupted it undoes what that run
+# created, so a first install either completes or leaves nothing behind.
 #
 # uninstall stops both daemons and removes the account and the binary. It
-# leaves the state directory, which holds the keys and receipts, in place.
+# leaves the state directory, which holds the keys and receipts, in place,
+# owned by root, so no account later given the gate's uid can read it.
+#
+# Two settings, for testing and narrowing, read from the environment:
+#   WRIT_GATE_LIBEXEC  the program folder (default /usr/local/libexec/writ)
+#   WRIT_GATE_GRANT    the standing grant the install signs and the renewal
+#                      keeps (default "grant -name session -uses 10000 -ttl
+#                      24h -renew-before 22h": any tool, any path)
 set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
 
 GATE_USER=_writ
 GATE_ID=350
-BIN=/usr/local/bin/writ-hook
+LIBEXEC=${WRIT_GATE_LIBEXEC:-/usr/local/libexec/writ}
+BIN=$LIBEXEC/writ-hook
 STATE=/var/db/writ
 GATE_HOME=$STATE/home
 RUN_DIR=$STATE/run
 SOCKET=$RUN_DIR/gate.sock
 LOG_DIR=$STATE/log
-RETIRED=$STATE/retired
 GATE_LABEL=org.writ.gate
 RENEW_LABEL=org.writ.renew
-GRANT_ARGS="grant -name session -uses 10000 -ttl 24h -renew-before 22h"
+GRANT_ARGS=${WRIT_GATE_GRANT:-grant -name session -uses 10000 -ttl 24h -renew-before 22h}
 
 die() { echo "writ-gate-macos: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run it with sudo"
 [ "$(uname -s)" = Darwin ] || die "macOS only; on Linux see docs/claude-code.md"
+case $LIBEXEC in /*) ;; *) die "WRIT_GATE_LIBEXEC must be an absolute path" ;; esac
+case $LIBEXEC in *[!A-Za-z0-9/._-]*) die "WRIT_GATE_LIBEXEC holds a character other than letters, digits, and / . _ -" ;; esac
+case $GRANT_ARGS in
+grant\ *) ;;
+*) die "WRIT_GATE_GRANT must start with \"grant \"" ;;
+esac
+case $GRANT_ARGS in *[!A-Za-z0-9\ ,._/-]*) die "WRIT_GATE_GRANT holds a character other than letters, digits, space, and , . _ / -" ;; esac
 
 as_gate() {
 	sudo -u "$GATE_USER" env -i HOME="$STATE" WRIT_HOME="$GATE_HOME" "$BIN" "$@"
@@ -78,41 +94,89 @@ plist() {
 }
 
 start() {
-	path=/Library/LaunchDaemons/$1.plist
 	launchctl bootout "system/$1" 2>/dev/null || true
 	launchctl enable "system/$1"
-	launchctl bootstrap system "$path"
+	launchctl bootstrap system "/Library/LaunchDaemons/$1.plist"
+}
+
+# safe_dir DIR: refuse DIR unless it is a real directory owned by root that
+# neither its group nor others can write, since whoever can write a folder can
+# rename what is in it and put their own program in its place.
+safe_dir() {
+	[ ! -L "$1" ] || die "$1 is a symbolic link; the program folder and every folder above it must be real directories"
+	info=$(stat -f '%Su %Lp' "$1") || die "cannot stat $1"
+	owner=${info% *} mode=${info#* }
+	[ "$owner" = root ] || die "$1 is owned by $owner, not root, so that user could replace the gate's program; choose WRIT_GATE_LIBEXEC under root-owned folders"
+	[ $((8#$mode & 8#022)) -eq 0 ] || die "$1 has mode $mode, writable by its group or by everyone, so they could replace the gate's program"
+}
+
+# user_attr NAME: one attribute of the gate account, as dscl prints it.
+user_attr() {
+	dscl . -read "/Users/$GATE_USER" "$1" 2>/dev/null | sed -n "s/^$1: //p"
 }
 
 install_gate() {
-	src=$1 want=${2:-}
+	src=$1 want=$2
 	[ -f "$src" ] || die "no binary at $src"
 	if [ -n "$want" ]; then
-		got=$(shasum -a 256 "$src" | cut -d' ' -f1)
-		[ "$got" = "$want" ] || die "$src has SHA-256 $got, not $want"
+		case $want in *[!0-9a-f]*) die "SHA256 must be 64 lowercase hex digits" ;; esac
+		[ ${#want} -eq 64 ] || die "SHA256 must be 64 lowercase hex digits"
 	fi
 
-	have_user=
+	# Every check that can refuse runs before anything is created.
+	have_user=''
 	if dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
+		[ "$(user_attr UniqueID)" = "$GATE_ID" ] || die "$GATE_USER exists with uid $(user_attr UniqueID), not $GATE_ID"
+		[ "$(user_attr PrimaryGroupID)" = "$GATE_ID" ] || die "$GATE_USER exists with primary group $(user_attr PrimaryGroupID), not $GATE_ID"
+		[ "$(user_attr UserShell)" = /usr/bin/false ] || die "$GATE_USER exists with shell $(user_attr UserShell), not /usr/bin/false"
+		[ "$(user_attr IsHidden)" = 1 ] || die "$GATE_USER exists and is not hidden"
+		[ "$(user_attr Password)" = '*' ] || die "$GATE_USER exists with a password"
 		have_user=1
 	else
-		[ -z "$(dscl . -search /Users UniqueID "$GATE_ID")" ] || die "uid $GATE_ID is taken"
-		[ -z "$(dscl . -search /Groups PrimaryGroupID "$GATE_ID")" ] || die "gid $GATE_ID is taken"
+		uids=$(dscl . -search /Users UniqueID "$GATE_ID") || die "could not search the accounts for uid $GATE_ID"
+		[ -z "$uids" ] || die "uid $GATE_ID is taken"
+		gids=$(dscl . -search /Groups PrimaryGroupID "$GATE_ID") || die "could not search the groups for gid $GATE_ID"
+		[ -z "$gids" ] || die "gid $GATE_ID is taken"
 	fi
+	missing=''
+	d=$LIBEXEC
+	while [ ! -e "$d" ] && [ ! -L "$d" ]; do
+		missing="$d $missing"
+		d=$(dirname "$d")
+	done
+	while :; do
+		safe_dir "$d"
+		[ "$d" != / ] || break
+		d=$(dirname "$d")
+	done
 
-	# From here on a failure undoes what this run created (rollback), so a
-	# first install either completes or leaves nothing behind.
-	made_bindir='' made_bin='' made_state='' made_user='' made_daemons=''
+	# From here on a failure or an interruption undoes what this run created
+	# (rollback). A failed reinstall keeps the account and state it found, but
+	# not the binary and plists it replaced.
+	made_dirs='' made_tmp='' made_bin='' made_state='' made_user='' made_daemons=''
 	trap rollback EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM HUP
 
-	# A fresh Mac has no /usr/local/bin; make it as macOS does.
-	bindir=$(dirname "$BIN")
-	if [ ! -d "$bindir" ]; then
-		made_bindir=$bindir
-		install -d -o root -g wheel -m 0755 "$bindir"
+	for d in $missing; do
+		made_dirs="$d $made_dirs"
+		install -d -o root -g wheel -m 0755 "$d"
+	done
+	safe_dir "$LIBEXEC"
+
+	# Hash the copy root now holds, not the source, which its owner could
+	# change between the check and the copy.
+	made_tmp=$(mktemp "$LIBEXEC/.writ-hook.XXXXXX")
+	cat "$src" >"$made_tmp"
+	if [ -n "$want" ]; then
+		got=$(shasum -a 256 "$made_tmp" | cut -d' ' -f1)
+		[ "$got" = "$want" ] || die "$src has SHA-256 $got, not $want"
 	fi
+	chown root:wheel "$made_tmp"
+	chmod 0755 "$made_tmp"
 	[ -e "$BIN" ] || made_bin=1
-	install -o root -g wheel -m 0755 "$src" "$BIN"
+	mv -f "$made_tmp" "$BIN"
+	made_tmp=''
 	[ -e "$STATE" ] || made_state=1
 
 	if [ -z "$have_user" ]; then
@@ -136,6 +200,8 @@ install_gate() {
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0700 "$GATE_HOME"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0755 "$RUN_DIR"
 	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0750 "$LOG_DIR"
+	# State kept by an uninstall is root's; hand it back to the gate.
+	chown -R "$GATE_USER:$GATE_USER" "$GATE_HOME" "$RUN_DIR" "$LOG_DIR"
 
 	as_gate init
 	# shellcheck disable=SC2086 # GRANT_ARGS is a word list on purpose
@@ -145,6 +211,9 @@ install_gate() {
 	# shellcheck disable=SC2086
 	plist "$RENEW_LABEL" 900 $GRANT_ARGS >"/Library/LaunchDaemons/$RENEW_LABEL.plist"
 	plist "$GATE_LABEL" 0 serve -socket "$SOCKET" >"/Library/LaunchDaemons/$GATE_LABEL.plist"
+	# A gate stopped by a reinstall leaves its socket file; remove it, so the
+	# wait below sees the new gate's socket and not the old one.
+	rm -f "$SOCKET"
 	for l in "$GATE_LABEL" "$RENEW_LABEL"; do
 		chown root:wheel "/Library/LaunchDaemons/$l.plist"
 		chmod 0644 "/Library/LaunchDaemons/$l.plist"
@@ -155,8 +224,8 @@ install_gate() {
 	i=0
 	while [ ! -S "$SOCKET" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
 	[ -S "$SOCKET" ] || die "the gate did not open $SOCKET; see $LOG_DIR/$GATE_LABEL.log"
-	trap - EXIT
-	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$BIN"
+	trap - EXIT INT TERM HUP
+	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$LIBEXEC" "$BIN"
 	echo "gate listening on $SOCKET as $GATE_USER; set WRIT_HOOK_SOCKET=$SOCKET in the hooks"
 }
 
@@ -166,6 +235,7 @@ install_gate() {
 rollback() {
 	rc=$?
 	[ "$rc" -ne 0 ] || return 0
+	trap - INT TERM HUP
 	echo "writ-gate-macos: install failed; undoing what this run created" >&2
 	if [ -n "$made_daemons" ]; then
 		for l in "$GATE_LABEL" "$RENEW_LABEL"; do
@@ -178,38 +248,13 @@ rollback() {
 		dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
 	fi
 	[ -z "$made_state" ] || rm -rf "$STATE"
+	[ -z "$made_tmp" ] || rm -f "$made_tmp"
 	[ -z "$made_bin" ] || rm -f "$BIN"
-	[ -z "$made_bindir" ] || rmdir "$made_bindir" 2>/dev/null || true
+	for d in $made_dirs; do
+		rmdir "$d" 2>/dev/null || true
+	done
 	echo "writ-gate-macos: undone" >&2
 	exit "$rc"
-}
-
-seeds() { echo "$1/root.seed $1/claude/agent.seed $1/claude/gate.seed"; }
-
-retire() {
-	old=${1%/}
-	[ -n "$old" ] && [ -f "$old/root.did" ] || die "$old is not a WRIT_HOME (no root.did)"
-	install -d -o root -g wheel -m 0700 "$RETIRED"
-	for f in $(seeds "$old"); do
-		[ -f "$f" ] || die "no $f"
-	done
-	for f in $(seeds "$old"); do
-		mv "$f" "$RETIRED/$(basename "$f")"
-	done
-	echo "$old" >"$RETIRED/ORIGIN"
-	echo "moved the seeds of $old to $RETIRED (root only); its receipts still verify"
-}
-
-unretire() {
-	old=${1%/}
-	owner=$(stat -f %Su "$old/root.did") || die "$old is not a WRIT_HOME"
-	for f in $(seeds "$old"); do
-		mv "$RETIRED/$(basename "$f")" "$f"
-		chown "$owner" "$f"
-		chmod 0600 "$f"
-	done
-	rm -f "$RETIRED/ORIGIN"
-	echo "restored the seeds of $old"
 }
 
 uninstall_gate() {
@@ -218,15 +263,25 @@ uninstall_gate() {
 		rm -f "/Library/LaunchDaemons/$l.plist"
 	done
 	rm -f "$BIN"
+	rmdir "$LIBEXEC" 2>/dev/null || true
 	dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 	dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
-	echo "removed the daemons, $BIN, and $GATE_USER; $STATE is left in place"
+	# The kept keys and receipts become root's, so an account later given
+	# uid $GATE_ID cannot read them.
+	[ ! -d "$STATE" ] || chown -R root:wheel "$STATE"
+	echo "removed the daemons, $BIN, and $GATE_USER; $STATE is left in place, owned by root"
 }
 
 case "${1:-}" in
-install) [ $# -ge 2 ] || die "install BINARY [SHA256]"; install_gate "$2" "${3:-}" ;;
-retire) [ $# -eq 2 ] || die "retire OLD_WRIT_HOME"; retire "$2" ;;
-unretire) [ $# -eq 2 ] || die "unretire OLD_WRIT_HOME"; unretire "$2" ;;
+install)
+	if [ "${2:-}" = --no-checksum ]; then
+		[ $# -eq 3 ] || die "install --no-checksum BINARY"
+		install_gate "$3" ""
+	else
+		[ $# -eq 3 ] || die "install BINARY SHA256 (or install --no-checksum BINARY)"
+		install_gate "$2" "$3"
+	fi
+	;;
 uninstall) uninstall_gate ;;
-*) die "usage: install BINARY [SHA256] | retire OLD_WRIT_HOME | unretire OLD_WRIT_HOME | uninstall" ;;
+*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall" ;;
 esac

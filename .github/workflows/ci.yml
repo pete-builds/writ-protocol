@@ -77,10 +77,10 @@ jobs:
   # scripts/writ-gate-macos.sh, run for real: a hosted macOS runner has
   # passwordless sudo, so the gate gets its own account and LaunchDaemons as
   # on a laptop. The runner user then plays the AI agent's user: it must be
-  # refused the gate's keys, and its tool call must still be receipted
-  # through the socket. Each refusal is paired with the same read done as
-  # root, which must succeed, so a check that passes because a file is
-  # missing fails instead.
+  # refused the gate's keys and its program, and its tool call must still be
+  # receipted through the socket. Each refusal is paired with the same act
+  # done as root, which must succeed, so a check that passes because a file
+  # is missing fails instead.
   macos-gate:
     name: macOS gate as its own user, real install with sudo
     runs-on: macos-latest
@@ -91,6 +91,8 @@ jobs:
     env:
       GATE_HOME: /var/db/writ/home
       WRIT_HOOK_SOCKET: /var/db/writ/run/gate.sock
+      LIBEXEC: /usr/local/libexec/writ
+      SCRIPT: scripts/writ-gate-macos.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,75 +108,109 @@ jobs:
           go build -o "$RUNNER_TEMP/writ" ./cmd/writ
       - name: the runner user is not root, so it can stand in for the agent's user
         run: |
+          cat >"$RUNNER_TEMP/ci-helpers.sh" <<'EOF'
           refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
-          id
-          test "$(id -u)" -ne 0
-          refuse dscl . -read /Users/_writ
-      - name: install refuses a binary whose SHA-256 does not match, before creating anything
-        run: |
-          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
-          if sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook" "$(printf '0%.0s' {1..64})"; then
-            echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
-          fi
-          refuse dscl . -read /Users/_writ
-      # A fresh Apple Silicon Mac may have no /usr/local/bin. The runner's is
-      # moved aside for this step and put back at its end (or by the next
-      # step, if this one fails).
-      - name: with no /usr/local/bin, a failed install undoes itself and a good one makes the folder
-        run: |
-          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
+          # gone: no gate account, daemon, process, or program.
           gone() {
             refuse dscl . -read /Users/_writ
             refuse dscl . -read /Groups/_writ
+            test -z "$(dscl . -search /Users UniqueID 350)"
             refuse sudo launchctl print system/org.writ.gate
             refuse sudo launchctl print system/org.writ.renew
             test ! -e /Library/LaunchDaemons/org.writ.gate.plist
             test ! -e /Library/LaunchDaemons/org.writ.renew.plist
             refuse pgrep -U 350
+            test ! -e "$LIBEXEC/writ-hook"
           }
-          sudo mv /usr/local/bin /usr/local/bin.ci-aside
-          test ! -e /usr/local/bin
-          echo "/usr/local/bin moved aside"
-          # /usr/bin/false as the binary fails at key setup, after the folder,
-          # the binary, the account, and the state exist; all must go.
-          if sudo bash scripts/writ-gate-macos.sh install /usr/bin/false; then
-            echo "::error::install of a binary that cannot run succeeded"; exit 1
-          fi
-          gone
-          test ! -e /usr/local/bin
+          sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+          # denied OUT TEXT: the runner's attempt failed, for permission.
+          denied() {
+            echo "as $(id -un): $1"
+            case $1 in *"Permission denied"*) ;; *) echo "::error::refused, but not for permission: $1"; exit 1 ;; esac
+          }
+          EOF
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          id
+          test "$(id -u)" -ne 0
+          refuse dscl . -read /Users/_writ
           test ! -e /var/db/writ
-          echo "after the failed install: no _writ account, no daemons, no /usr/local/bin, no /var/db/writ"
-          sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook"
-          echo "made: $(stat -f '%N %Su:%Sg %Lp' /usr/local/bin)"
-          test "$(stat -f '%Su:%Sg %Lp' /usr/local/bin)" = "root:wheel 755"
-          sudo bash scripts/writ-gate-macos.sh uninstall
-          gone
-          test ! -e /usr/local/bin/writ-hook
-          echo "after uninstall: no _writ account, no daemons, no process, no binary"
-          # The runner as it was, and no state carried into the next install.
-          sudo rmdir /usr/local/bin
-          sudo mv /usr/local/bin.ci-aside /usr/local/bin
-          sudo rm -rf /var/db/writ
-      - name: put /usr/local/bin back, if the step above failed
-        if: failure()
+          stat -f '%N %Su:%Sg %Lp' / /usr /usr/local
+          if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi >"$RUNNER_TEMP/had-libexec"
+          echo "/usr/local/libexec before the job: $(cat "$RUNNER_TEMP/had-libexec")"
+      - name: install refuses a missing or wrong SHA-256, and leaves nothing
         run: |
-          if [ -d /usr/local/bin.ci-aside ]; then
-            sudo rm -rf /usr/local/bin
-            sudo mv /usr/local/bin.ci-aside /usr/local/bin
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" 2>&1); then
+            echo "::error::install ran with no checksum and no --no-checksum"; exit 1
           fi
-      - name: install, with sudo
-        run: sudo bash scripts/writ-gate-macos.sh install "$RUNNER_TEMP/writ-hook" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)"
-      - name: the gate runs as _writ under launchd
+          echo "no checksum: $out"
+          if out=$(sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" "$(printf '0%.0s' {1..64})" 2>&1); then
+            echo "::error::install accepted a binary with the wrong SHA-256"; exit 1
+          fi
+          echo "wrong checksum: $out"
+          echo "$out" | grep -q 'has SHA-256'
+          gone
+          test ! -e "$LIBEXEC"
+          test ! -e /var/db/writ
+          test "$(if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi)" = "$(cat "$RUNNER_TEMP/had-libexec")"
+          echo "after both refusals: no _writ, no daemons, no $LIBEXEC, no /var/db/writ"
+      - name: install refuses a program folder another user could write
         run: |
-          dscl . -read /Users/_writ UniqueID UserShell
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          # A folder above owned by the runner user.
+          mkdir -p "$RUNNER_TEMP/unsafe"
+          if out=$(sudo env WRIT_GATE_LIBEXEC="$RUNNER_TEMP/unsafe/writ" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install used a folder under a runner-owned one"; exit 1
+          fi
+          echo "runner-owned parent: $out"
+          echo "$out" | grep -q 'is owned by runner, not root'
+          test ! -e "$RUNNER_TEMP/unsafe/writ"
+          # A root-owned folder above that its group can write: a new one,
+          # so no system folder's mode is changed.
+          gw=/usr/local/ci-group-writable
+          sudo install -d -o root -g wheel -m 0775 "$gw"
+          if out=$(sudo env WRIT_GATE_LIBEXEC="$gw/writ" /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install used a folder under a group-writable one"; exit 1
+          fi
+          echo "group-writable parent: $out"
+          echo "$out" | grep -q 'has mode 775'
+          test ! -e "$gw/writ"
+          sudo rmdir "$gw"
+          gone
+          test ! -e /var/db/writ
+      - name: a failed install undoes itself
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          # /usr/bin/false as the program fails at key setup, after the
+          # folder, the binary, the account, and the state exist.
+          if out=$(sudo /bin/bash "$SCRIPT" install /usr/bin/false "$(sum /usr/bin/false)" 2>&1); then
+            echo "::error::install of a program that cannot run succeeded"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q 'created _writ (350)'
+          echo "$out" | grep -q 'undoing what this run created'
+          gone
+          test ! -e "$LIBEXEC"
+          test ! -e /var/db/writ
+          test "$(if [ -e /usr/local/libexec ]; then echo yes; else echo no; fi)" = "$(cat "$RUNNER_TEMP/had-libexec")"
+          echo "after the failed install: no _writ, no daemons, no $LIBEXEC, no /var/db/writ"
+      - name: install, with sudo
+        run: sudo /bin/bash "$SCRIPT" install "$RUNNER_TEMP/writ-hook" "$(shasum -a 256 "$RUNNER_TEMP/writ-hook" | cut -d' ' -f1)"
+      - name: the gate runs as _writ under launchd, from a root-owned folder
+        run: |
+          dscl . -read /Users/_writ UniqueID UserShell IsHidden
           sudo launchctl print system/org.writ.gate | grep -E '^[[:space:]]*(state|pid|username) ='
           sudo launchctl print system/org.writ.renew >/dev/null
           ps -axo user=,command= | grep '[w]rit-hook serve'
           test "$(ps -axo user=,command= | awk '/[w]rit-hook serve/ {print $1}')" = _writ
-          ls -l /usr/local/bin/writ-hook "$WRIT_HOOK_SOCKET"
+          stat -f '%N %Su:%Sg %Lp' /usr/local/libexec "$LIBEXEC" "$LIBEXEC/writ-hook" "$WRIT_HOOK_SOCKET"
+          test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC")" = "root:wheel 755"
+          test "$(stat -f '%Su:%Sg %Lp' "$LIBEXEC/writ-hook")" = "root:wheel 755"
           sudo ls -ld /var/db/writ "$GATE_HOME"
       - name: control, the runner user cannot read the gate's keys, and root can
         run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
           for f in root.seed claude/agent.seed claude/gate.seed; do
             p=$GATE_HOME/$f
             # Negative control: the file exists and root can read it, so the
@@ -185,30 +221,54 @@ jobs:
             if out=$(cat "$p" 2>&1); then
               echo "::error::the runner user read $p"; exit 1
             fi
-            echo "as $(id -un): $out"
-            case $out in *"Permission denied"*) ;; *) echo "::error::refused, but not for permission: $out"; exit 1 ;; esac
+            denied "$out"
+            m=$(sudo stat -f '%Lp %Su' "$p")
+            echo "as root: stat $p: $m"
+            test "$m" = "600 _writ"
           done
           if out=$(ls "$GATE_HOME" 2>&1); then
             echo "::error::the runner user listed $GATE_HOME"; exit 1
           fi
-          echo "as $(id -un): $out"
+          denied "$out"
           echo "as root: $(sudo ls "$GATE_HOME" | tr '\n' ' ')"
+      - name: control, the runner user cannot replace the gate's program, and root can
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          b=$LIBEXEC/writ-hook
+          if out=$(mv "$b" "$b.moved" 2>&1); then
+            echo "::error::the runner user renamed $b"; exit 1
+          fi
+          denied "$out"
+          if out=$(cp /usr/bin/true "$b" 2>&1); then
+            echo "::error::the runner user overwrote $b"; exit 1
+          fi
+          denied "$out"
+          if out=$(cp /usr/bin/true "$LIBEXEC/other" 2>&1); then
+            echo "::error::the runner user wrote into $LIBEXEC"; exit 1
+          fi
+          denied "$out"
+          # Negative control: the same rename as root succeeds, so the
+          # refusals above are permissions.
+          sudo mv "$b" "$b.moved"
+          sudo mv "$b.moved" "$b"
+          echo "as root: mv $b and back, succeeded"
+          cmp "$b" "$RUNNER_TEMP/writ-hook"
       - name: a tool call through the socket is admitted and receipted
         run: |
           pre='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1"}'
           post='{"hook_event_name":"PostToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_1","tool_response":"ci-response"}'
-          out=$(printf '%s' "$pre" | /usr/local/bin/writ-hook pre)
+          out=$(printf '%s' "$pre" | "$LIBEXEC/writ-hook" pre)
           if [ -n "$out" ]; then echo "::error::pre did not admit the call: $out"; exit 1; fi
           echo "pre toolu_ci_1: admitted (the gate printed no decision)"
-          out=$(printf '%s' "$post" | /usr/local/bin/writ-hook post)
+          out=$(printf '%s' "$post" | "$LIBEXEC/writ-hook" post)
           if [ -n "$out" ]; then echo "::error::post: $out"; exit 1; fi
           echo "post toolu_ci_1: done"
           # A call naming the gate's own keys is refused by the gate itself.
           bad='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/var/db/writ/home/root.seed"},"tool_use_id":"toolu_ci_2"}'
-          out=$(printf '%s' "$bad" | /usr/local/bin/writ-hook pre)
+          out=$(printf '%s' "$bad" | "$LIBEXEC/writ-hook" pre)
           echo "pre toolu_ci_2: $out"
           echo "$out" | grep -q '"permissionDecision":"deny"'
-          /usr/local/bin/writ-hook receipts | tee "$RUNNER_TEMP/receipts.txt"
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts.txt"
           grep -q '^1 receipt(s) verified, 0 invalid, 0 call(s) still unfinished$' "$RUNNER_TEMP/receipts.txt"
           grep -q '^1 refusal(s) in the audit record$' "$RUNNER_TEMP/receipts.txt"
       - name: the receipt verifies with the writ verifier, outside the gate
@@ -236,28 +296,62 @@ jobs:
           if "$RUNNER_TEMP/writ" verify -writ "$d/leaf.json" -call "$d/call.json" -tally "$d/tally.json" -res "$d/res-bad.json"; then
             echo "::error::the verifier accepted a receipt for a response it does not commit to"; exit 1
           fi
-      - name: uninstall leaves no account, daemon, process, or binary
+      - name: a reinstall over a running gate keeps its state; a changed account is refused
         run: |
-          refuse() { if "$@" >/dev/null 2>&1; then echo "::error::this should have failed: $*"; exit 1; fi; }
-          sudo bash scripts/writ-gate-macos.sh uninstall
-          refuse sudo launchctl print system/org.writ.gate
-          refuse sudo launchctl print system/org.writ.renew
-          test ! -e /Library/LaunchDaemons/org.writ.gate.plist
-          test ! -e /Library/LaunchDaemons/org.writ.renew.plist
-          test ! -e /usr/local/bin/writ-hook
-          refuse dscl . -read /Users/_writ
-          refuse dscl . -read /Groups/_writ
-          test -z "$(dscl . -search /Users UniqueID 350)"
-          refuse pgrep -U 350
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")"
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts-reinstall.txt"
+          grep -q '^1 receipt(s) verified, 0 invalid' "$RUNNER_TEMP/receipts-reinstall.txt"
+          sudo dscl . -create /Users/_writ UserShell /bin/zsh
+          if out=$(sudo /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")" 2>&1); then
+            echo "::error::install reused an account with a login shell"; exit 1
+          fi
+          echo "changed account: $out"
+          echo "$out" | grep -q 'exists with shell /bin/zsh'
+          sudo dscl . -create /Users/_writ UserShell /usr/bin/false
+      - name: uninstall leaves no account, daemon, process, or binary, and the kept state is root's
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          sudo /bin/bash "$SCRIPT" uninstall
+          gone
+          test ! -e "$LIBEXEC"
           # With the gate gone, a hook fails closed.
           out=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_3"}' | "$RUNNER_TEMP/writ-hook" pre)
           echo "pre after uninstall: $out"
           echo "$out" | grep -q '"permissionDecision":"deny"'
-          # The state stays by design (keys and receipts), still closed to
-          # the runner user.
+          # The state stays by design (keys and receipts), owned by root, so
+          # an account later given uid 350 cannot read it.
           sudo test -s "$GATE_HOME/root.seed"
+          sudo stat -f '%N %Su:%Sg %Lp' "$GATE_HOME" "$GATE_HOME/root.seed"
+          test -z "$(sudo find /var/db/writ ! -user root)"
+          echo "every file under /var/db/writ is owned by root"
           refuse cat "$GATE_HOME/root.seed"
-          echo "left in place, as documented: $(sudo ls /var/db/writ | tr '\n' ' ')"
+          echo "left in place: $(sudo ls /var/db/writ | tr '\n' ' ')"
+      - name: a reinstall over kept state gives it back to the gate, under a narrower grant
+        run: |
+          . "$RUNNER_TEMP/ci-helpers.sh"
+          bin=$RUNNER_TEMP/writ-hook
+          sudo env WRIT_GATE_GRANT='grant -name session -tools Read -uses 100 -ttl 24h -renew-before 22h' /bin/bash "$SCRIPT" install "$bin" "$(sum "$bin")"
+          for f in root.seed claude/agent.seed claude/gate.seed; do
+            test "$(sudo stat -f '%Lp %Su' "$GATE_HOME/$f")" = "600 _writ"
+          done
+          test -z "$(sudo find "$GATE_HOME" ! -user _writ)"
+          echo "every file under $GATE_HOME is owned by _writ again"
+          read_in='{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_4"}'
+          out=$(printf '%s' "$read_in" | "$LIBEXEC/writ-hook" pre)
+          if [ -n "$out" ]; then echo "::error::the narrower grant refused a Read: $out"; exit 1; fi
+          printf '%s' '{"hook_event_name":"PostToolUse","session_id":"ci","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"},"tool_use_id":"toolu_ci_4","tool_response":"ci-response"}' | "$LIBEXEC/writ-hook" post
+          echo "pre toolu_ci_4 (Read): admitted"
+          out=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"ci","tool_name":"Bash","tool_input":{"command":"true"},"tool_use_id":"toolu_ci_5"}' | "$LIBEXEC/writ-hook" pre)
+          echo "pre toolu_ci_5 (Bash): $out"
+          echo "$out" | grep -q '"permissionDecision":"deny"'
+          echo "$out" | grep -q 'allows only Read'
+          "$LIBEXEC/writ-hook" receipts | tee "$RUNNER_TEMP/receipts-kept.txt"
+          grep -q '^2 receipt(s) verified, 0 invalid' "$RUNNER_TEMP/receipts-kept.txt"
+          sudo /bin/bash "$SCRIPT" uninstall
+          gone
+          test -z "$(sudo find /var/db/writ ! -user root)"
       - name: gate logs, on failure
         if: failure()
         run: |
