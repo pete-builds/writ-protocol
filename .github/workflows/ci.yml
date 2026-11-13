@@ -442,9 +442,12 @@ jobs:
           . "$RUNNER_TEMP/ci-helpers.sh"
           # A file the gate cannot read makes its tar fail, and then nothing
           # is removed.
-          sudo -u _writ /bin/sh -c ': >/var/db/writ/home/unreadable && chmod 000 /var/db/writ/home/unreadable'
+          # It must hold data: tar does not open an empty file.
+          (cd / && sudo -u _writ /bin/sh -c 'echo data >/var/db/writ/home/unreadable && chmod 000 /var/db/writ/home/unreadable')
+          sudo ls -l /var/db/writ/home/unreadable
           n=$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)
           if out=$(sudo /bin/bash "$SCRIPT" uninstall 2>&1); then
+            echo "$out"
             echo "::error::uninstall went on after tar failed"; exit 1
           fi
           echo "$out"
@@ -452,7 +455,7 @@ jobs:
           sudo test -s "$GATE_HOME/root.seed"
           test "$(find /var/db -maxdepth 1 -name 'writ-archive-*.tar' | wc -l)" -eq "$n"
           echo "after the failed tar: the keys are still in /var/db/writ, and no archive was left"
-          sudo -u _writ chmod 600 /var/db/writ/home/unreadable
+          (cd / && sudo -u _writ chmod 600 /var/db/writ/home/unreadable)
           sudo /bin/bash "$SCRIPT" uninstall
           gone
           test ! -e "$LIBEXEC"

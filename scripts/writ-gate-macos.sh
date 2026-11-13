@@ -79,10 +79,10 @@ check_settings() {
 	case $uses in 0*) die "WRIT_GATE_GRANT: -uses must not start with 0, which Go reads as octal" ;; esac
 }
 
-# as_gate CMD...: run CMD as the gate's account, with the fixed PATH and
-# without root's terminal.
+# as_gate CMD...: run CMD as the gate's account, from /, with the fixed PATH
+# and without root's terminal.
 as_gate() {
-	sudo -u "$GATE_USER" env -i PATH="$PATH" HOME="$STATE" WRIT_HOME="$GATE_HOME" "$@" </dev/null
+	(cd / && sudo -u "$GATE_USER" env -i PATH="$PATH" HOME="$STATE" WRIT_HOME="$GATE_HOME" "$@" </dev/null)
 }
 
 # plist LABEL INTERVAL ARG...: a LaunchDaemon run as the gate user. INTERVAL 0
