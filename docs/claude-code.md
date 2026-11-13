@@ -128,10 +128,13 @@ sudo -u writ writ-hook grant -name files -tools Read,Edit,Write -under /home/you
 sudo -u writ writ-hook serve -socket /run/writ/gate.sock               # or as a systemd service with User=writ
 ```
 
-On macOS, [scripts/writ-gate-macos.sh](../scripts/writ-gate-macos.sh) does the same with a hidden account, `_writ`, that has no shell and no password. It installs the binary root-owned at `/usr/local/bin/writ-hook`, so your user cannot swap the program the gate runs, makes fresh keys and a grant as `_writ` under `/var/db/writ/home` (mode 700), and starts two LaunchDaemons as `_writ`: the gate on `/var/db/writ/run/gate.sock`, and a renewal that runs the standing `grant` every 15 minutes, since over the socket nobody else can:
+On macOS, [scripts/writ-gate-macos.sh](../scripts/writ-gate-macos.sh) does the same with a hidden account, `_writ`, that has no shell and no password. It copies the program to `/usr/local/libexec/writ/writ-hook`, in a folder it makes root-owned, and refuses to install if that folder or any folder above it is a symbolic link, is not owned by root, or can be written by its group or by everyone, since whoever can write a folder can rename the program in it and put their own in its place. (On an Intel Mac with Homebrew, `/usr/local/bin` belongs to your user, which is why the program does not go there.) It makes keys and a grant as `_writ` under `/var/db/writ/home` (mode 700), and starts two LaunchDaemons as `_writ`: the gate on `/var/db/writ/run/gate.sock`, and a renewal, since over the socket nobody else can grant.
+
+Run it from a fresh clone at a commit you have reviewed, never from a working tree the agent can write, with the system bash, and with the program's SHA-256 taken from somewhere the agent cannot write either: the checksums on the Releases page, or a build in that same clean clone. The checksum is required; `install --no-checksum BINARY` skips it on purpose. The script checks the hash of its own root-owned copy, not of the file you named, so the file cannot be changed between the check and the copy.
 
 ```
-sudo bash scripts/writ-gate-macos.sh install ./writ-hook
+cd /path/to/fresh/writ-protocol/impl/go && go build -o ../../writ-hook ./cmd/writ-hook && shasum -a 256 ../../writ-hook
+sudo /bin/bash /path/to/fresh/writ-protocol/scripts/writ-gate-macos.sh install /path/to/fresh/writ-protocol/writ-hook <sha256>
 ```
 
 The hooks then carry each event to the socket, and the grant hooks go away:
@@ -139,17 +142,39 @@ The hooks then carry each event to the socket, and the grant hooks go away:
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook recover >/dev/null"}]}],
-    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook pre || exit 2"}]}],
-    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook post"}]}],
-    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/bin/writ-hook post"}]}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/libexec/writ/writ-hook recover >/dev/null"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/libexec/writ/writ-hook pre || exit 2"}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/libexec/writ/writ-hook post"}]}],
+    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "WRIT_HOOK_SOCKET=/var/db/writ/run/gate.sock /usr/local/libexec/writ/writ-hook post"}]}]
   }
 }
 ```
 
-Moving from a gate that ran in place, `retire` moves the old `WRIT_HOME`'s three seed files into a root-only folder once the hooks point at the socket. Its receipts still verify, because `receipts` needs only `root.did`, but its keys can no longer sign. `uninstall` removes the daemons, the account, and the binary, and leaves the state. `install` makes `/usr/local/bin` (root:wheel, 755) on a Mac that has none, and if a step fails it undoes what that run created, so a first install either completes or leaves nothing behind; a failed reinstall keeps the account, keys, and receipts that were already there.
+**The standing grant is broad.** By default the install signs `grant -name session -uses 10000 -ttl 24h -renew-before 22h`: any tool, any path, up to 10,000 calls a day. The renewal checks it every 15 minutes and signs a fresh one once less than 22 hours are left, so about every two hours. To narrow it, set `WRIT_GATE_GRANT` when installing; the install and the renewal both use it, and installing again with a different value replaces it:
 
-The `macos-gate` CI job runs `install` and `uninstall` for real on a GitHub-hosted macOS runner (first green on macOS 26.7.2, arm64), whose own user plays the user Claude Code's tools run as. With the runner's `/usr/local/bin` moved aside, it first requires an install of a binary that cannot run to fail and leave no account, daemon, folder, or state, and a good install to make `/usr/local/bin` as root:wheel 755 and uninstall cleanly. It then requires that user's `cat` of each of the three seeds under `/var/db/writ/home`, and its `ls` of that folder, to fail with `Permission denied`, while root reads the same files, so a missing file cannot pass as a refusal. It sends a Read call's `pre` and `post` events through the socket, as the hooks above would, and requires the call admitted, a call naming the gate's keys refused, `receipts` to report one verified receipt and an intact audit record, and the receipt, copied out as root, to verify with `writ verify` against the response it sent, while a different response must not. After `uninstall` it requires no `_writ` account, daemon, process, or binary, and `pre` to block the next call. The events are written by the job, not sent by a Claude Code session, and `retire` and `unretire` are not run.
+```
+sudo env WRIT_GATE_GRANT='grant -name session -tools Read,Edit,Write,Grep,Glob -uses 2000 -ttl 24h -renew-before 22h' /bin/bash /path/to/fresh/writ-protocol/scripts/writ-gate-macos.sh install /path/to/fresh/writ-protocol/writ-hook <sha256>
+```
+
+**What the separate account does and does not do.** It keeps the keys, and so the integrity of every receipt, out of your user's reach. It does not make receipts exist. On one Mac the hooks live in your own Claude Code settings, which the agent, running as you, can edit: it can switch the gate off or point the hooks at a fake one. To hold the hooks in place, put them in a root-owned managed settings file, `/Library/Application Support/ClaudeCode/managed-settings.json`, with `"allowManagedHooksOnly": true` ([enterprise.md](enterprise.md), step 5). And the separation assumes your user cannot become root or `_writ` without you: give it no `NOPASSWD` sudo rule, and never approve a Touch ID or password prompt for sudo that you did not start yourself.
+
+**Coming from a gate that ran in place**, as your user: its keys were readable by the agent, so treat them as exposed. The install makes new ones. Once the hooks point at the socket, delete the old `~/.writ` by hand, as your normal user, after copying anything you want to keep.
+
+`uninstall` removes the daemons, the account, and the program. It leaves `/var/db/writ`, which holds the keys and receipts, and makes every file in it root's, so an account later given the gate's uid, 350, cannot read them. Installing again over that state gives it back to `_writ` and reuses its keys rather than making fresh ones, so earlier receipts still verify. If a step of `install` fails, or it is interrupted with Ctrl-C or a signal, it undoes what that run created, so a first install either completes or leaves nothing behind. A failed reinstall keeps the account, keys, and receipts it found, but not the program and daemon definitions it had already replaced; run the install again.
+
+The `macos-gate` CI job runs the script for real, with sudo, on a GitHub-hosted macOS runner (green on macOS 26.7.2, arm64), whose own user plays the user Claude Code's tools run as. It requires:
+
+- an install with no checksum, or a wrong one, to be refused and leave no account, daemon, program, folder, or state;
+- an install whose program folder sits under a runner-owned folder, or under a root-owned folder its group can write, to be refused;
+- an install of a program that cannot run to fail after creating the account, then undo all of it;
+- after a real install, the runner user's `cat` of each of the three seeds and `ls` of `/var/db/writ/home` to fail with `Permission denied`, while root reads the same files and finds each one mode 600, owned by `_writ`;
+- the runner user's rename or overwrite of the program, and any write into its folder, to fail with `Permission denied`, while the same rename as root succeeds;
+- a Read call's `pre` and `post` events sent through the socket to be admitted and receipted, a call naming the gate's keys refused, `receipts` to report one verified receipt and an intact audit record, and that receipt, copied out as root, to verify with `writ verify` against the response sent, while a different response must not;
+- a reinstall over the running gate to keep its receipts, and a reinstall over an account whose shell was changed to be refused;
+- `uninstall` to leave no `_writ` account, daemon, process, or program, `pre` to block the next call, and every file left under `/var/db/writ` to be root's;
+- a reinstall over that kept state, with a grant narrowed to Read, to give every file back to `_writ`, verify both receipts, admit a Read, and refuse a Bash call.
+
+The events are written by the job, not sent by a Claude Code session, and an interrupted install is not exercised.
 
 What the socket still allows: any local process can send `pre` and `post` events, so a model with a shell could report a false outcome for one of its own calls in flight, or spend its own grant's `uses`. It cannot widen a grant, read a key, or sign a receipt for work the gate did not admit.
 

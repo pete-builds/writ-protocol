@@ -15,7 +15,7 @@ This is one way to run Writ for every Claude Code user in an organization, so th
 
 | Part | State |
 |---|---|
-| Gate as its own OS user on one Mac, hooks over a Unix socket | **Tested** on macOS on every CI run: the `macos-gate` job installs `scripts/writ-gate-macos.sh` with sudo on a GitHub-hosted Mac, requires the runner's own user to be refused the gate's keys while root can read them, and requires a call through the socket to be receipted and verified ([claude-code.md](claude-code.md)); not yet run with a Claude Code session against it |
+| Gate as its own OS user on one Mac, hooks over a Unix socket | **Tested** on macOS on every CI run: the `macos-gate` job installs `scripts/writ-gate-macos.sh` with sudo on a GitHub-hosted Mac, requires the runner's own user to be refused the gate's keys and its program while root is not, requires unsafe program folders and bad checksums to be refused and failed installs to undo themselves, and requires a call through the socket to be receipted and verified ([claude-code.md](claude-code.md)). Not yet run with a Claude Code session against it. It protects the keys, not the hooks: on one Mac the agent can edit its own hook settings unless they are managed (step 5) |
 | Central gate over mutual TLS | **Tested**: `writ-hook serve -listen`, over real TLS handshakes and with Claude Code itself on loopback ([central-gate.md](central-gate.md)); not yet run across machines |
 | Gate and grantor keys in Vault transit | **Tested** against a real Vault server, locally and in CI ([vault.md](vault.md)); not deployed |
 | Grants from directory groups | Designed only |
