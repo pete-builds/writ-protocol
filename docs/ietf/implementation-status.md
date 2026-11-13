@@ -9,7 +9,7 @@ According to {{RFC7942}}, "this will allow reviewers and working groups to assig
 
 {{RFC7942}} asks for this section just before the Security Considerations. It is placed here instead so that every section number matches the repository text this document is generated from.
 
-The conformance corpus is in the repository: 288 vectors of section 14 and 25 executor scenarios of section 14.1, with JSON schemas for both.
+The conformance corpus is in the repository: 290 vectors of section 14 and 25 executor scenarios of section 14.1, with JSON schemas for both.
 
 ## Go reference implementation
 
@@ -46,6 +46,6 @@ The conformance corpus is in the repository: 288 vectors of section 14 and 25 ex
 - Coverage: the verifier passes all 213 vectors of the corpus at that commit, which were available while it was built. The executor was built with every scenario's expected answers removed, and its first run passed 19 of 22 scenarios (136 of 140 steps); the three failures had one cause in the implementation, which was then fixed.
 - Version compatibility: the repository text at commit 6552968 (2026-09-30), before the ack of section 9.4 was added. It does not yet sign acks, so its executor's answer to a revoke lacks the members section 10 now requires, and it predates the `total` bound type of section 3, so it rejects the 28 vectors that carry one as `unknown_bound`. It also predates the small-order rules of sections 1.3 and 1.4 (2026-10-04).
 - Licensing: Apache License 2.0.
-- Implementation experience: it reported two places where the text was unclear, both confirmed: a `canceled` tally for a call not yet accepted names no error code (section 9.1), and "outermost value" in the nesting limit of section 1.1 is ambiguous.
+- Implementation experience: it reported two places where the text was unclear, both confirmed and answered in the text on 2026-10-01: a `canceled` tally for a call not yet accepted named no error code (section 9.1), and "outermost value" in the nesting rule of section 1.1 was ambiguous. Vectors 289 and 290 pin the second.
 - Contact: https://github.com/pete-builds/writ-protocol/issues/22.
-- Last updated: 2026-09-30.
+- Last updated: 2026-11-12.

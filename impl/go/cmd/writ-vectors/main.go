@@ -835,6 +835,14 @@ func main() {
 		return o
 	}(), writ.BadSignature)
 
+	// Section 1.1 rule 7 with a scalar at the deepest level, owed to issue
+	// #22 and added 2026-11-12 at the end so earlier vectors keep their
+	// numbers. The outermost array is level 1 and a scalar does not add a
+	// level, so a scalar inside 64 arrays is at the limit: a reading that
+	// gives the scalar a level of its own rejects it. Inside 65 it is over.
+	accept("scalar inside nesting at the limit", "canonicalize", map[string]any{"raw": strings.Repeat("[ ", 64) + "1" + strings.Repeat(" ]", 64), "canonical": strings.Repeat("[", 64) + "1" + strings.Repeat("]", 64)})
+	reject("scalar inside nesting over the limit", "canonicalize", map[string]any{"raw": strings.Repeat("[", 65) + "1" + strings.Repeat("]", 65)}, writ.TooLarge)
+
 	fmt.Printf("wrote %d vectors to %s\n", count, dir)
 }
 
