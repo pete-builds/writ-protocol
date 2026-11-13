@@ -17,6 +17,7 @@ Revisions:
 - **2026-10-01, total.** Added a sixth bound type, `total`: a limit on the sum of one argument across every call an executor accepts under a writ, the running total a payment needs and `max` with `count` could not give (section 3). It narrows, and is checked against one call's argument, as `max` is (sections 3 and 7.2); the running sum is consumed at section 7 step 10 beside `count`, against every writ in the chain that carries it, from a new durable total store (section 9), and a call that would take a total past its value is refused with the new reason `total_exhausted`. A tally's `used` reports `total` bounds as well as `max` bounds, and section 6.2 steps 7 and 10 check both. It is per executor, like `count`; section 7.3 says what it does not bound. A verifier that predates this revision rejects a writ carrying `total` as `unknown_bound`, which is the failure section 3 requires of a bound it cannot compare.
 - **2026-10-01, later.** Added Appendix E, non-normative: approval of a call above an agent's limits as an ordinary delegation, and an x402 row in section 13. No rule, object, or reason code changed.
 - **2026-10-01, audit.** Each entry of the audit record SHOULD carry `prev`, the hash of the entry before it, so that an entry edited, removed, or reordered after it was written breaks a link (section 9.3). No check of this protocol consults the record, so no rule, object, or reason code changed.
+- **2026-10-04.** Section 1.4 said only "Ed25519 (RFC 8032)", which does not say which signatures to accept, and both implementations accepted a did:key whose key is the identity point, under which one fixed 64-byte signature verifies for every message: anyone could sign any writ, call, tally, revoke, or ack as that key, use a writ issued to it, and put a tally in its name into a receipt tree. A verifier now rejects all fourteen encodings of the eight small-order points as `bad_key` wherever a key appears (section 1.3), and rejects a signature whose R is one of them as `bad_signature` (section 1.4), which libsodium already refuses and which only a signer choosing the nonce r = 0 makes. No honestly generated key or signature is affected, and no member, object, or reason code changed meaning; an implementation that predates this revision accepts the 19 vectors added for it.
 
 Writ: pass narrowable authority between agents and bring back a signed account of what was done under it.
 
@@ -56,6 +57,18 @@ A verifier MUST reject an object whose received bytes, after parsing, violate ru
 
 A principal is identified by a did:key for an Ed25519 public key: the string `did:key:z` followed by the base58btc encoding of the bytes `0xed 0x01` and the 32-byte public key. Every such identifier begins with `did:key:z6Mk`. Version 1 supports exactly this one key type. A verifier MUST reject any other identifier with reason `bad_key`.
 
+A verifier MUST also reject, with reason `bad_key`, an identifier whose 32 key bytes are a **small-order encoding**: bytes that decode to one of the eight points of order 1, 2, 4, or 8, when y at or above p and a zero x with its sign bit set are not refused, as common Ed25519 libraries do not refuse them. Anyone can sign any message under such a key (section 1.4). There are fourteen small-order encodings, eight of them canonical. With the most significant bit of the last byte cleared, they are exactly the seven 32-byte values below, in hex: a key is a small-order encoding when its first 31 bytes equal one value's first 31 bytes and its last byte, with that bit cleared, equals the value's last byte.
+
+    0000000000000000000000000000000000000000000000000000000000000000
+    0100000000000000000000000000000000000000000000000000000000000000
+    26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05
+    c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a
+    ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+    edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+    eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+
+The check applies wherever a key appears, an `hld` bound's elements included, so it is made with every other `bad_key` check, before any signature is verified (section 6.1 step 5).
+
 The identifier is the key. No resolution, registry, or fetch is needed to verify a signature. Binding a key to a vendor, a person, or a domain is outside this protocol (see section 12).
 
 ### 1.4 Signatures
@@ -65,6 +78,8 @@ Every object has a `sig` member. The signing input is the byte string:
     <typ> "/" <v> 0x00 <canonical form of the object with sig removed>
 
 for example `writ/1` followed by a NUL byte followed by the canonical bytes. The signature is Ed25519 (RFC 8032) over that input, encoded base64url without padding (86 characters). The NUL-separated prefix prevents a signature made for one object type or protocol from verifying as another.
+
+RFC 8032 does not fix which signatures a verifier accepts, and libraries that implement it disagree on edge cases. Two of them are fixed here. Under a small-order key, the signature whose R is the identity point and whose S is zero verifies for every message; section 1.3 rejects such keys, so no signature is ever checked under one. And a verifier MUST reject, with reason `bad_signature`, a signature whose first 32 bytes, its R, are a small-order encoding (section 1.3). An honest signer never produces one. A signer that chooses the nonce r = 0 does, and a library that checks R only through the verification equation accepts that signature while libsodium refuses it, so without this rule one signer could make an object that verifiers disagree on.
 
 ### 1.5 Object identity
 
@@ -268,7 +283,7 @@ For a writ, call, tally, revoke, or ack, in this order:
     - A tally's `err`: null when `st` is `ok`; otherwise an object whose `code` is a string and whose `ref`, if present, is a hash. `used`: an object whose members are integers of zero or more. `rev`: null, or an object whose `until` is an integer.
     - A tally's `sub` and `wrt`: arrays of objects. Their elements are checked at section 6.2 steps 8 and 9, after the tally's own signature.
     - After a tally's `wrt`: when `st` is `pending`, `err.code` is `pending`, `used` is empty, `rev` and `out` are null, and `sub` and `wrt` are empty (section 6).
-6. Signature verifies under the signer's key (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`; ack: `iss`). Reason `bad_signature`.
+6. Signature verifies under the signer's key, as section 1.4 says (writ: `iss`; call: `from`; tally: `hld` of the writ named; revoke: `iss`; ack: `iss`). Reason `bad_signature`.
 
 A tally names its writ by hash, so a tally can only be verified by a party holding that writ (section 6.2). A refusal with reason `wrong_executor` is signed by the party that received the call, which is not the leaf holder; it is evidence of the refusal but does not verify under section 6.2.
 
@@ -509,8 +524,8 @@ Transport authentication (TLS, OAuth, mTLS) is outside this protocol and MUST NO
 | `wrong_type` | `typ` is not the expected object type |
 | `unsupported_critical` | a `crit` member is not understood |
 | `malformed` | a required member is missing or of the wrong type |
-| `bad_key` | an identifier is not an Ed25519 did:key |
-| `bad_signature` | signature does not verify |
+| `bad_key` | an identifier is not an Ed25519 did:key, or is a small-order encoding (section 1.3) |
+| `bad_signature` | signature does not verify, or its R is a small-order encoding (section 1.4) |
 | `chain_broken` | issuer or `prv` mismatch, or non-null root `prv` |
 | `not_narrowed` | a child widens, drops, or retypes a bound, outlives its parent, or violates `hld` or `depth` |
 | `unknown_bound` | bound type not in section 3 |

@@ -9,7 +9,17 @@
 //	root.seed, root.did    the grantor, who signs grants
 //	claude/agent.seed      signs each call on the session's behalf
 //	claude/gate.seed       enforces the grant and signs every receipt
+//
+// The grantor and the gate can sign through HashiCorp Vault's transit engine
+// instead, so their private keys never leave Vault and there is no seed file
+// to steal: WRIT_VAULT_ROOT_KEY and WRIT_VAULT_GATE_KEY name the Ed25519
+// transit keys, VAULT_ADDR and VAULT_NAMESPACE where Vault is, VAULT_TOKEN or
+// the file WRIT_VAULT_TOKEN_FILE the token, and WRIT_VAULT_MOUNT the transit
+// mount (default "transit"). root.did still records the grantor's did:key.
+//
 //	claude/grants/*.json   the grants, root to agent, one per name
+//	claude/requests/*.json refused calls the grantor could approve, by tool_use_id
+//	claude/approvals/*.json one-use approvals, root to agent, checked before the grants
 //	claude/stores/*.json   the executor's stores, one per grant, named by its identity
 //	claude/audit.jsonl     the audit record, one for every grant
 //
@@ -25,6 +35,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -42,6 +53,7 @@ import (
 	"writproto/exec"
 	"writproto/jcs"
 	"writproto/keys"
+	"writproto/keys/vault"
 	"writproto/wire"
 	"writproto/writ"
 )
@@ -65,9 +77,10 @@ const staleAfter = maxGrant
 var toolUseID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type env struct {
-	home string // WRIT_HOME
-	dir  string // WRIT_HOME/claude
-	now  func() int64
+	home  string // WRIT_HOME
+	dir   string // WRIT_HOME/claude
+	now   func() int64
+	binds func(peer, did string) bool // which keys each mTLS peer speaks for (serve -bindings)
 }
 
 func newEnv() *env {
@@ -89,20 +102,27 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: writ-hook init | grant [flags] | serve -socket PATH | pre | post | recover | receipts")
+		die("usage: writ-hook init | grant [flags] | approve [-yes] [-ttl D] ID | serve -socket PATH | pre | post | recover | receipts")
 	}
 	e := newEnv()
 	var err error
-	// With WRIT_HOOK_SOCKET set, the hook commands go to a gate running as
-	// its own process (writ-hook serve) instead of opening the state here.
-	if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
+	// With WRIT_HOOK_GATE or WRIT_HOOK_SOCKET set, the hook commands go to a
+	// gate running as its own process (writ-hook serve), over mTLS or a Unix
+	// socket, instead of opening the state here.
+	where, send := "", asker(nil)
+	if gate := os.Getenv("WRIT_HOOK_GATE"); gate != "" {
+		where, send = gate, tlsClient(gate)
+	} else if socket := os.Getenv("WRIT_HOOK_SOCKET"); socket != "" {
+		where, send = socket, viaSocket(socket)
+	}
+	if send != nil {
 		switch os.Args[1] {
 		case "pre", "post", "recover", "receipts":
 			var in io.Reader = os.Stdin
 			if os.Args[1] == "recover" && !piped(os.Stdin) {
 				in = strings.NewReader("")
 			}
-			ok, err := remote(socket, os.Args[1], in, os.Stdout)
+			ok, err := remote(where, send, os.Args[1], in, os.Stdout)
 			if err != nil {
 				die("writ-hook: %v", err)
 			}
@@ -117,11 +137,41 @@ func main() {
 		fs := flag.NewFlagSet("serve", flag.ExitOnError)
 		socket := fs.String("socket", "", "Unix socket to listen on; the hook commands find it through WRIT_HOOK_SOCKET")
 		mode := fs.Uint("mode", 0o666, "permission of the socket file, which the Claude Code user must be able to connect to")
+		listen := fs.String("listen", "", "TCP address to serve mTLS on, such as :8443; the hook commands find it through WRIT_HOOK_GATE")
+		cert := fs.String("tls-cert", "", "with -listen: the gate's certificate (PEM)")
+		key := fs.String("tls-key", "", "with -listen: the gate's private key (PEM)")
+		clientCA := fs.String("client-ca", "", "with -listen: the CA that signs the machines' client certificates (PEM)")
+		bindings := fs.String("bindings", "", "with -listen: a JSON file mapping each machine's peer URI to the keys it speaks for (docs/directories.md)")
 		_ = fs.Parse(os.Args[2:])
-		if *socket == "" {
-			die("writ-hook serve: -socket is required")
+		if *socket == "" && *listen == "" {
+			die("writ-hook serve: -socket or -listen is required")
 		}
-		err = e.serve(*socket, os.FileMode(*mode), func() { fmt.Fprintln(os.Stderr, "writ-hook gate listening on", *socket) })
+		if *bindings != "" {
+			b, berr := exec.LoadBindings(*bindings)
+			if berr != nil {
+				die("writ-hook serve: %v", berr)
+			}
+			e.binds = b.Binds
+		}
+		errs := make(chan error, 2)
+		if *listen != "" {
+			cfg, terr := gateTLS(*cert, *key, *clientCA)
+			if terr != nil {
+				die("writ-hook serve: %v", terr)
+			}
+			ln, lerr := tls.Listen("tcp", *listen, cfg)
+			if lerr != nil {
+				die("writ-hook serve: %v", lerr)
+			}
+			fmt.Fprintln(os.Stderr, "writ-hook gate listening on", ln.Addr(), "with mTLS")
+			go func() { errs <- e.serveTLS(ln) }()
+		}
+		if *socket != "" {
+			go func() {
+				errs <- e.serve(*socket, os.FileMode(*mode), func() { fmt.Fprintln(os.Stderr, "writ-hook gate listening on", *socket) })
+			}()
+		}
+		err = <-errs
 	case "init":
 		err = e.initKeys(os.Stdout)
 	case "grant":
@@ -134,6 +184,15 @@ func main() {
 		renew := fs.Duration("renew-before", 0, "keep the grant of this name, unsigned again, while it has the same bounds and more than this left to run")
 		_ = fs.Parse(os.Args[2:])
 		err = e.grant(os.Stdout, *name, splitList(*tools), *under, *uses, *ttl, *renew)
+	case "approve":
+		fs := flag.NewFlagSet("approve", flag.ExitOnError)
+		yes := fs.Bool("yes", false, "sign the approval; without it, only show what would be approved")
+		ttl := fs.Duration("ttl", 30*time.Minute, "how long the approval lasts, at most 24h")
+		_ = fs.Parse(os.Args[2:])
+		if fs.NArg() != 1 {
+			die("usage: writ-hook approve [-yes] [-ttl D] ID, where ID is the one a refusal named")
+		}
+		err = e.approve(os.Stdout, fs.Arg(0), *yes, *ttl)
 	case "pre":
 		err = e.hook(os.Stdin, os.Stdout, e.pre)
 	case "post":
@@ -206,11 +265,42 @@ func loadKeyBytes(path string, b []byte) (*keys.Identity, error) {
 	return keys.FromSeed(seed)
 }
 
+// signer is the grantor's key (role ROOT) or the gate's (GATE). When
+// WRIT_VAULT_<role>_KEY names a transit key, it is that key in Vault and every
+// signature goes through Vault; no seed file is read or written. Otherwise it
+// is the seed file at path, created when create is set.
+func (e *env) signer(role, path string, create bool) (keys.Signer, error) {
+	name := os.Getenv("WRIT_VAULT_" + role + "_KEY")
+	if name == "" {
+		load := loadKey
+		if create {
+			load = loadOrCreateKey
+		}
+		id, err := load(path)
+		if err != nil {
+			return nil, err
+		}
+		return id, nil
+	}
+	token := os.Getenv("VAULT_TOKEN")
+	if f := os.Getenv("WRIT_VAULT_TOKEN_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		token = strings.TrimSpace(string(b))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return vault.New(ctx, vault.Config{Addr: os.Getenv("VAULT_ADDR"), Token: token,
+		Namespace: os.Getenv("VAULT_NAMESPACE"), Mount: os.Getenv("WRIT_VAULT_MOUNT"), Key: name})
+}
+
 func (e *env) initKeys(out io.Writer) error {
 	if err := os.MkdirAll(e.dir, 0o700); err != nil {
 		return err
 	}
-	root, err := loadOrCreateKey(filepath.Join(e.home, "root.seed"))
+	root, err := e.signer("ROOT", filepath.Join(e.home, "root.seed"), true)
 	if err != nil {
 		return err
 	}
@@ -221,7 +311,7 @@ func (e *env) initKeys(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	gate, err := loadOrCreateKey(e.path("gate.seed"))
+	gate, err := e.signer("GATE", e.path("gate.seed"), true)
 	if err != nil {
 		return err
 	}
@@ -251,7 +341,7 @@ func (e *env) grant(out io.Writer, name string, tools []string, under string, us
 	if under != "" && (!filepath.IsAbs(under) || filepath.Clean(under) != under) {
 		return fmt.Errorf("-under must be a clean absolute path")
 	}
-	root, err := loadKey(filepath.Join(e.home, "root.seed"))
+	root, err := e.signer("ROOT", filepath.Join(e.home, "root.seed"), false)
 	if err != nil {
 		return fmt.Errorf("no grantor key; run writ-hook init first (%v)", err)
 	}
@@ -366,7 +456,7 @@ func (e *env) lock() (func(), error) {
 type gate struct {
 	e      *exec.Executor
 	env    *env
-	id     *keys.Identity
+	id     keys.Signer
 	agent  *keys.Identity
 	rootID string
 	audit  *exec.AuditLog
@@ -393,6 +483,9 @@ func (g *gate) use(id string) error {
 	x := exec.New(g.id, st)
 	x.Now = g.env.now
 	x.AcceptRoot = func(did string) bool { return did == g.rootID }
+	if g.env.binds != nil {
+		x.PeerBinds = g.env.binds
+	}
 	x.Audit = func(a exec.AuditEntry) {
 		if err := g.audit.Record(a); err != nil {
 			fmt.Fprintf(os.Stderr, "writ-hook: audit record not written: %v\n", err)
@@ -405,9 +498,9 @@ func (g *gate) use(id string) error {
 // openGate loads the keys and opens the audit record; use then opens the
 // store of one grant. It must run under lock.
 func (e *env) openGate() (*gate, error) {
-	gateID, err := loadKey(e.path("gate.seed"))
+	gateID, err := e.signer("GATE", e.path("gate.seed"), false)
 	if err != nil {
-		return nil, fmt.Errorf("no gate key; run writ-hook init (%v)", err)
+		return nil, fmt.Errorf("the gate key could not be loaded; with none, run writ-hook init (%v)", err)
 	}
 	agent, err := loadKey(e.path("agent.seed"))
 	if err != nil {
@@ -429,7 +522,23 @@ func (e *env) openGate() (*gate, error) {
 // first of all, which the executor then refuses with its reason. It returns
 // the chain root, agent, gate, issuing the agent's delegation to the gate on
 // first use: the same bounds and expiry, since narrowing never widens (spec 4).
-func (g *gate) chainFor(tool string) ([]*writ.Writ, error) {
+//
+// An approval the grantor signed with writ-hook approve comes first, when it
+// admits exactly this call and has not expired, and the second return value
+// is then its file, which admit removes once the call is admitted. Any other
+// call is checked under the grants as before, so an approval never stands in
+// for the grant on the calls it does not name.
+func (g *gate) chainFor(tool, op string, args map[string]any) ([]*writ.Writ, string, error) {
+	approvals, _ := filepath.Glob(filepath.Join(g.env.path("approvals"), "*.json"))
+	sort.Strings(approvals)
+	for _, f := range approvals {
+		w, err := readWrit(f)
+		if err != nil || w.Iss != g.rootID || w.Hld != g.agent.DID() || w.Exp <= g.env.now() || !writ.Admits(w, op, args) {
+			continue
+		}
+		chain, err := g.withChild(w, "approval-"+filepath.Base(f))
+		return chain, f, err
+	}
 	files, _ := filepath.Glob(filepath.Join(g.env.path("grants"), "*.json"))
 	sort.Strings(files)
 	var pick, open, first string
@@ -464,28 +573,35 @@ func (g *gate) chainFor(tool string) ([]*writ.Writ, error) {
 		}
 		grant, err := readWrit(f)
 		if err != nil {
+			return nil, "", err
+		}
+		chain, err := g.withChild(grant, filepath.Base(f))
+		return chain, "", err
+	}
+	return nil, "", errors.New("no grant; run writ-hook grant")
+}
+
+// withChild returns the chain root, agent, gate for grant, issuing the
+// agent's delegation to the gate under children/name on first use.
+func (g *gate) withChild(grant *writ.Writ, name string) ([]*writ.Writ, error) {
+	childPath := filepath.Join(g.env.path("children"), name)
+	child, err := readWrit(childPath)
+	if err != nil || child.Prv != grant.ID || child.Hld != g.id.DID() {
+		bnd := map[string]any{}
+		for name, b := range grant.Bnd {
+			bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
+		}
+		if child, err = writ.Issue(g.agent, g.id.DID(), bnd, grant.Exp, grant); err != nil {
 			return nil, err
 		}
-		childPath := filepath.Join(g.env.path("children"), filepath.Base(f))
-		child, err := readWrit(childPath)
-		if err != nil || child.Prv != grant.ID || child.Hld != g.id.DID() {
-			bnd := map[string]any{}
-			for name, b := range grant.Bnd {
-				bnd[name] = map[string]any{"t": b.T, "v": b.Raw}
-			}
-			if child, err = writ.Issue(g.agent, g.id.DID(), bnd, grant.Exp, grant); err != nil {
-				return nil, err
-			}
-			if err := os.MkdirAll(g.env.path("children"), 0o700); err != nil {
-				return nil, err
-			}
-			if err := writeJSON(childPath, child.Raw); err != nil {
-				return nil, err
-			}
+		if err := os.MkdirAll(g.env.path("children"), 0o700); err != nil {
+			return nil, err
 		}
-		return []*writ.Writ{grant, child}, nil
+		if err := writeJSON(childPath, child.Raw); err != nil {
+			return nil, err
+		}
 	}
-	return nil, errors.New("no grant; run writ-hook grant")
+	return []*writ.Writ{grant, child}, nil
 }
 
 // ---------------------------------------------------------------- hooks
@@ -499,6 +615,20 @@ type hookInput struct {
 	ToolResponse json.RawMessage `json:"tool_response"`
 	Error        json.RawMessage `json:"error"`
 	SessionID    string          `json:"session_id"`
+
+	// Set by the gate for a request that came over mTLS: the context
+	// carrying the transport-authenticated peer, for peer binding (spec
+	// 7.6), and that peer, so a call one machine began only that machine
+	// can finish or recover. Both are empty for a local hook or the socket.
+	ctx  context.Context
+	peer string
+}
+
+func (h *hookInput) context() context.Context {
+	if h.ctx == nil {
+		return context.Background()
+	}
+	return h.ctx
 }
 
 // pendingCall is what pre keeps for a call it admitted, until post signs its
@@ -506,6 +636,7 @@ type hookInput struct {
 // when, so a session starting up resolves only calls that cannot be running.
 type pendingCall struct {
 	Session string          `json:"session"`
+	Peer    string          `json:"peer,omitempty"` // the machine that began it, over mTLS
 	At      int64           `json:"at"`
 	Call    json.RawMessage `json:"call"`
 }
@@ -539,10 +670,17 @@ func grantOf(obj wire.Object) (string, error) {
 }
 
 func (e *env) hook(in io.Reader, out io.Writer, f func(*hookInput) (any, error)) error {
+	return e.hookFrom(context.Background(), "", in, out, f)
+}
+
+// hookFrom runs a hook for a request from peer, over a connection whose
+// context ctx carries it; peer is "" for a local hook or the socket.
+func (e *env) hookFrom(ctx context.Context, peer string, in io.Reader, out io.Writer, f func(*hookInput) (any, error)) error {
 	var h hookInput
 	if err := json.NewDecoder(in).Decode(&h); err != nil {
 		return fmt.Errorf("hook input: %v", err)
 	}
+	h.ctx, h.peer = ctx, peer
 	v, err := f(&h)
 	if err != nil {
 		return err
@@ -596,7 +734,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err := os.MkdirAll(filepath.Join(e.dir, "pending"), 0o700); err != nil {
 		return nil, err
 	}
-	chain, err := g.chainFor(h.ToolName)
+	chain, approval, err := g.chainFor(h.ToolName, "claude/"+h.ToolName, args)
 	if err != nil {
 		return deny(err.Error()), nil
 	}
@@ -607,7 +745,7 @@ func (e *env) admit(h *hookInput) (any, error) {
 	if err != nil {
 		return deny("the tool input cannot be carried in a call: " + err.Error()), nil
 	}
-	rep, rej := g.e.Begin(context.Background(), k.Raw)
+	rep, rej := g.e.Begin(h.context(), k.Raw)
 	switch {
 	case rej != nil:
 		return deny(string(rej.Code)), nil
@@ -616,14 +754,21 @@ func (e *env) admit(h *hookInput) (any, error) {
 		if errObj, ok := rep.Tally["err"].(map[string]any); ok {
 			code, _ = errObj["code"].(string)
 		}
-		return deny(explain(code, h.ToolName, chain[0], args) + approvable(code, chain, k)), nil
+		return deny(explain(code, h.ToolName, chain[0], args) + e.approvable(code, chain, k, h)), nil
 	}
 	call, err := json.Marshal(k.Raw)
 	if err != nil {
 		return nil, err
 	}
-	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, At: e.now(), Call: call}); err != nil {
+	if err := writeJSON(e.pendingPath(h.ToolUseID), pendingCall{Session: h.SessionID, Peer: h.peer, At: e.now(), Call: call}); err != nil {
 		return nil, err
+	}
+	// The approval is used up: its count of one is now spent at this
+	// executor, and removing it keeps it from being tried for later calls.
+	if approval != "" {
+		if err := os.Remove(approval); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 	}
 	return nil, nil
 }
@@ -674,7 +819,10 @@ func explain(code, tool string, grant *writ.Writ, args map[string]any) string {
 // arguments, when a writ in the chain above the one that refused it would
 // allow it (docs/approval.md). Approval is a one-use writ for exactly this
 // call, so the model is told who to ask, not how to get around the grant.
-func approvable(code string, chain []*writ.Writ, k *writ.Call) string {
+// When the approver is the grantor, whose key this program holds, the call is
+// saved under requests/ by its tool_use_id for writ-hook approve. It must run
+// under lock.
+func (e *env) approvable(code string, chain []*writ.Writ, k *writ.Call, h *hookInput) string {
 	if code != "out_of_bounds" && code != "forbidden_op" && code != "missing_arg" {
 		return ""
 	}
@@ -682,7 +830,90 @@ func approvable(code string, chain []*writ.Writ, k *writ.Call) string {
 	if j < 0 {
 		return ""
 	}
+	if j == 0 {
+		req := approvalRequest{Tool: h.ToolName, Op: k.Op, Args: k.Args, Grant: chain[0].Raw, At: e.now()}
+		if err := os.MkdirAll(e.path("requests"), 0o700); err == nil && writeJSON(e.requestPath(h.ToolUseID), req) == nil {
+			return fmt.Sprintf(". The signer of the grant, %s, can approve exactly this one call by running `writ-hook approve %s` (docs/approval.md); ask the person, and do not retry until they say it is approved", chain[0].Iss, h.ToolUseID)
+		}
+	}
 	return fmt.Sprintf(". The signer of the grant, %s, can approve exactly this one call with `writ approve` (docs/approval.md); ask the person, do not retry", chain[j].Iss)
+}
+
+// approvalRequest is a refused call the grantor could approve: what the
+// person is shown, and what writ-hook approve signs a one-use writ for.
+type approvalRequest struct {
+	Tool  string         `json:"tool"`
+	Op    string         `json:"op"`
+	Args  map[string]any `json:"args"`
+	Grant wire.Object    `json:"grant"`
+	At    int64          `json:"at"`
+}
+
+func (e *env) requestPath(id string) string { return filepath.Join(e.path("requests"), id+".json") }
+
+// approve shows the refused call saved under id and, with yes, signs as the
+// grantor a writ for exactly that call, once (docs/approval.md), saved under
+// approvals/ where the gate tries it before the grants. Like grant, it is a
+// local command for the grantor, never answered over the gate's socket.
+func (e *env) approve(out io.Writer, id string, yes bool, ttl time.Duration) error {
+	if !toolUseID.MatchString(id) {
+		return fmt.Errorf("%q is not an ID a refusal names", id)
+	}
+	if ttl <= 0 || ttl > maxGrant {
+		return fmt.Errorf("-ttl must be more than 0 and at most %s", maxGrant)
+	}
+	unlock, err := e.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	b, err := os.ReadFile(e.requestPath(id))
+	if err != nil {
+		return fmt.Errorf("no refused call %s waits for approval (%v)", id, err)
+	}
+	// Decoded the way the protocol decodes, so integers stay integers and the
+	// approval pins exactly the values the refused call carried.
+	obj, err := wire.Decode(b)
+	if err != nil {
+		return fmt.Errorf("request %s: %v", id, err)
+	}
+	op, _ := obj["op"].(string)
+	args, okArgs := obj["args"].(map[string]any)
+	grantObj, okGrant := obj["grant"].(map[string]any)
+	atNum, _ := obj["at"].(json.Number)
+	at, _ := atNum.Int64()
+	if op == "" || !okArgs || !okGrant {
+		return fmt.Errorf("request %s is incomplete", id)
+	}
+	shown, _ := json.MarshalIndent(args, "  ", "  ")
+	fmt.Fprintf(out, "%s, refused %s, with:\n  %s\n", op, time.Unix(at, 0).Format(time.RFC3339), shown)
+	if !yes {
+		fmt.Fprintf(out, "nothing signed; run again with -yes to approve exactly this call, once, for %s\n", ttl)
+		return nil
+	}
+	root, err := loadKey(filepath.Join(e.home, "root.seed"))
+	if err != nil {
+		return fmt.Errorf("no grantor key; approve as the user that ran writ-hook init (%v)", err)
+	}
+	grant, err := writ.ParseWrit(grantObj)
+	if err != nil {
+		return fmt.Errorf("request %s: %v", id, err)
+	}
+	a, err := writ.Approve(root, nil, grant, op, args, e.now()+int64(ttl/time.Second))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(e.path("approvals"), 0o700); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(e.path("approvals"), id+".json"), a.Raw); err != nil {
+		return err
+	}
+	if err := os.Remove(e.requestPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Fprintf(out, "approved %s once, until %s; the same call will now run\n", a.ID, time.Unix(a.Exp, 0).Format(time.RFC3339))
+	return nil
 }
 
 // auditRefusal records a call this program refuses before it reaches the
@@ -729,12 +960,15 @@ func (e *env) post(h *hookInput) (any, error) {
 		return nil, err
 	}
 	defer unlock()
-	_, obj, err := readPending(e.pendingPath(h.ToolUseID))
+	p, obj, err := readPending(e.pendingPath(h.ToolUseID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil // not a call this gate admitted
 	}
 	if err != nil {
 		return nil, err
+	}
+	if p.Peer != h.peer {
+		return nil, fmt.Errorf("call %s was begun by another machine, which alone can report its outcome", h.ToolUseID)
 	}
 	id, err := grantOf(obj)
 	if err != nil {
@@ -757,7 +991,7 @@ func (e *env) post(h *hookInput) (any, error) {
 		body = map[string]any{"tool_use_id": h.ToolUseID, "error_sha256": hex.EncodeToString(errSum[:])}
 	}
 	r.Res = body
-	if _, rej := g.e.Complete(context.Background(), obj, r); rej != nil && rej.Code != writ.Reason(exec.NotAdmitted) {
+	if _, rej := g.e.Complete(h.context(), obj, r); rej != nil && rej.Code != writ.Reason(exec.NotAdmitted) {
 		return nil, fmt.Errorf("receipt not signed: %v", rej)
 	}
 	if err := os.Remove(e.pendingPath(h.ToolUseID)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -843,10 +1077,21 @@ func (e *env) touchesState(v any) string {
 // itself and, when it is under the home directory, its ~ and $HOME forms.
 // Only this gate's own home: text about another, such as "~/.writ" in this
 // project's documentation when WRIT_HOME is elsewhere, names nothing here.
+// A Vault token file is named the same way, since its token signs as the
+// grantor and the gate.
 func (e *env) stateNames() []string {
-	names := []string{e.home}
-	if h, err := os.UserHomeDir(); err == nil && h != "" {
-		if rel, ok := strings.CutPrefix(e.home, strings.TrimSuffix(h, "/")+"/"); ok {
+	paths := []string{e.home}
+	if f := os.Getenv("WRIT_VAULT_TOKEN_FILE"); f != "" {
+		paths = append(paths, f)
+	}
+	var names []string
+	h, _ := os.UserHomeDir()
+	for _, p := range paths {
+		names = append(names, p)
+		if h == "" {
+			continue
+		}
+		if rel, ok := strings.CutPrefix(p, strings.TrimSuffix(h, "/")+"/"); ok {
 			names = append(names, "~/"+rel, "$HOME/"+rel, "${HOME}/"+rel)
 		}
 	}
@@ -964,7 +1209,7 @@ func (e *env) recover(out io.Writer, h *hookInput) error {
 				at = fi.ModTime().Unix()
 			}
 		}
-		if h != nil && (p.Session == "" || p.Session != h.SessionID) && e.now()-at <= int64(staleAfter/time.Second) {
+		if h != nil && (p.Session == "" || p.Session != h.SessionID || p.Peer != h.peer) && e.now()-at <= int64(staleAfter/time.Second) {
 			continue
 		}
 		id, err := grantOf(obj)

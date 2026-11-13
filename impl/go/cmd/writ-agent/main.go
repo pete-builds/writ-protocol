@@ -29,6 +29,7 @@ func main() {
 	role := flag.String("role", "payment", "booking or payment")
 	seedHex := flag.String("seed", "", "32-byte hex seed for the agent key (demo only)")
 	port := flag.Int("port", 8081, "listen port")
+	host := flag.String("addr", "127.0.0.1", "listen address; 0.0.0.0 inside a container")
 	store := flag.String("store", "", "path of the durable store (empty for memory)")
 	accept := flag.String("accept", "", "comma-separated did:key roots this agent acts under")
 	downstream := flag.String("downstream", "", "base URL of the payment agent (booking role)")
@@ -99,7 +100,7 @@ func main() {
 		log.Fatal(filebind.Serve(context.Background(), e, *filesDir, 50*time.Millisecond))
 	}
 	opts := httpbind.Options{PerMinute: *perMinute}
-	addr := fmt.Sprintf("127.0.0.1:%d", *port)
+	addr := fmt.Sprintf("%s:%d", *host, *port)
 	if *clientCA == "" {
 		log.Fatal(http.ListenAndServe(addr, httpbind.NewHandler(e, wk, opts)))
 	}

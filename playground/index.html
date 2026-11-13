@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writ Playground</title>
+<meta name="description" content="Try to cheat the Writ protocol. Every answer comes from the Go reference implementation, running in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&family=Comic+Neue:wght@400;700&display=swap">
+<style>
+:root {
+  --bg: #e7f1f8; --dot: #cfe1ee; --panel: #ffffff; --ink: #1d1b26; --muted: #55586a;
+  --a: #5aa6ee; --b: #f6a33a; --c: #4fc58e; --slip: #ffe66d; --on-paper: #1d1b26;
+  --ok: #1f9d5c; --no: #e5484d; --code-bg: #f3f5f8;
+  --font: "Comic Neue", "Comic Sans MS", "Chalkboard SE", cursive;
+  --shout: "Bangers", "Comic Neue", "Comic Sans MS", cursive;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14161d; --dot: #1f2330; --panel: #20232d; --ink: #f1efe6; --muted: #b3b5c2;
+    --slip: #ecd65e; --ok: #4fd58e; --no: #ff6b6f; --code-bg: #171a22; color-scheme: dark }
+}
+* { box-sizing: border-box }
+body { margin: 0; background-color: var(--bg); background-image: radial-gradient(var(--dot) 1.6px, transparent 1.7px);
+  background-size: 14px 14px; color: var(--ink); font-family: var(--font); font-size: 17px; line-height: 1.45 }
+.page { max-width: 1000px; margin: 0 auto; padding: 28px 16px 56px; display: grid; gap: 28px }
+h1, h2 { font-family: var(--shout); font-weight: 400; letter-spacing: .04em; margin: 0; text-wrap: balance }
+h1 { font-size: clamp(42px, 8vw, 76px); line-height: .95 }
+h2 { font-size: 28px }
+p { margin: 0; max-width: 65ch }
+a { color: inherit }
+.lede { font-size: 20px; margin-top: 10px }
+.box { background: var(--panel); border: 3px solid var(--ink); border-radius: 6px; box-shadow: 5px 5px 0 var(--ink) }
+.app { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 18px; padding: 18px }
+@media (max-width: 720px) { .app { grid-template-columns: minmax(0, 1fr) } }
+.ctl { display: grid; gap: 10px; align-content: start }
+.label { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700 }
+.limit { display: grid; gap: 4px; padding: 10px 12px; background: var(--slip); color: var(--on-paper); border: 3px solid var(--ink); border-radius: 6px }
+.limit output { font-family: var(--shout); font-size: 30px; letter-spacing: .04em; line-height: 1 }
+.limit input { width: 100% }
+button { font: inherit; font-weight: 700; text-align: left; padding: 9px 12px; border: 3px solid var(--ink); border-radius: 6px;
+  background: var(--panel); color: var(--ink); cursor: pointer; box-shadow: 3px 3px 0 var(--ink) }
+button:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink) }
+button:focus-visible { outline: 3px solid var(--a); outline-offset: 2px }
+button:disabled { opacity: .5; cursor: progress }
+button[aria-pressed="true"] { background: var(--slip); color: var(--on-paper) }
+button.go { background: var(--c); color: var(--on-paper) }
+.out { display: grid; gap: 12px; align-content: start; min-width: 0 }
+.verdict { font-family: var(--shout); font-size: 34px; letter-spacing: .05em; line-height: 1 }
+.verdict.ok, .verdict.same { color: var(--ok) } .verdict.refused, .verdict.caught { color: var(--no) }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px }
+ol.steps li { display: grid; grid-template-columns: 2.4em minmax(0, 1fr); gap: 10px; align-items: start }
+.who { width: 2.2em; height: 2.2em; border: 3px solid var(--ink); border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; color: var(--on-paper); font-size: 15px }
+.who.A { background: var(--a) } .who.B { background: var(--b) } .who.C { background: var(--c) }
+.who.other { background: var(--panel); color: var(--ink) }
+.code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; padding: 1px 6px; border: 2px solid currentColor; border-radius: 4px; margin-left: 6px; white-space: nowrap }
+.bad { color: var(--no) }
+.tally { font-size: 15px; color: var(--muted) }
+details { border-top: 2px dashed var(--ink); padding-top: 10px }
+summary { cursor: pointer; font-weight: 700 }
+pre { background: var(--code-bg); border: 2px solid var(--ink); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; margin: 8px 0 0; max-height: 360px }
+.status { color: var(--muted) }
+.foot { display: grid; gap: 8px; font-size: 15px; color: var(--muted) }
+@media (prefers-reduced-motion: reduce) { button:hover:not(:disabled) { transform: none } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Writ playground</h1>
+    <p class="lede">You are robot <b>A</b>. You hand travel agent <b>B</b> a signed slip with a spending limit. B hands card processor <b>C</b> a smaller one. Now try to cheat.</p>
+  </header>
+
+  <main class="box app">
+    <div class="ctl">
+      <div class="limit">
+        <label class="label" for="limit">A's limit</label>
+        <output id="limit-out" for="limit">$600</output>
+        <input id="limit" type="range" min="100" max="2000" step="10" value="600">
+      </div>
+      <span class="label">Try something</span>
+      <button type="button" class="go" data-s="honest" disabled>Book the trip, honestly</button>
+      <button type="button" data-s="widen" disabled>Make B give C a bigger slip</button>
+      <button type="button" data-s="overspend" disabled>Make B overcharge</button>
+      <button type="button" data-s="replay" disabled>Send the charge twice</button>
+      <button type="button" data-s="forge" disabled>Have B fake C's receipt</button>
+      <button type="button" data-s="crash" disabled>Crash B, then undo with C</button>
+    </div>
+    <div class="out" aria-live="polite">
+      <div class="verdict" id="verdict">Loading…</div>
+      <p class="status" id="status">Loading the Writ reference code (about 5 MB, once).</p>
+      <ol class="steps" id="steps"></ol>
+      <p class="tally" id="tally"></p>
+      <details id="objects-box" hidden>
+        <summary>Show the signed objects</summary>
+        <pre id="objects"></pre>
+      </details>
+    </div>
+  </main>
+
+  <section class="foot">
+    <p><b>Nothing here is a script.</b> Each button runs the Go reference implementation of Writ, compiled to WebAssembly, in your browser. Fresh keys every run. Nothing is sent anywhere.</p>
+    <p>Found a way through? That's the point. <a href="https://github.com/pete-builds/writ-protocol">Read the spec and open an issue</a>.</p>
+  </section>
+</div>
+
+<script src="wasm_exec.js"></script>
+<script>
+(function () {
+  var buttons = Array.prototype.slice.call(document.querySelectorAll("button[data-s]"));
+  var range = document.getElementById("limit"), limitOut = document.getElementById("limit-out");
+  var verdict = document.getElementById("verdict"), status = document.getElementById("status");
+  var steps = document.getElementById("steps"), tally = document.getElementById("tally");
+  var objBox = document.getElementById("objects-box"), objPre = document.getElementById("objects");
+  var current = "honest";
+
+  function dollars() { return "$" + Number(range.value).toLocaleString("en-US") }
+  range.addEventListener("input", function () { limitOut.textContent = dollars() });
+  range.addEventListener("change", function () { if (window.writPlay) run(current) });
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e }
+
+  function run(s) {
+    current = s;
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.s === s ? "true" : "false") });
+    var o;
+    try { o = JSON.parse(window.writPlay(s, Number(range.value) * 100)) } catch (e) { o = { error: String(e) } }
+    steps.textContent = "";
+    if (o.error) { verdict.className = "verdict refused"; verdict.textContent = "Error"; status.textContent = o.error; objBox.hidden = true; return }
+    verdict.className = "verdict " + o.verdict;
+    verdict.textContent = o.headline;
+    status.textContent = "";
+    o.steps.forEach(function (st) {
+      var li = el("li");
+      var who = ["A", "B", "C"].indexOf(st.who) >= 0 ? st.who : "other";
+      li.appendChild(el("span", "who " + who, who === "other" ? "!" : st.who));
+      var p = el("p", st.ok ? "" : "bad", st.text);
+      if (st.code) p.appendChild(el("span", "code", st.code));
+      li.appendChild(p);
+      steps.appendChild(li);
+    });
+    tally.textContent = "Card charged " + o.charges + (o.charges === 1 ? " time" : " times") + ", refunded " + o.refunds + (o.refunds === 1 ? " time." : " times.");
+    objPre.textContent = JSON.stringify(o.objects, null, 2);
+    objBox.hidden = !o.objects || Object.keys(o.objects).length === 0;
+  }
+
+  buttons.forEach(function (b) { b.addEventListener("click", function () { run(b.dataset.s) }) });
+
+  window.addEventListener("writ-ready", function () {
+    buttons.forEach(function (b) { b.disabled = false });
+    run("honest");
+  });
+
+  var go = new Go();
+  var load = WebAssembly.instantiateStreaming
+    ? WebAssembly.instantiateStreaming(fetch("writ.wasm"), go.importObject)
+    : fetch("writ.wasm").then(function (r) { return r.arrayBuffer() }).then(function (b) { return WebAssembly.instantiate(b, go.importObject) });
+  load.then(function (r) { go.run(r.instance) }).catch(function (e) {
+    verdict.className = "verdict refused"; verdict.textContent = "Couldn't load";
+    status.textContent = "The Writ code didn't load in this browser: " + e;
+  });
+})();
+</script>
+</body>
+</html>
