@@ -4,34 +4,24 @@
 #
 #   sudo /bin/bash writ-gate-macos.sh install BINARY SHA256
 #   sudo /bin/bash writ-gate-macos.sh install --no-checksum BINARY
-#   sudo /bin/bash writ-gate-macos.sh uninstall
+#   sudo /bin/bash writ-gate-macos.sh uninstall [--purge]
 #
-# Run it from a fresh clone at a commit you reviewed, never from a working tree
-# the agent can write, and take SHA256 from somewhere the agent cannot write
-# either: a release page, or a build in that clean clone (docs/claude-code.md
-# has the checklist).
+# Run it from a fresh clone at a commit you reviewed (docs/claude-code.md has
+# the checklist). install copies BINARY, if its SHA-256 matches, into a
+# root-owned folder, creates the hidden account _writ and a fresh
+# /var/db/writ, makes keys and a grant as _writ, and starts the gate and a
+# renewal as LaunchDaemons. It never adopts state it did not just create; run
+# over a live gate, it leaves the state as it is. A failed or interrupted
+# install removes what that run created. uninstall stops everything running
+# as the gate, archives /var/db/writ into a root-only tar file in /var/db
+# (unless --purge), deletes it, and removes the account and the program. Root
+# never changes the owner of anything the gate could have shaped.
 #
-# install creates a hidden account (_writ, no shell, no password), copies
-# BINARY into a root-owned folder (refusing it unless its SHA-256 matches),
-# makes keys and a rolling grant as _writ, and starts two LaunchDaemons as
-# _writ: the gate on a Unix socket, and a renewal that keeps the grant fresh.
-# Point the hooks at the socket afterwards (docs/claude-code.md). It refuses a
-# program folder that any directory above makes writable by someone other than
-# root, and if any step fails or is interrupted it undoes what that run
-# created, so a first install either completes or leaves nothing behind.
-#
-# uninstall stops both daemons, kills anything left running as the gate, and
-# removes the account and the binary. It leaves the state directory, which
-# holds the keys and receipts, in place, owned by root, so no account later
-# given the gate's uid can read it.
-#
-# Two settings, for testing and narrowing, read from the environment:
-#   WRIT_GATE_LIBEXEC  the program folder (default /usr/local/libexec/writ);
-#                      uninstall needs the same value
-#   WRIT_GATE_GRANT    the standing grant the install signs and the renewal
-#                      keeps (default "grant -name session -uses 10000 -ttl
-#                      24h -renew-before 22h": any tool, any path); it must
-#                      keep -name session and set -uses above 0
+# WRIT_GATE_LIBEXEC sets the program folder (default /usr/local/libexec/writ;
+# uninstall needs the same value). WRIT_GATE_GRANT sets the standing grant
+# (default "grant -name session -uses 10000 -ttl 24h -renew-before 22h": any
+# tool, any path) as flag and value pairs from -name -tools -under -uses -ttl
+# -renew-before, each at most once, keeping -name session and -uses above 0.
 set -eu
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -46,8 +36,7 @@ GATE_HOME=$STATE/home
 RUN_DIR=$STATE/run
 SOCKET=$RUN_DIR/gate.sock
 LOG_DIR=$STATE/log
-GATE_LABEL=org.writ.gate
-RENEW_LABEL=org.writ.renew
+LABELS="org.writ.gate org.writ.renew"
 GRANT_ARGS=${WRIT_GATE_GRANT:-grant -name session -uses 10000 -ttl 24h -renew-before 22h}
 
 die() { echo "writ-gate-macos: $*" >&2; exit 1; }
@@ -55,25 +44,30 @@ die() { echo "writ-gate-macos: $*" >&2; exit 1; }
 check_settings() {
 	case $LIBEXEC in /*) ;; *) die "WRIT_GATE_LIBEXEC must be an absolute path" ;; esac
 	case $LIBEXEC in *[!A-Za-z0-9/._-]*) die "WRIT_GATE_LIBEXEC holds a character other than letters, digits, and / . _ -" ;; esac
-	case $LIBEXEC in */./* | */../* | */. | */..) die "WRIT_GATE_LIBEXEC must not hold . or .. segments" ;; esac
-	case $LIBEXEC in
+	case $LIBEXEC in *//* | */ | */./* | */../* | */. | */..) die "WRIT_GATE_LIBEXEC must not hold //, a trailing /, or . or .. segments" ;; esac
+	# The volume is usually case-insensitive, so compare in lower case.
+	case $(echo "$LIBEXEC" | tr '[:upper:]' '[:lower:]') in
 	/var/db/writ | /var/db/writ/* | /private/var/db/writ | /private/var/db/writ/*)
 		die "WRIT_GATE_LIBEXEC must not be inside the gate's state, $STATE" ;;
 	esac
 	case $GRANT_ARGS in *[!A-Za-z0-9\ ,._/-]*) die "WRIT_GATE_GRANT holds a character other than letters, digits, space, and , . _ / -" ;; esac
+	# Strict flag and value pairs: Go's flag parsing stops at the first word
+	# that is not a flag, so anything after a stray word would be ignored.
 	# shellcheck disable=SC2086 # split the word list; it holds no glob characters
 	set -- $GRANT_ARGS
 	[ "${1:-}" = grant ] || die "WRIT_GATE_GRANT must start with \"grant\""
 	shift
-	name='' uses=''
+	name='' uses='' seen=' '
 	while [ $# -gt 0 ]; do
 		case $1 in
-		-name | --name) name=${2:-} ;;
-		-name=* | --name=*) name=${1#*=} ;;
-		-uses | --uses) uses=${2:-} ;;
-		-uses=* | --uses=*) uses=${1#*=} ;;
+		-name | -tools | -under | -uses | -ttl | -renew-before) ;;
+		*) die "WRIT_GATE_GRANT: \"$1\" is not one of -name -tools -under -uses -ttl -renew-before" ;;
 		esac
-		shift
+		case $seen in *" $1 "*) die "WRIT_GATE_GRANT gives $1 twice" ;; esac
+		[ $# -ge 2 ] || die "WRIT_GATE_GRANT: $1 has no value"
+		seen="$seen$1 "
+		case $1 in -name) name=$2 ;; -uses) uses=$2 ;; esac
+		shift 2
 	done
 	# Another name would leave the old any-tool session grant in force until
 	# it expires, up to 24 hours.
@@ -91,36 +85,22 @@ as_gate() {
 plist() {
 	label=$1 interval=$2
 	shift 2
-	echo '<?xml version="1.0" encoding="UTF-8"?>'
-	echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
-	echo '<plist version="1.0"><dict>'
-	echo "  <key>Label</key><string>$label</string>"
-	echo "  <key>UserName</key><string>$GATE_USER</string>"
-	echo "  <key>GroupName</key><string>$GATE_USER</string>"
-	echo '  <key>ProgramArguments</key><array>'
-	echo "    <string>$BIN</string>"
-	for a in "$@"; do echo "    <string>$a</string>"; done
-	echo '  </array>'
-	echo '  <key>EnvironmentVariables</key><dict>'
-	echo "    <key>WRIT_HOME</key><string>$GATE_HOME</string>"
-	echo "    <key>HOME</key><string>$STATE</string>"
-	echo '  </dict>'
-	echo '  <key>Umask</key><integer>63</integer>'
-	echo '  <key>RunAtLoad</key><true/>'
-	if [ "$interval" -eq 0 ]; then
-		echo '  <key>KeepAlive</key><true/>'
-	else
-		echo "  <key>StartInterval</key><integer>$interval</integer>"
-	fi
-	echo "  <key>StandardOutPath</key><string>$LOG_DIR/$label.log</string>"
-	echo "  <key>StandardErrorPath</key><string>$LOG_DIR/$label.log</string>"
-	echo '</dict></plist>'
-}
-
-start() {
-	launchctl bootout "system/$1" 2>/dev/null || true
-	launchctl enable "system/$1"
-	launchctl bootstrap system "/Library/LaunchDaemons/$1.plist"
+	args=''
+	for a in "$BIN" "$@"; do args="$args<string>$a</string>"; done
+	run='<key>KeepAlive</key><true/>'
+	[ "$interval" -eq 0 ] || run="<key>StartInterval</key><integer>$interval</integer>"
+	cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>$label</string>
+<key>UserName</key><string>$GATE_USER</string><key>GroupName</key><string>$GATE_USER</string>
+<key>ProgramArguments</key><array>$args</array>
+<key>EnvironmentVariables</key><dict><key>WRIT_HOME</key><string>$GATE_HOME</string><key>HOME</key><string>$STATE</string></dict>
+<key>Umask</key><integer>63</integer><key>RunAtLoad</key><true/>$run
+<key>StandardOutPath</key><string>$LOG_DIR/$label.log</string><key>StandardErrorPath</key><string>$LOG_DIR/$label.log</string>
+</dict></plist>
+EOF
 }
 
 # safe_dir DIR: refuse DIR unless it is a real directory owned by root that
@@ -134,40 +114,53 @@ safe_dir() {
 	[ $((8#$mode & 8#022)) -eq 0 ] || die "$1 has mode $mode, writable by its group or by everyone, so they could replace the gate's program"
 }
 
-# user_attr NAME, group_attr NAME: one attribute of the gate account or its
-# group, as dscl prints it. dscl prints an attribute it has no standard name
-# for, such as IsHidden, with a dsAttrTypeNative: prefix.
-user_attr() {
-	dscl . -read "/Users/$GATE_USER" "$1" 2>/dev/null | sed -n -e "s/^$1: //p" -e "s/^dsAttrTypeNative:$1: //p"
-}
-group_attr() {
-	dscl . -read "/Groups/$GATE_USER" "$1" 2>/dev/null | sed -n -e "s/^$1: //p" -e "s/^dsAttrTypeNative:$1: //p"
-}
-
-# unsafe_entries DIR...: every entry that is not a directory, a socket, or a
-# regular file with one name. A root chown follows a hard link to its inode,
-# so a name the gate linked to a root file would hand that file over.
-unsafe_entries() {
-	find "$@" -xdev ! -type d ! -type s ! \( -type f -links 1 \) -print
+# expect_dir DIR OWNER:GROUP MODE: a tripwire for a live install, not a
+# repair.
+expect_dir() {
+	{ [ -d "$1" ] && [ ! -L "$1" ]; } || die "$1 is missing or not a directory; uninstall, then install"
+	got=$(stat -f '%Su:%Sg %Lp' "$1")
+	[ "$got" = "$2 $3" ] || die "$1 is $got, not $2 $3; uninstall, then install"
+	[ -z "$(find "$1" -maxdepth 0 -acl)" ] || die "$1 carries an ACL; uninstall, then install"
 }
 
-# own_state USER:GROUP DIR...: chown every directory, socket, and regular file
-# under DIR, never through a link. Run it only when nothing runs as the gate
-# and unsafe_entries is empty, so no name can change underneath it.
-own_state() {
-	who=$1
-	shift
-	find "$@" -xdev -depth \( -type d -o -type s -o -type f \) -exec chown -h "$who" {} +
+# attr KIND NAME: one attribute of the gate's account (Users) or group
+# (Groups). dscl prints an attribute with no standard name, such as IsHidden,
+# with a dsAttrTypeNative: prefix.
+attr() {
+	dscl . -read "/$1/$GATE_USER" "$2" 2>/dev/null | sed -n -e "s/^$2: //p" -e "s/^dsAttrTypeNative:$2: //p"
 }
 
-# state_to_root: stop anything running as the gate, remove every name that
-# is not a directory, a socket, or a single-named regular file (removing a
-# name never touches the inode it points to), then make the rest root's.
-state_to_root() {
-	pkill -9 -U "$GATE_ID" 2>/dev/null || true
-	[ -d "$STATE" ] || return 0
-	find "$STATE" -xdev ! -type d ! -type s ! \( -type f -links 1 \) -exec rm -f {} +
-	own_state root:wheel "$STATE"
+# stop_gate: kill everything running as the gate's uid, and check it stays
+# dead. STOP first, so nothing can fork between the two.
+stop_gate() {
+	for l in $LABELS; do
+		launchctl bootout "system/$l" 2>/dev/null || true
+		i=0
+		while launchctl print "system/$l" >/dev/null 2>&1; do
+			[ $i -lt 20 ] || die "launchd still has system/$l"
+			sleep 0.2
+			i=$((i + 1))
+		done
+	done
+	i=0
+	while pgrep -U "$GATE_ID" >/dev/null; do
+		[ $i -lt 20 ] || die "processes still run as uid $GATE_ID: $(pgrep -U "$GATE_ID" | tr '\n' ' ')"
+		pkill -STOP -U "$GATE_ID" 2>/dev/null || true
+		pkill -KILL -U "$GATE_ID" 2>/dev/null || true
+		sleep 0.2
+		i=$((i + 1))
+	done
+}
+
+# remove_state: delete /var/db/writ without following a link. find -xdev
+# stays on this volume, chflags -h acts on a link itself, and rm -rf removes
+# names: it does not follow symbolic links, and removing a hard link's name
+# leaves the file it shares an inode with alone.
+remove_state() {
+	[ -e "$STATE" ] || [ -L "$STATE" ] || return 0
+	find "$STATE" -xdev -exec chflags -h nouchg,nouappnd,noschg {} + 2>/dev/null || true
+	rm -rf "$STATE"
+	{ [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; } || die "could not remove $STATE"
 }
 
 install_gate() {
@@ -179,17 +172,22 @@ install_gate() {
 	fi
 
 	# Every check that can refuse runs before anything is created.
-	have_user=''
+	live=''
 	if dscl . -read "/Users/$GATE_USER" >/dev/null 2>&1; then
-		[ "$(user_attr UniqueID)" = "$GATE_ID" ] || die "$GATE_USER exists with uid $(user_attr UniqueID), not $GATE_ID"
-		[ "$(user_attr PrimaryGroupID)" = "$GATE_ID" ] || die "$GATE_USER exists with primary group $(user_attr PrimaryGroupID), not $GATE_ID"
-		[ "$(user_attr UserShell)" = /usr/bin/false ] || die "$GATE_USER exists with shell $(user_attr UserShell), not /usr/bin/false"
-		[ "$(user_attr IsHidden)" = 1 ] || die "$GATE_USER exists and is not hidden"
-		[ "$(user_attr Password)" = '*' ] || die "$GATE_USER exists with password field \"$(user_attr Password)\", not \"*\""
-		[ "$(group_attr PrimaryGroupID)" = "$GATE_ID" ] || die "group $GATE_USER has gid $(group_attr PrimaryGroupID), not $GATE_ID"
-		[ -z "$(group_attr GroupMembership)" ] || die "group $GATE_USER has members: $(group_attr GroupMembership)"
-		have_user=1
+		[ "$(attr Users UniqueID)" = "$GATE_ID" ] || die "$GATE_USER exists with uid $(attr Users UniqueID), not $GATE_ID"
+		[ "$(attr Users PrimaryGroupID)" = "$GATE_ID" ] || die "$GATE_USER exists with primary group $(attr Users PrimaryGroupID), not $GATE_ID"
+		[ "$(attr Users UserShell)" = /usr/bin/false ] || die "$GATE_USER exists with shell $(attr Users UserShell), not /usr/bin/false"
+		[ "$(attr Users IsHidden)" = 1 ] || die "$GATE_USER exists and is not hidden"
+		[ "$(attr Users Password)" = '*' ] || die "$GATE_USER exists with password field \"$(attr Users Password)\", not \"*\""
+		[ "$(attr Groups PrimaryGroupID)" = "$GATE_ID" ] || die "group $GATE_USER has gid $(attr Groups PrimaryGroupID), not $GATE_ID"
+		[ -z "$(attr Groups GroupMembership)" ] || die "group $GATE_USER has members: $(attr Groups GroupMembership)"
+		expect_dir "$STATE" root:wheel 755
+		expect_dir "$GATE_HOME" "$GATE_USER:$GATE_USER" 700
+		expect_dir "$RUN_DIR" "$GATE_USER:$GATE_USER" 755
+		expect_dir "$LOG_DIR" root:wheel 755
+		live=1
 	else
+		{ [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; } || die "$STATE exists with no $GATE_USER account; archive and remove it first with: sudo /bin/bash $0 uninstall"
 		! dscl . -read "/Groups/$GATE_USER" >/dev/null 2>&1 || die "a group $GATE_USER exists with no account $GATE_USER; remove it or find out who made it"
 		uids=$(dscl . -search /Users UniqueID "$GATE_ID") || die "could not search the accounts for uid $GATE_ID"
 		[ -z "$uids" ] || die "uid $GATE_ID is taken"
@@ -209,10 +207,10 @@ install_gate() {
 		d=$(dirname "$d")
 	done
 
-	# From here on a failure or an interruption undoes what this run created
+	# From here on a failure or an interruption removes what this run created
 	# (rollback). A failed reinstall keeps the account and state it found, but
 	# not the binary and plists it replaced.
-	made_dirs='' made_tmp='' made_bin='' made_state='' made_user='' made_daemons=''
+	made_dirs='' made_tmp='' made_bin='' made_user='' made_daemons=''
 	trap rollback EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM HUP
@@ -236,100 +234,83 @@ install_gate() {
 	[ -e "$BIN" ] || made_bin=1
 	mv -f "$made_tmp" "$BIN"
 	made_tmp=''
-	[ -e "$STATE" ] || made_state=1
 
-	if [ -z "$have_user" ]; then
+	if [ -z "$live" ]; then
 		made_user=1
 		dscl . -create "/Groups/$GATE_USER"
-		dscl . -create "/Groups/$GATE_USER" PrimaryGroupID "$GATE_ID"
-		dscl . -create "/Groups/$GATE_USER" RealName "Writ gate"
-		dscl . -create "/Groups/$GATE_USER" Password '*'
+		for k in "PrimaryGroupID:$GATE_ID" "RealName:Writ gate" "Password:*"; do
+			dscl . -create "/Groups/$GATE_USER" "${k%%:*}" "${k#*:}"
+		done
 		dscl . -create "/Users/$GATE_USER"
-		dscl . -create "/Users/$GATE_USER" UniqueID "$GATE_ID"
-		dscl . -create "/Users/$GATE_USER" PrimaryGroupID "$GATE_ID"
-		dscl . -create "/Users/$GATE_USER" UserShell /usr/bin/false
-		dscl . -create "/Users/$GATE_USER" NFSHomeDirectory "$STATE"
-		dscl . -create "/Users/$GATE_USER" RealName "Writ gate"
-		dscl . -create "/Users/$GATE_USER" Password '*'
-		dscl . -create "/Users/$GATE_USER" IsHidden 1
+		for k in "UniqueID:$GATE_ID" "PrimaryGroupID:$GATE_ID" "UserShell:/usr/bin/false" \
+			"NFSHomeDirectory:$STATE" "RealName:Writ gate" "Password:*" "IsHidden:1"; do
+			dscl . -create "/Users/$GATE_USER" "${k%%:*}" "${k#*:}"
+		done
 		echo "created $GATE_USER ($GATE_ID)"
+		# A fresh tree, in /var/db, which root owns: nothing in it predates
+		# this run. The log folder stays root's, since launchd opens the
+		# logs as root.
+		install -d -o root -g wheel -m 0755 "$STATE"
+		install -d -o "$GATE_USER" -g "$GATE_USER" -m 0700 "$GATE_HOME"
+		install -d -o "$GATE_USER" -g "$GATE_USER" -m 0755 "$RUN_DIR"
+		install -d -o root -g wheel -m 0755 "$LOG_DIR"
 	fi
-
-	install -d -o root -g wheel -m 0755 "$STATE"
-	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0700 "$GATE_HOME"
-	install -d -o "$GATE_USER" -g "$GATE_USER" -m 0755 "$RUN_DIR"
-	# The log folder is root's: launchd, as root, opens the log files, so a
-	# link the gate could plant there would aim root at a file of its choice.
-	install -d -o root -g wheel -m 0755 "$LOG_DIR"
-	chown -h root:wheel "$LOG_DIR"
-	chmod 0755 "$LOG_DIR"
-	for l in "$GATE_LABEL" "$RENEW_LABEL"; do
+	chmod -h -N "$LOG_DIR"
+	for l in $LABELS; do
 		rm -f "$LOG_DIR/$l.log"
 		: >"$LOG_DIR/$l.log"
-		chown "$GATE_USER:$GATE_USER" "$LOG_DIR/$l.log"
-		chmod 0640 "$LOG_DIR/$l.log"
+		chown -h "$GATE_USER:$GATE_USER" "$LOG_DIR/$l.log"
+		chmod -h 0640 "$LOG_DIR/$l.log"
 	done
-
-	# State kept by an uninstall is root's. Hand it back only to an account
-	# this run made, so nothing runs as the gate yet, and only when every name
-	# in it is a folder, a socket, or a single-named file.
-	if [ -n "$made_user" ]; then
-		! pgrep -U "$GATE_ID" >/dev/null || die "processes run as uid $GATE_ID before the gate started"
-		bad=$(unsafe_entries "$GATE_HOME" "$RUN_DIR" "$LOG_DIR")
-		[ -z "$bad" ] || die "the state holds links or special files, which a root chown could follow: $bad"
-		own_state "$GATE_USER:$GATE_USER" "$GATE_HOME" "$RUN_DIR"
-	fi
 
 	as_gate init
 	echo "standing grant: $GRANT_ARGS"
 	# shellcheck disable=SC2086 # GRANT_ARGS is a word list on purpose
 	as_gate $GRANT_ARGS
 
-	[ -e "/Library/LaunchDaemons/$GATE_LABEL.plist" ] || [ -e "/Library/LaunchDaemons/$RENEW_LABEL.plist" ] || made_daemons=1
+	[ -n "$live" ] || made_daemons=1
 	# shellcheck disable=SC2086
-	plist "$RENEW_LABEL" 900 $GRANT_ARGS >"/Library/LaunchDaemons/$RENEW_LABEL.plist"
-	plist "$GATE_LABEL" 0 serve -socket "$SOCKET" >"/Library/LaunchDaemons/$GATE_LABEL.plist"
-	# A gate stopped by a reinstall leaves its socket file; remove it, so the
-	# wait below sees the new gate's socket and not the old one.
+	plist org.writ.renew 900 $GRANT_ARGS >/Library/LaunchDaemons/org.writ.renew.plist
+	plist org.writ.gate 0 serve -socket "$SOCKET" >/Library/LaunchDaemons/org.writ.gate.plist
+	for l in $LABELS; do
+		launchctl bootout "system/$l" 2>/dev/null || true
+	done
+	# A stopped gate leaves its socket file; remove it, so the wait below
+	# sees the new gate's socket and not the old one.
 	rm -f "$SOCKET"
-	for l in "$GATE_LABEL" "$RENEW_LABEL"; do
+	for l in $LABELS; do
 		chown root:wheel "/Library/LaunchDaemons/$l.plist"
 		chmod 0644 "/Library/LaunchDaemons/$l.plist"
 		plutil -lint "/Library/LaunchDaemons/$l.plist" >/dev/null
-		start "$l"
+		launchctl enable "system/$l"
+		launchctl bootstrap system "/Library/LaunchDaemons/$l.plist"
 	done
 
 	i=0
 	while [ ! -S "$SOCKET" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-	[ -S "$SOCKET" ] || die "the gate did not open $SOCKET; see $LOG_DIR/$GATE_LABEL.log"
+	[ -S "$SOCKET" ] || die "the gate did not open $SOCKET; see $LOG_DIR/org.writ.gate.log"
 	trap - EXIT INT TERM HUP
 	ls -ld "$STATE" "$GATE_HOME" "$RUN_DIR" "$SOCKET" "$LOG_DIR" "$LIBEXEC" "$BIN"
 	echo "gate listening on $SOCKET as $GATE_USER; set WRIT_HOOK_SOCKET=$SOCKET in the hooks"
 }
 
-# shellcheck disable=SC2329 # run by the EXIT trap in install_gate
 # rollback runs when install exits early. It removes only what this run
-# created, so a failed reinstall keeps the account, keys, and receipts that
-# were there before it.
+# created; a tree it created is new and root-shaped, so plain removal is safe.
+# shellcheck disable=SC2329 # run by the EXIT trap in install_gate
 rollback() {
 	rc=$?
 	[ "$rc" -ne 0 ] || return 0
 	trap - INT TERM HUP
 	echo "writ-gate-macos: install failed; undoing what this run created" >&2
 	if [ -n "$made_daemons" ]; then
-		for l in "$GATE_LABEL" "$RENEW_LABEL"; do
-			launchctl bootout "system/$l" 2>/dev/null || true
-			rm -f "/Library/LaunchDaemons/$l.plist"
-		done
+		for l in $LABELS; do rm -f "/Library/LaunchDaemons/$l.plist"; done
 	fi
 	if [ -n "$made_user" ]; then
-		# State kept from before goes back to root, as uninstall left it,
-		# rather than stay owned by a uid with no account.
-		if [ -z "$made_state" ]; then state_to_root; else pkill -9 -U "$GATE_ID" 2>/dev/null || true; fi
+		stop_gate
+		remove_state
 		dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 		dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
 	fi
-	[ -z "$made_state" ] || rm -rf "$STATE"
 	[ -z "$made_tmp" ] || rm -f "$made_tmp"
 	[ -z "$made_bin" ] || rm -f "$BIN"
 	for d in $made_dirs; do
@@ -340,18 +321,27 @@ rollback() {
 }
 
 uninstall_gate() {
-	for l in "$GATE_LABEL" "$RENEW_LABEL"; do
-		launchctl bootout "system/$l" 2>/dev/null || true
-		rm -f "/Library/LaunchDaemons/$l.plist"
-	done
-	# The kept keys and receipts become root's, so an account later given
-	# uid $GATE_ID cannot read them.
-	state_to_root
-	rm -f "$BIN"
-	rmdir "$LIBEXEC" 2>/dev/null || true
+	purge=$1
+	stop_gate
+	for l in $LABELS; do rm -f "/Library/LaunchDaemons/$l.plist"; done
+	if { [ -e "$STATE" ] || [ -L "$STATE" ]; } && [ -z "$purge" ]; then
+		# Root reads the tree into a file only root can read, which hands
+		# nothing to anyone. bsdtar, the macOS tar, stores symbolic links as
+		# links (it follows them only with -L or -H), stores hard links as
+		# links, and skips sockets with a warning.
+		archive=/var/db/writ-archive-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar
+		(umask 077 && set -C && : >"$archive") || die "could not create $archive"
+		tar -cf "$archive" -C /var/db writ || echo "writ-gate-macos: tar warned (it skips sockets); check the archive" >&2
+		tar -tf "$archive" | grep -q '^writ/home/' || die "$archive holds no writ/home; $STATE was not removed"
+		echo "archived $STATE to $archive (root only); to list it: sudo tar -tvf $archive"
+		echo "to read the audit record: sudo tar -xOf $archive writ/home/claude/audit.jsonl"
+	fi
+	remove_state
 	dscl . -delete "/Users/$GATE_USER" 2>/dev/null || true
 	dscl . -delete "/Groups/$GATE_USER" 2>/dev/null || true
-	echo "removed the daemons, $BIN, and $GATE_USER; $STATE is left in place, owned by root"
+	rm -f "$BIN"
+	rmdir "$LIBEXEC" 2>/dev/null || true
+	echo "removed the daemons, $STATE, $BIN, and $GATE_USER"
 }
 
 main() {
@@ -369,12 +359,17 @@ main() {
 			install_gate "$2" "$3"
 		fi
 		;;
-	uninstall) uninstall_gate ;;
-	*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall" ;;
+	uninstall)
+		case "${2:-}" in
+		'') uninstall_gate '' ;;
+		--purge) uninstall_gate 1 ;;
+		*) die "uninstall [--purge]" ;;
+		esac
+		;;
+	*) die "usage: install BINARY SHA256 | install --no-checksum BINARY | uninstall [--purge]" ;;
 	esac
 }
 
-# Bash reads a script as it runs it, so lines appended to this file while it
-# runs would run too; with everything in main and this the last line, bash
-# has read all of it before anything runs, and exits before reading more.
+# Bash reads a script as it runs, so this one line runs all of it and exits
+# before anything appended to the file could be read.
 main "$@"; exit
